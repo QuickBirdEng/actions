@@ -1,0 +1,16 @@
+name: 'Setup Environment'
+description: 'Setting up Environment before every action'
+runs:
+  using: "composite"
+  steps:
+    - name: 'Setting up Environment'
+      shell: bash
+      run: |
+        if [[ -z $ENVIRONMENT_FILE ]]; then 
+          echo "Please create .env file at the root of your repository with environment variables."
+          exit 1
+        fi
+
+        awk 'NF' $ENVIRONMENT_FILE | sed '/^#/d' | while IFS= read -r LINE; do
+            echo "$LINE" >> $GITHUB_ENV
+        done

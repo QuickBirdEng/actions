@@ -1,0 +1,22 @@
+name: 'Setup Environment'
+description: 'Setting up Environment before every action'
+runs:
+  using: "composite"
+  steps:
+    - name: Setting up Environment
+      shell: bash
+      run: |
+        if [[ -d $ENVIRONMENT ]]; then
+            FILES=`ls $ENVIRONMENT/*.env`
+        else
+            FILES=( $ENVIRONMENT )
+        fi
+
+        for FILE in $FILES
+        do
+            awk 'NF' $FILE | sed '/^#/d' | while IFS= read -r LINE; do 
+                echo "$LINE" >> $GITHUB_OUTPUT
+            done
+        done
+
+        echo ${{ env.FLUTTER_VERSION }}

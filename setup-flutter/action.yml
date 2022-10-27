@@ -1,0 +1,34 @@
+name: 'Setup Flutter'
+description: 'Setting up Environment before every action'
+inputs:
+  use-cache:
+    description: 'Use cached version of packages (to speed up the build)'
+    required: false
+    default: false
+  clean:
+    description: 'Should perform a `flutter clean` first?'
+    required: false
+    default: false
+  setup-gems:
+    description: 'Setups gems (needed for iOS)'
+    default: false
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-environment@main
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: ${{ inputs.use-cache }}
+    - shell: bash
+      if: ${{ inputs.clean == true }}
+      run: flutter clean
+    - shell: bash
+      run: flutter pub get && flutter pub run build_runner build --delete-conflicting-outputs
+    - shell: bash
+      if: ${{ inputs.setup-gems == true }}
+      run: cd ios && gem install bundler && bundle install
+    - name: Flutter version
+      shell: bash
+      run: flutter --version

@@ -1,0 +1,30 @@
+name: 'Setup Android'
+description: 'Setting up Android & JDK'
+inputs:
+  java-version:
+    description: 'The java version to use. Defaults to 1.8'
+    required: true
+    default: "8"
+  distribution:
+    description: 'The java distribution to use. Defaults to adopt'
+    default: "adopt"
+  qbs-maven-username:
+    default: ""
+  qbs-maven-password:
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - name: Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: ${{ inputs.distribution }}
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v2
+    - name: Setup Maven Secrets
+      if: ${{ inputs.qbs-maven-username != '' }} && ${{ inputs.qbs-maven-password != '' }}
+      shell: bash
+      run: |
+        echo QBS_DEV_MAVEN_USERNAME=${{ inputs.qbs-maven-username }} >> $GITHUB_ENV
+        echo QBS_DEV_MAVEN_PASSWORD=${{ inputs.qbs-maven-password }} >> $GITHUB_ENV

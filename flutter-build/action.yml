@@ -1,0 +1,47 @@
+name: 'Build Flutter Artifact'
+description: 'Building IPA, APK or App Bundle for flutter applications'
+inputs:
+  build-number:
+    description: 'Build number'
+    required: true
+  use-cache:
+    description: 'Use cached version of packages (to speed up the build)'
+    required: false
+    default: false
+  clean:
+    description: 'Should perform a `flutter clean` first?'
+    required: false
+    default: false
+  build-type:
+    description: 'ipa, apk or appbundle'
+    required: true
+  build-arguments:
+    description: 'any extra arguments such as using sksl or passing a variable using --dart-define etc.'
+    required: false
+  extra-step:
+    description: ''
+outputs:
+  artifact-path: 
+    description: 'The path to the artifact (ipa, apk or appbundle) created by this action'
+    value: ${{ steps.build-artifact.outputs.artifact-path }}
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-flutter@main
+      with:
+        use-cache: ${{ inputs.use-cache }}
+        clean: $${{ inputs.clean }}
+        setup-gems: ${{ inputs.build-type }} == 'ipa'
+    - id: build-artifact
+      name: "Building Artifact"
+      shell: bash
+      run: |
+        # Remove next 3 lines and replace $build_arguments with ${{ inputs.build-arguments }} in the 3rd line
+        # once all projects moved to Flutter >= 3.3
+        build_arguments="${{ inputs.build-arguments }}"
+        IFS='.' read -r -a SEMANTIC_VERSION <<< "$FLUTTER_VERSION"
+        [[ $((${SEMANTIC_VERSION[0]} * 1000 + ${SEMANTIC_VERSION[1]} * 100)) < 3300 ]] && build_arguments=${build_arguments/--no-codesign/}
+        flutter build ${{ inputs.build-type }} --build-number=${{ inputs.build-number }} $build_arguments | tee flutter_build.log
+        # search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
+        artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive|.ipa/) print $word}' | sed 's/\.$//')
+        echo "artifact-path=$(echo $artifact_path)" >> $GITHUB_OUTPUT

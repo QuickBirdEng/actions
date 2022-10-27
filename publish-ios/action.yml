@@ -1,0 +1,79 @@
+name: 'Publish IPA to Apps@QuickBird and TestFlight (conditions apply)'
+description: 'Publishing Flutter iOS builds'
+inputs:
+  upload-key:
+    description: 'upload-key'
+    required: true
+  publish-to-testflight:
+    description: 'Should publish to Testflight?'
+    default: false
+  match-repository:
+    description: 'Match Repository'
+    required: true
+  match-password:
+    description: 'Password for Match Repo'
+    required: true
+  match-apple-id:
+    description: 'Apple ID to use for match'
+    required: true
+  match-apple-team-id:
+    description: 'Apple Team ID to use for match'
+    required: true
+  apple-auth-key-id:
+    description: 'Auth Key'
+    required: true
+  apple-auth-key-issuer-id:
+    description: 'Auth Key Issuer ID'
+    required: true
+  apple-auth-key-content:
+    description: 'Auth Key Content'
+    required: true
+  apple-auth-key-encoding:
+    description: 'Auth Key Encoding'
+    required: true
+  build-number:
+    description: 'Build number'
+    required: false
+outputs:
+  artifact-path: 
+    description: 'The path to the xcarchive created by this action'
+    value: ${{ steps.build.outputs.artifact-path }}
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-ios@main
+    - name: Publish to TestFlight
+      env:
+        MATCH_PASSWORD: ${{ inputs.match-password }}
+        APPLE_AUTH_KEY_ID: ${{ inputs.apple-auth-key-id }}
+        APPLE_AUTH_KEY_ISSUER_ID: ${{ inputs.apple-auth-key-issuer-id }}
+        APPLE_AUTH_KEY_CONTENT: ${{ inputs.apple-auth-key-content }}
+        APPLE_AUTH_KEY_ENCODING: ${{ inputs.apple-auth-key-encoding }}
+        MATCH_REPO: ${{ inputs.match-repository }}
+        APPLE_ID: ${{ inputs.match-apple-id }}
+        APPLE_TEAM_ID: ${{ inputs.match-apple-team-id }}
+        BUILD_NUMBER: ${{ inputs.build-number }}
+      shell: bash
+      if: ${{ inputs.publish-to-testflight == 'true' }}
+      run: cd ios && fastlane releaseToTestFlight
+    - name: Prepare for Upload to apps.quickbirdstudios.com
+      id: build-ipa
+      env:
+        MATCH_PASSWORD: ${{ inputs.match-password }}
+        APPLE_AUTH_KEY_ID: ${{ inputs.apple-auth-key-id }}
+        APPLE_AUTH_KEY_ISSUER_ID: ${{ inputs.apple-auth-key-issuer-id }}
+        APPLE_AUTH_KEY_CONTENT: ${{ inputs.apple-auth-key-content }}
+        APPLE_AUTH_KEY_ENCODING: ${{ inputs.apple-auth-key-encoding }}
+        MATCH_REPO: ${{ inputs.match-repository }}
+        APPLE_ID: ${{ inputs.match-apple-id }}
+        APPLE_TEAM_ID: ${{ inputs.match-apple-team-id }}
+      shell: bash
+      run: |
+        cd ios && fastlane generate_ipa type:adhoc | tee fastlane.log
+        ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')
+        echo "ipa-path=$ipa_path" >> $GITHUB_OUTPUT
+    - name: "Publishing to apps.quickbirdstudios.com"
+      uses: QuickBirdEng/actions/qb-publish@main
+      with:
+        upload-key: ${{ inputs.upload-key }}
+        file: ${{ steps.build-ipa.outputs.ipa-path }}

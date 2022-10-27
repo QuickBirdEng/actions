@@ -1,0 +1,27 @@
+name: 'Publish to Apps@QB'
+description: 'Publishing to apps.quickbirdstudios.com'
+inputs:
+  upload-key:
+    description: 'Upload Key'
+    required: true
+    type: string
+  file:
+    description: 'The file (IPA or APK) to upload'
+    required: true
+    type: string
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      run: |
+        response_code=$(curl https://apps.quickbirdstudios.com/apps/$PROTOTYPER_APP_ID/releases/ \
+          --form 'upload_key="${{ inputs.upload-key }}"' \
+          --form 'release[branch]=${{ github.ref_name }}' \
+          --form 'release[commit]=${{ github.sha }}' \
+          --form 'release[build]=@${{ inputs.file }}' \
+          -w "\n%{http_code}")
+
+        if [[ $response_code -ge 400 ]]; then 
+            echo "Upload failed with $response_code"
+            exit 1
+        fi
