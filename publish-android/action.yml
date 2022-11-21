@@ -18,6 +18,18 @@ inputs:
   upload-key:
     description: 'upload-key'
     required: true
+  key-store-file-content:
+    description: ''
+    required: true
+  key-store-password:
+    description: ''
+    required: true
+  signing-key-alias:
+    description: ''
+    required: true
+  signing-key-password:
+    description: ''
+    required: true  
   qbs-maven-username:
     description: 'Needed if the project uses a private artifact from QBS Maven'
     required: false
@@ -33,6 +45,10 @@ runs:
   steps:
     - uses: QuickBirdEng/actions/setup-android@main
       with:
+        key-store-file-content: ${{ inputs.key-store-file-content }}
+        key-store-password: ${{ inputs.key-store-password }}
+        signing-key-alias: ${{ inputs.signing-key-alias }}
+        signing-key-password: ${{ inputs.signing-key-password }}
         qbs-maven-username: ${{ inputs.qbs-maven-username }}
         qbs-maven-password: ${{ inputs.qbs-maven-password }}
     - uses: QuickBirdEng/actions/flutter-build@main
