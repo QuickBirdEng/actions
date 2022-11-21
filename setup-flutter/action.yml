@@ -29,6 +29,12 @@ runs:
     - shell: bash
       if: ${{ inputs.setup-gems == true }}
       run: cd ios && gem install bundler && bundle install
+    - shell: bash
+      if: ${{ inputs.setup-gems == true }}
+      run: cd ios && gem install bundler && bundle install
+    - shell: bash
+      if: ${{ inputs.setup-gems == true }}
+      run: pod repo update
     - name: Flutter version
       shell: bash
       run: flutter --version
