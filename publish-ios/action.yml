@@ -33,7 +33,10 @@ inputs:
     required: true
   build-number:
     description: 'Build number'
-    required: false
+    required: true
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
 outputs:
   artifact-path: 
     description: 'The path to the xcarchive created by this action'
@@ -55,6 +58,7 @@ runs:
         BUILD_NUMBER: ${{ inputs.build-number }}
       shell: bash
       if: ${{ inputs.publish-to-testflight == 'true' }}
+      working-directory: ${{ inputs.working-directory }}
       run: cd ios && fastlane releaseToTestFlight
     - name: Prepare for Upload to apps.quickbirdstudios.com
       id: build-ipa
@@ -68,6 +72,7 @@ runs:
         APPLE_ID: ${{ inputs.match-apple-id }}
         APPLE_TEAM_ID: ${{ inputs.match-apple-team-id }}
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         cd ios && fastlane generate_ipa type:adhoc | tee fastlane.log
         ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')

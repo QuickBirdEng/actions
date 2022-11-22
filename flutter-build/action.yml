@@ -20,6 +20,9 @@ inputs:
     required: false
   extra-step:
     description: ''
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
 outputs:
   artifact-path: 
     description: 'The path to the artifact (ipa, apk or appbundle) created by this action'
@@ -32,8 +35,10 @@ runs:
         use-cache: ${{ inputs.use-cache }}
         clean: $${{ inputs.clean }}
         setup-gems: ${{ inputs.build-type }} == 'ipa'
+        working-directory: ${{ inputs.working-directory }}
     - id: build-artifact
       name: "Building Artifact"
+      working-directory: ${{ inputs.working-directory }}
       shell: bash
       run: |
         # Remove next 3 lines and replace $build_arguments with ${{ inputs.build-arguments }} in the 3rd line

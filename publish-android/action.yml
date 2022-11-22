@@ -36,6 +36,9 @@ inputs:
   qbs-maven-password:
     description: 'Needed if the project uses a private artifact from QBS Maven'
     required: false
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
 outputs:
   artifact-path: 
     description: 'The path to the apk created by this action'
@@ -59,6 +62,7 @@ runs:
         build-arguments: ${{ inputs.build-arguments }}
         build-type: apk
         use-cache: ${{ inputs.use-cache }}
+        working-directory: ${{ inputs.working-directory }}
     - name: "Publishing to apps.quickbirdstudios.com"
       uses: QuickBirdEng/actions/qb-publish@main
       with:
