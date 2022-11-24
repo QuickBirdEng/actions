@@ -33,8 +33,8 @@ runs:
     - uses: QuickBirdEng/actions/setup-flutter@main
       with:
         use-cache: ${{ inputs.use-cache }}
-        clean: $${{ inputs.clean }}
-        setup-gems: ${{ inputs.build-type }} == 'ipa'
+        clean: ${{ inputs.clean }}
+        setup-gems: ${{ inputs.build-type == 'ipa' }}
         working-directory: ${{ inputs.working-directory }}
     - id: build-artifact
       name: "Building Artifact"
@@ -46,7 +46,17 @@ runs:
         build_arguments="${{ inputs.build-arguments }}"
         IFS='.' read -r -a SEMANTIC_VERSION <<< "$FLUTTER_VERSION"
         [[ $((${SEMANTIC_VERSION[0]} * 1000 + ${SEMANTIC_VERSION[1]} * 100)) < 3300 ]] && build_arguments=${build_arguments/--no-codesign/}
-        flutter build ${{ inputs.build-type }} --build-number=${{ inputs.build-number }} $build_arguments | tee flutter_build.log
+
+        version_number_argument=""
+        # Get tag if it exists
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          tag=${GITHUB_REF#refs/tags/}
+          tag=${tag//[!0-9.-_]/}
+          echo "Using Version number from tag => $tag"
+          version_number_argument="--build-name=$tag"
+        fi    
+
+        flutter build ${{ inputs.build-type }} --build-number=${{ inputs.build-number }} $version_number_argument $build_arguments | tee flutter_build.log
         # search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
         artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive|.ipa/) print $word}' | sed 's/\.$//')
         echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT

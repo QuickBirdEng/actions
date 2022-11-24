@@ -7,8 +7,8 @@ runs:
       shell: bash
       run: |
         if [[ -z $ENVIRONMENT_FILE ]]; then 
-          echo "Please create .env file at the root of your repository with environment variables."
-          exit 1
+          echo "WARNING: No Environment file found. Please make sure it is the intended action!!!"
+          exit 0
         fi
 
         awk 'NF' $ENVIRONMENT_FILE | sed '/^#/d' | while IFS= read -r LINE; do

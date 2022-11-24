@@ -56,7 +56,7 @@ runs:
         APPLE_ID: ${{ inputs.match-apple-id }}
         APPLE_TEAM_ID: ${{ inputs.match-apple-team-id }}
         BUILD_NUMBER: ${{ inputs.build-number }}
-      shell: bash
+      shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: cd ios && fastlane releaseToTestFlight
@@ -71,7 +71,7 @@ runs:
         MATCH_REPO: ${{ inputs.match-repository }}
         APPLE_ID: ${{ inputs.match-apple-id }}
         APPLE_TEAM_ID: ${{ inputs.match-apple-team-id }}
-      shell: bash
+      shell: bash -l {0}
       working-directory: ${{ inputs.working-directory }}
       run: |
         cd ios && fastlane generate_ipa type:adhoc | tee fastlane.log
@@ -82,3 +82,4 @@ runs:
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build-ipa.outputs.ipa-path }}
+        working-directory: ${{ inputs.working-directory }}

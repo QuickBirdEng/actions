@@ -1,0 +1,37 @@
+name: 'Setup Android'
+description: 'Setting up Android & JDK'
+inputs:
+  qbs-maven-username:
+    default: ""
+  qbs-maven-password:
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-environment@main
+    - name: Setup Java Version
+      id: setup-java
+      shell: bash
+      run: |
+        java_version=8
+        java_distribution=adopt
+
+        # If environment variables are set, use those values 
+        [[ -z $JAVA_VERSION ]] || java_version=$JAVA_VERSION 
+        [[ -z $JAVA_DISTRIBUTION ]] || java_version=$JAVA_DISTRIBUTION 
+        
+        echo "java-version=$java_version" >> $GITHUB_OUTPUT
+        echo "java-distribution=$java_distribution" >> $GITHUB_OUTPUT
+    - name: Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ steps.setup-java.outputs.java-version }}
+        distribution: ${{ steps.setup-java.outputs.java-distribution }}
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v2
+    - name: Setup Maven Secrets
+      if: ${{ inputs.qbs-maven-username != '' }} and ${{ inputs.qbs-maven-password != '' }}
+      shell: bash
+      run: |
+        echo QBS_DEV_MAVEN_USERNAME=${{ inputs.qbs-maven-username }} >> $GITHUB_ENV
+        echo QBS_DEV_MAVEN_PASSWORD=${{ inputs.qbs-maven-password }} >> $GITHUB_ENV

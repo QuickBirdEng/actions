@@ -9,10 +9,14 @@ inputs:
     description: 'The file (IPA or APK) to upload'
     required: true
     type: string
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
 runs:
   using: "composite"
   steps:
     - shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         response_code=$(curl https://apps.quickbirdstudios.com/apps/$PROTOTYPER_APP_ID/releases/ \
           --form 'upload_key="${{ inputs.upload-key }}"' \

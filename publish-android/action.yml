@@ -68,3 +68,5 @@ runs:
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build.outputs.artifact-path }}
+        working-directory: ${{ inputs.working-directory }}
+

@@ -25,20 +25,20 @@ runs:
         channel: 'stable'
         cache: ${{ inputs.use-cache }}
     - shell: bash
-      if: ${{ inputs.clean == true }}
+      if: ${{ inputs.clean == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: flutter clean      
     - shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: flutter pub get && flutter pub run build_runner build --delete-conflicting-outputs
-    - shell: bash
-      if: ${{ inputs.setup-gems == true }}
+    - shell: bash -l {0}
+      if: ${{ inputs.setup-gems == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: cd ios && gem install bundler && bundle install
-    - shell: bash
-      if: ${{ inputs.setup-gems == true }}
+    - shell: bash -l {0}
+      if: ${{ inputs.setup-gems == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: pod repo update
+      run: pod repo update && cd ios && pod install
     - name: Flutter version
       shell: bash
       run: flutter --version
