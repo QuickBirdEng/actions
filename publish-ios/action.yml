@@ -40,7 +40,7 @@ inputs:
 outputs:
   artifact-path: 
     description: 'The path to the xcarchive created by this action'
-    value: ${{ steps.build.outputs.artifact-path }}
+    value: ${{ steps.build-ipa.outputs.ipa-path }}
 runs:
   using: "composite"
   steps:
@@ -82,4 +82,3 @@ runs:
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build-ipa.outputs.ipa-path }}
-        working-directory: ${{ inputs.working-directory }}
