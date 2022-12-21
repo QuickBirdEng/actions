@@ -11,7 +11,7 @@ inputs:
   min_coverage:
     description: 'minimum coverage percentage'
     required: false
-    default: 50
+    default: 0
   exclude:
     description: 'files you would like to exclude from coverage'
     default: '*.g.dart *.freezed.dart'
