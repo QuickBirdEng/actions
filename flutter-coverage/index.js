@@ -16,13 +16,13 @@ function run() {
 
   parse(lcovPath, (err, data) => {
     if(err) {
-      core.setFailed('Unable to parse lcov file!' + err);
+      core.setFailed('Error: Unable to parse lcov file! ' + err);
       return;
     }
 
 
     if (typeof data === 'undefined') {
-      core.setFailed('Unable to parse lcov file!' + data);
+      core.setFailed('Data (undefined): Unable to parse lcov file! ' + data);
       return;
     }
 
