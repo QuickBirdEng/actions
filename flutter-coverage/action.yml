@@ -1,6 +1,9 @@
 name: 'Flutter Test Coverage'
 description: 'Flutter LCOV Test Coverage'
 inputs:
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
   path:
     description: 'lcov path'
     required: false
