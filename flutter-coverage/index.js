@@ -7,7 +7,7 @@ function run() {
   const lcovPath = core.getInput('path');
   const minCoverage = core.getInput('min_coverage');
   const filesToExclude = core.getInput('exclude');
-  const excludedFiles = excluded.split(' ');
+  const excludedFiles = filesToExclude.split(' ');
 
   if (!canParse(lcovPath)) {
     core.setFailed('lcov file is empty!');
