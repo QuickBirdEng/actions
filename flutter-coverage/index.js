@@ -14,6 +14,8 @@ function run() {
     return;
   }
 
+  core.info(`Parsing lcov file: ${lcovPath}...`)
+
   parse(lcovPath, (err, data) => {
     if(err) {
       core.setFailed('Error: Unable to parse lcov file! ' + err);
