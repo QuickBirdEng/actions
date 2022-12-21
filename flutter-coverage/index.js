@@ -13,6 +13,8 @@ function run() {
     core.setFailed('lcov file is empty!');
     return;
   }
+  
+  core.info('Current directory: ' + process.cwd())
 
   core.info(`Parsing lcov file: ${lcovPath}...`)
 
