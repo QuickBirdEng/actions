@@ -9,9 +9,13 @@ function run() {
   const filesToExclude = core.getInput('exclude');
   const excludedFiles = filesToExclude.split(' ');
 
-  if(lcovPath || minCoverage || minCoverage == 0) {
+  if(!minCoverage || minCoverage == 0) {
     core.info('lcov file path: ${lcovPath} min_coverage: ${minCoverage}');
     return;
+  }
+
+  if(!lcovPath) {
+    lcovPath = './coverage/lcov.info'
   }
 
   if (canParse(lcovPath)) {
