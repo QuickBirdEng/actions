@@ -9,7 +9,10 @@ function run() {
   const filesToExclude = core.getInput('exclude');
   const excludedFiles = filesToExclude.split(' ');
 
-  core.info(`lcov file path: ${lcovPath}`);
+  if(lcovPath || minCoverage || minCoverage == 0) {
+    core.info('lcov file path: ${lcovPath} min_coverage: ${minCoverage}');
+    return;
+  }
 
   if (canParse(lcovPath)) {
     core.setFailed('lcov file is empty!');
