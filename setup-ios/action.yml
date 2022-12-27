@@ -1,6 +1,12 @@
 name: 'Setup iOS'
 description: 'Setting up Environment before every action'
 inputs:
+  platform:
+    description: 'Which platform to setup for. Possible values are ios or flutter'
+    default: ios
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
   use-cache:
     description: 'Use cached version of packages (to speed up the build)'
     required: false
@@ -15,3 +21,7 @@ runs:
     - name: Setup Ruby Environment
       shell: bash
       run: eval "$(rbenv init -)"
+    - uses: QuickBirdEng/actions/setup-fastlane@feature/fastlane
+      with:
+        platform: ${{ inputs.platform }}
+        working-directory: ${{ inputs.working-directory }}

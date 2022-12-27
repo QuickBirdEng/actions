@@ -31,12 +31,12 @@ inputs:
   apple-auth-key-encoding:
     description: 'Auth Key Encoding'
     required: true
-  build-number:
-    description: 'Build number'
-    required: true
   working-directory:
     description: 'Working directory for action'
     default: '.'
+  slack-slug:
+    description: 'The part of slack hook url after services/'
+    required: true
 outputs:
   artifact-path: 
     description: 'The path to the xcarchive created by this action'
@@ -44,33 +44,29 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-ios@main
+    - uses: QuickBirdEng/actions/setup-ios@feature/fastlane
+      with:
+        platform: flutter
+        working-directory: ${{ inputs.working-directory }}
+    - name: Setup Fastlane Environment
+      shell: bash
+      run: |
+        echo "MATCH_PASSWORD=${{ inputs.match-password }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_ID=${{ inputs.apple-auth-key-id }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_ISSUER_ID=${{ inputs.apple-auth-key-issuer-id }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_CONTENT=${{ inputs.apple-auth-key-content }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_ENCODING=${{ inputs.apple-auth-key-encoding }}" >> $GITHUB_ENV
+        echo "MATCH_REPO=${{ inputs.match-repository }}" >> $GITHUB_ENV
+        echo "APPLE_ID=${{ inputs.match-apple-id }}" >> $GITHUB_ENV
+        echo "APPLE_TEAM_ID=${{ inputs.match-apple-team-id }}" >> $GITHUB_ENV
+        echo "SLACK_URL=https://hooks.slack.com/services/${{ inputs.slack-slug }}" >> $GITHUB_ENV
     - name: Publish to TestFlight
-      env:
-        MATCH_PASSWORD: ${{ inputs.match-password }}
-        APPLE_AUTH_KEY_ID: ${{ inputs.apple-auth-key-id }}
-        APPLE_AUTH_KEY_ISSUER_ID: ${{ inputs.apple-auth-key-issuer-id }}
-        APPLE_AUTH_KEY_CONTENT: ${{ inputs.apple-auth-key-content }}
-        APPLE_AUTH_KEY_ENCODING: ${{ inputs.apple-auth-key-encoding }}
-        MATCH_REPO: ${{ inputs.match-repository }}
-        APPLE_ID: ${{ inputs.match-apple-id }}
-        APPLE_TEAM_ID: ${{ inputs.match-apple-team-id }}
-        BUILD_NUMBER: ${{ inputs.build-number }}
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: cd ios && fastlane releaseToTestFlight
     - name: Prepare for Upload to apps.quickbirdstudios.com
       id: build-ipa
-      env:
-        MATCH_PASSWORD: ${{ inputs.match-password }}
-        APPLE_AUTH_KEY_ID: ${{ inputs.apple-auth-key-id }}
-        APPLE_AUTH_KEY_ISSUER_ID: ${{ inputs.apple-auth-key-issuer-id }}
-        APPLE_AUTH_KEY_CONTENT: ${{ inputs.apple-auth-key-content }}
-        APPLE_AUTH_KEY_ENCODING: ${{ inputs.apple-auth-key-encoding }}
-        MATCH_REPO: ${{ inputs.match-repository }}
-        APPLE_ID: ${{ inputs.match-apple-id }}
-        APPLE_TEAM_ID: ${{ inputs.match-apple-team-id }}
       shell: bash -l {0}
       working-directory: ${{ inputs.working-directory }}
       run: |
