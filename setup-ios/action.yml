@@ -21,7 +21,7 @@ runs:
     - name: Setup Ruby Environment
       shell: bash
       run: eval "$(rbenv init -)"
-    - uses: QuickBirdEng/actions/setup-fastlane@feature/fastlane
+    - uses: QuickBirdEng/actions/setup-fastlane@main
       with:
         platform: ${{ inputs.platform }}
         working-directory: ${{ inputs.working-directory }}

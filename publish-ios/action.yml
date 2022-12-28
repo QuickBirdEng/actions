@@ -44,11 +44,11 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-ios@feature/fastlane
+    - uses: QuickBirdEng/actions/setup-ios@main
       with:
         platform: flutter
         working-directory: ${{ inputs.working-directory }}
-    - uses: QuickBirdEng/actions/setup-fastlane-environment@feature/fastlane
+    - uses: QuickBirdEng/actions/setup-fastlane-environment@main
       with:
         match-repository: ${{ inputs.match-repository }}
         match-password: ${{ inputs.match-password }}
