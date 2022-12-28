@@ -48,18 +48,17 @@ runs:
       with:
         platform: flutter
         working-directory: ${{ inputs.working-directory }}
-    - name: Setup Fastlane Environment
-      shell: bash
-      run: |
-        echo "MATCH_PASSWORD=${{ inputs.match-password }}" >> $GITHUB_ENV
-        echo "APPLE_AUTH_KEY_ID=${{ inputs.apple-auth-key-id }}" >> $GITHUB_ENV
-        echo "APPLE_AUTH_KEY_ISSUER_ID=${{ inputs.apple-auth-key-issuer-id }}" >> $GITHUB_ENV
-        echo "APPLE_AUTH_KEY_CONTENT=${{ inputs.apple-auth-key-content }}" >> $GITHUB_ENV
-        echo "APPLE_AUTH_KEY_ENCODING=${{ inputs.apple-auth-key-encoding }}" >> $GITHUB_ENV
-        echo "MATCH_REPO=${{ inputs.match-repository }}" >> $GITHUB_ENV
-        echo "APPLE_ID=${{ inputs.match-apple-id }}" >> $GITHUB_ENV
-        echo "APPLE_TEAM_ID=${{ inputs.match-apple-team-id }}" >> $GITHUB_ENV
-        echo "SLACK_URL=https://hooks.slack.com/services/${{ inputs.slack-slug }}" >> $GITHUB_ENV
+    - uses: QuickBirdEng/actions/setup-fastlane-environment@feature/fastlane
+      with:
+        match-repository: ${{ inputs.match-repository }}
+        match-password: ${{ inputs.match-password }}
+        match-apple-id: ${{ inputs.match-apple-id }}
+        match-apple-team-id: ${{ inputs.match-apple-team-id }}
+        apple-auth-key-id: ${{ inputs.apple-auth-key-id }}
+        apple-auth-key-issuer-id: ${{ inputs.apple-auth-key-issuer-id }}
+        apple-auth-key-content: ${{ inputs.apple-auth-key-content }}
+        apple-auth-key-encoding: ${{ inputs.apple-auth-key-encoding }}
+        slack-slug: ${{ inputs.slack-slug }}
     - name: Publish to TestFlight
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}

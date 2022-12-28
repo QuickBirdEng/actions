@@ -1,0 +1,55 @@
+name: 'Setup Environment for Flutter'
+description: 'Setup Environment for Flutter'
+inputs:
+  match-repository:
+    description: 'Match Repository'
+    required: true
+  match-password:
+    description: 'Password for Match Repo'
+    required: true
+  match-apple-id:
+    description: 'Apple ID to use for match'
+    required: true
+  match-apple-team-id:
+    description: 'Apple Team ID to use for match'
+    required: true
+  apple-auth-key-id:
+    description: 'Auth Key'
+    required: true
+  apple-auth-key-issuer-id:
+    description: 'Auth Key Issuer ID'
+    required: true
+  apple-auth-key-content:
+    description: 'Auth Key Content'
+    required: true
+  apple-auth-key-encoding:
+    description: 'Auth Key Encoding'
+    required: true
+  slack-slug:
+    description: 'The part of slack hook url after services/'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Fastlane Environment
+      shell: bash
+      run: |
+        echo "MATCH_REPO=${{ inputs.match-repository }}" >> $GITHUB_ENV
+        echo "MATCH_PASSWORD=${{ inputs.match-password }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_ID=${{ inputs.apple-auth-key-id }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_ISSUER_ID=${{ inputs.apple-auth-key-issuer-id }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_CONTENT=${{ inputs.apple-auth-key-content }}" >> $GITHUB_ENV
+        echo "APPLE_AUTH_KEY_ENCODING=${{ inputs.apple-auth-key-encoding }}" >> $GITHUB_ENV
+        echo "APPLE_ID=${{ inputs.match-apple-id }}" >> $GITHUB_ENV
+        echo "APPLE_TEAM_ID=${{ inputs.match-apple-team-id }}" >> $GITHUB_ENV
+        echo "SLACK_URL=https://hooks.slack.com/services/${{ inputs.slack-slug }}" >> $GITHUB_ENV
+
+        echo "MATCH_PASSWORD=${{ inputs.match-password }}" > tee apple.env
+        echo "APPLE_AUTH_KEY_ID=${{ inputs.apple-auth-key-id }}" >> apple.env
+        echo "APPLE_AUTH_KEY_ISSUER_ID=${{ inputs.apple-auth-key-issuer-id }}" >> apple.env
+        echo "APPLE_AUTH_KEY_CONTENT=${{ inputs.apple-auth-key-content }}" >> apple.env
+        echo "APPLE_AUTH_KEY_ENCODING=${{ inputs.apple-auth-key-encoding }}" >> apple.env
+        echo "MATCH_REPO=${{ inputs.match-repository }}" >> apple.env
+        echo "APPLE_ID=${{ inputs.match-apple-id }}" >> apple.env
+        echo "APPLE_TEAM_ID=${{ inputs.match-apple-team-id }}" >> apple.env
+        echo "SLACK_URL=https://hooks.slack.com/services/${{ inputs.slack-slug }}" >> apple.env
