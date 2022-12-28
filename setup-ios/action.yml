@@ -1,6 +1,9 @@
 name: 'Setup iOS'
 description: 'Setting up Environment before every action'
 inputs:
+  working-directory:
+    description: 'Working directory for action'
+    required: true
   use-cache:
     description: 'Use cached version of packages (to speed up the build)'
     required: false
