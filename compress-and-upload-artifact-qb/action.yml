@@ -1,0 +1,47 @@
+name: 'Compress & Upload Artifact to QB Spaces'
+description: 'Compress & Upload Artifact to QB Spaces'
+inputs:
+  name: 
+    description: 'Output Name of the artifact'
+    type: string
+  name-suffix:
+    description: 'Suffix to add to the end of name'
+    type: string
+  artifact-path:
+    description: 'Path of the artifact'
+    type: string
+  access-key:
+    description: 'Digital Ocean Access Key'
+    required: true
+  secret-key:
+    description: 'Digital Ocean Secret Key'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Name for Artifact
+      id: name-generator
+      shell: bash
+      run: |
+        artifact_name="artifact"
+        
+        if [[ '${{ inputs.name }}' == '' ]]; then
+          [[ '${{ github.ref_type }}' == 'tag' ]] && artifact_name="${{ github.ref_name }}"
+        else
+          artifact_name="${{ inputs.name }}"
+        fi
+
+        [[ '${{ inputs.name-suffix }}' == '' ]] || artifact_name="$artifact_name-${{ inputs.name-suffix }}"
+        echo "artifact-name=$artifact_name" >> $GITHUB_OUTPUT
+    - name: Compress XCArchive File as tar.gz
+      id: compress
+      uses: QuickBirdEng/actions/compress-artifact@main
+      with:
+        name: ${{ steps.name-generator.outputs.artifact-name }}
+        artifact-path: ${{ inputs.artifact-path }}
+    - name: Upload Artifact
+      uses: QuickBirdEng/actions/upload-artifact-qb@main
+      with:
+        access-key: ${{ inputs.access-key }}
+        secret-key: ${{ inputs.secret-key }}
+        artifact: ${{ steps.compress.outputs.artifact-path }}

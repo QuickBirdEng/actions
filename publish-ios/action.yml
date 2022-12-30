@@ -34,6 +34,9 @@ inputs:
   working-directory:
     description: 'Working directory for action'
     default: '.'
+  build-number:
+    description: 'Build Number'
+    type: string
   slack-slug:
     description: 'The part of slack hook url after services/'
     required: true
@@ -59,6 +62,7 @@ runs:
         apple-auth-key-issuer-id: ${{ inputs.apple-auth-key-issuer-id }}
         apple-auth-key-content: ${{ inputs.apple-auth-key-content }}
         apple-auth-key-encoding: ${{ inputs.apple-auth-key-encoding }}
+        build-number: ${{ inputs.build-number }}
         slack-slug: ${{ inputs.slack-slug }}
     - name: Publish to TestFlight
       shell: bash -l {0}
@@ -70,7 +74,7 @@ runs:
       shell: bash -l {0}
       working-directory: ${{ inputs.working-directory }}
       run: |
-        cd ios && fastlane generate_ipa type:adhoc | tee fastlane.log
+        set -eo pipefail && cd ios && fastlane generate_ipa type:adhoc | tee fastlane.log
         ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')
         echo "ipa-path=$ipa_path" >> $GITHUB_OUTPUT
     - name: "Publishing to apps.quickbirdstudios.com"

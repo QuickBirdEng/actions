@@ -17,9 +17,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        ls -al
         [[ ${{ inputs.platform }} == 'flutter' ]] && cd ios
         [[ -d fastlane ]] && rm -rf fastlane
         git clone -b ${{ inputs.platform }} --single-branch ${{ inputs.fastlane-repo }}
         bash fastlane/fetch_targets_and_bundle_ids.sh
-        ls -al fastlane/.targets

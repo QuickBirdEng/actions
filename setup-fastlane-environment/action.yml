@@ -1,5 +1,5 @@
-name: 'Setup Environment for Flutter'
-description: 'Setup Environment for Flutter'
+name: 'Setup Environment for Fastlane'
+description: 'Setup Environment for Fastlane'
 inputs:
   match-repository:
     description: 'Match Repository'
@@ -28,6 +28,11 @@ inputs:
   slack-slug:
     description: 'The part of slack hook url after services/'
     required: true
+  build-number:
+    description: 'Build Number. Only used for flutter applications'
+    type: string
+    required: false
+
 runs:
   using: "composite"
   steps:
@@ -43,13 +48,9 @@ runs:
         echo "APPLE_ID=${{ inputs.match-apple-id }}" >> $GITHUB_ENV
         echo "APPLE_TEAM_ID=${{ inputs.match-apple-team-id }}" >> $GITHUB_ENV
         echo "SLACK_URL=https://hooks.slack.com/services/${{ inputs.slack-slug }}" >> $GITHUB_ENV
-
-        echo "MATCH_PASSWORD=${{ inputs.match-password }}" > tee apple.env
-        echo "APPLE_AUTH_KEY_ID=${{ inputs.apple-auth-key-id }}" >> apple.env
-        echo "APPLE_AUTH_KEY_ISSUER_ID=${{ inputs.apple-auth-key-issuer-id }}" >> apple.env
-        echo "APPLE_AUTH_KEY_CONTENT=${{ inputs.apple-auth-key-content }}" >> apple.env
-        echo "APPLE_AUTH_KEY_ENCODING=${{ inputs.apple-auth-key-encoding }}" >> apple.env
-        echo "MATCH_REPO=${{ inputs.match-repository }}" >> apple.env
-        echo "APPLE_ID=${{ inputs.match-apple-id }}" >> apple.env
-        echo "APPLE_TEAM_ID=${{ inputs.match-apple-team-id }}" >> apple.env
-        echo "SLACK_URL=https://hooks.slack.com/services/${{ inputs.slack-slug }}" >> apple.env
+    - shell: bash
+      if: ${{ inputs.build-number != '' }}
+      run: echo "BUILD_NUMBER=${{ inputs.build-number }}" >> $GITHUB_ENV
+    - shell: bash
+      if: ${{ github.ref_type == 'tag' }}
+      run: echo "APP_VERSION=${{ github.ref_name }}" >> $GITHUB_ENV

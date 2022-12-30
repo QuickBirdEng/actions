@@ -1,0 +1,28 @@
+name: 'Compress Artifact'
+description: 'Compress Artifact'
+inputs:
+  name: 
+    description: 'Output Name of the artifact'
+    type: string
+  artifact-path:
+    description: 'Path of the artifact'
+    type: string
+outputs:
+  artifact-path: 
+    description: 'The path to the .tar.gz file'
+    value: ${{ steps.compress.outputs.file-path }}
+runs:
+  using: "composite"
+  steps:
+    - name: Compress Artifact as .tar.gz
+      id: compress
+      shell: bash
+      run: |
+        file_path="${{ inputs.artifact-path }}"
+        filename=${{ inputs.name }}.tar.gz
+        
+        folder=$(dirname "$file_path")
+        file=$(basename "$file_path")
+        
+        tar -C "$folder" -czvf $filename "$file"
+        echo "file-path=$filename" >> $GITHUB_OUTPUT

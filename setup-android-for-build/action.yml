@@ -30,7 +30,7 @@ runs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v2
     - name: Setup Maven Secrets
-      if: ${{ inputs.qbs-maven-username != '' }} and ${{ inputs.qbs-maven-password != '' }}
+      if: inputs.qbs-maven-username != '' && inputs.qbs-maven-password != ''
       shell: bash
       run: |
         echo QBS_DEV_MAVEN_USERNAME=${{ inputs.qbs-maven-username }} >> $GITHUB_ENV

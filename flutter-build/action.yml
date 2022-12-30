@@ -46,7 +46,6 @@ runs:
         # Get tag if it exists
         if [[ $GITHUB_REF == refs/tags/* ]]; then
           tag=${GITHUB_REF#refs/tags/}
-          tag=${tag//[!0-9.-_]/}
           echo "Using Version number from tag => $tag"
           version_number_argument="--build-name=$tag"
         fi
@@ -57,4 +56,7 @@ runs:
         # 3. search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
         artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive|.ipa/) print $word}' | sed 's/\.$//')
 
-        echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT
+        case $artifact_path in
+          /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
+          *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
+        esac

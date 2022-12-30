@@ -1,0 +1,19 @@
+name: 'Setup Version and Build number'
+description: ''
+inputs:
+  build-number:
+    description: 'Build number or Version code'
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set Version and Version Code (Build Number)
+      shell: bash
+      run: |
+        [[ ${{ github.ref_type }} == 'tag' ]] && echo "APP_VERSION=${{ github.ref_name }}" >> $GITHUB_ENV
+
+        [[ '${{ inputs.build-number }}' == '' ]] && build_number=$(date +%s) || build_number=${{ inputs.build-number }}
+        echo "APP_BUILD_NUMBER=$build_number" >> $GITHUB_ENV
+
+        cat $GITHUB_ENV | grep APP_
