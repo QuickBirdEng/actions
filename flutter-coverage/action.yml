@@ -1,0 +1,21 @@
+name: 'Flutter Test Coverage'
+description: 'Flutter LCOV Test Coverage'
+inputs:
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
+  path:
+    description: 'lcov path'
+    required: false
+    default: './coverage/lcov.info'
+  min_coverage:
+    description: 'minimum coverage percentage'
+    required: false
+    default: 0
+  exclude:
+    description: 'files you would like to exclude from coverage'
+    default: '*.g.dart *.freezed.dart'
+    required: false
+runs:
+  using: 'node16'
+  main: 'index.js'
