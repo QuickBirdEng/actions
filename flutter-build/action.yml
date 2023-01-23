@@ -44,10 +44,10 @@ runs:
         # 1. Get version number from tag (in case a tag is pushed)
         version_number_argument=""
         # Get tag if it exists
-        if [[ $GITHUB_REF == refs/tags/* ]]; then
-          tag=${GITHUB_REF#refs/tags/}
-          echo "Using Version number from tag => $tag"
-          version_number_argument="--build-name=$tag"
+        if [[ $GITHUB_REF_TYPE == 'tag' ]]; then
+          version=$(echo $GITHUB_REF_NAME | grep --only-matching --extended-regexp '([0-9]+).([0-9]+).([0-9]+)' | head -1)
+          echo "Using Version number from tag => $version"
+          version_number_argument="--build-name=$version"
         fi
 
         # 2. Build flutter with build number and version number
