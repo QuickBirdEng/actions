@@ -1,7 +1,10 @@
-name: 'Compress & Upload Artifact to QB Spaces'
+name: 'Compress & Upload Artifact to QB Spaces & (only on tags) to Release Assets'
 description: 'Compress & Upload Artifact to QB Spaces'
 inputs:
-  name: 
+  repo-token: 
+    description: 'Github repository token (used for adding artifact to release)'
+    type: string
+  name:
     description: 'Output Name of the artifact'
     type: string
   name-suffix:
@@ -16,6 +19,9 @@ inputs:
   secret-key:
     description: 'Digital Ocean Secret Key'
     required: true
+  github-token:
+    description: 'Github token'
+    required: false
 runs:
   using: "composite"
   steps:
@@ -39,9 +45,17 @@ runs:
       with:
         name: ${{ steps.name-generator.outputs.artifact-name }}
         artifact-path: ${{ inputs.artifact-path }}
-    - name: Upload Artifact
+    - name: Upload Artifact to QB Spaces
       uses: QuickBirdEng/actions/upload-artifact-qb@main
       with:
         access-key: ${{ inputs.access-key }}
         secret-key: ${{ inputs.secret-key }}
         artifact: ${{ steps.compress.outputs.artifact-path }}
+    - name: Add Artifacts to Release Assets (Only for tags)
+      if: ${{ github.ref_type == 'tag' }}
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ inputs.repo-token }}
+        file: ${{ steps.compress.outputs.artifact-path }}
+        asset_name: ${{ steps.name-generator.outputs.artifact-name }}.tar.gz
+        tag: ${{ github.ref }}

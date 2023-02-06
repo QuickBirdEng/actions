@@ -15,3 +15,10 @@ runs:
     - name: Setup Ruby Environment
       shell: bash
       run: eval "$(rbenv init -)"
+    - name: Setup Build Path
+      shell: bash
+      run: |
+        path=`pwd`
+        path=${path%%_work*}_work
+        echo "DERIVED_DATA_PATH=$path/DerivedData" >> $GITHUB_ENV
+        echo "ARCHIVE_PATH=$path/Archives" >> $GITHUB_ENV
