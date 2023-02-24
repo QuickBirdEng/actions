@@ -21,4 +21,6 @@ runs:
         path=`pwd`
         path=${path%%_work*}_work
         echo "DERIVED_DATA_PATH=$path/DerivedData" >> $GITHUB_ENV
+        echo "FLUTTER_XCODE_DERIVED_DATA_PATH=$path/DerivedData" >> $GITHUB_ENV
+        echo "FLUTTER_XCODE_TEMP_ROOT=$path/DerivedData" >> $GITHUB_ENV
         echo "ARCHIVE_PATH=$path/Archives" >> $GITHUB_ENV

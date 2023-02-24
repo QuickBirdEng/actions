@@ -27,7 +27,7 @@ runs:
     - shell: bash
       if: ${{ inputs.clean == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: flutter clean      
+      run: flutter clean
     - shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: flutter pub get && flutter pub run build_runner build --delete-conflicting-outputs
