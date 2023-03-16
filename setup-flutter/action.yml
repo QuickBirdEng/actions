@@ -30,7 +30,11 @@ runs:
       run: flutter clean
     - shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: flutter pub get && flutter pub run build_runner build --delete-conflicting-outputs
+      run: flutter pub get
+    - shell: bash
+      if: ${{ ${{ env.RUN_BUILD_RUNNER }} || 'true' }}
+      working-directory: ${{ inputs.working-directory }}
+      run: flutter pub run build_runner build --delete-conflicting-outputs
     - shell: bash -l {0}
       if: ${{ inputs.setup-gems == 'true' }}
       working-directory: ${{ inputs.working-directory }}
