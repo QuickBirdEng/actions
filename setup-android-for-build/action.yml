@@ -18,7 +18,7 @@ runs:
 
         # If environment variables are set, use those values 
         [[ -z $JAVA_VERSION ]] || java_version=$JAVA_VERSION 
-        [[ -z $JAVA_DISTRIBUTION ]] || java_version=$JAVA_DISTRIBUTION 
+        [[ -z $JAVA_DISTRIBUTION ]] || java_distribution=$JAVA_DISTRIBUTION 
         
         echo "java-version=$java_version" >> $GITHUB_OUTPUT
         echo "java-distribution=$java_distribution" >> $GITHUB_OUTPUT
