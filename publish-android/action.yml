@@ -46,7 +46,7 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-android@main
+    - uses: QuickBirdEng/actions/setup-android@feature/legacy-flutter-support
       with:
         key-store-file-content: ${{ inputs.key-store-file-content }}
         key-store-password: ${{ inputs.key-store-password }}

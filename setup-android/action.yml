@@ -41,6 +41,10 @@ runs:
         distribution: ${{ steps.setup-java.outputs.java-distribution }}
     - name: Setup Android SDK
       uses: android-actions/setup-android@v2
+    - name: Setup Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r22
     - name: Setup Android Signing Keys
       shell: bash
       run: |
