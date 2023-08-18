@@ -31,15 +31,26 @@ runs:
     - shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: flutter pub get
-    - shell: bash
+    - name: Fetch Project Dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: flutter pub get
+    - name: Project dependency graph
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: flutter pub deps
+    - name: Code Generation using build_runner
+      shell: bash
       if: ${{ env.RUN_BUILD_RUNNER == '' || env.RUN_BUILD_RUNNER == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: flutter pub run build_runner build --delete-conflicting-outputs
-    - shell: bash -l {0}
+    - name: Setup Gems
+      shell: bash -l {0}
       if: ${{ inputs.setup-gems == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: cd ios && gem install bundler && bundle install
-    - shell: bash -l {0}
+    - name: Install Pods
+      shell: bash -l {0}
       if: ${{ inputs.setup-gems == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: pod repo update && cd ios && pod install
