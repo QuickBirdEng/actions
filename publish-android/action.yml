@@ -46,7 +46,7 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-android@main
+    - uses: QuickBirdEng/actions/setup-android@logging
       with:
         key-store-file-content: ${{ inputs.key-store-file-content }}
         key-store-password: ${{ inputs.key-store-password }}
@@ -54,7 +54,7 @@ runs:
         signing-key-password: ${{ inputs.signing-key-password }}
         qbs-maven-username: ${{ inputs.qbs-maven-username }}
         qbs-maven-password: ${{ inputs.qbs-maven-password }}
-    - uses: QuickBirdEng/actions/flutter-build@main
+    - uses: QuickBirdEng/actions/flutter-build@logging
       id: build
       with:
         clean: ${{ inputs.clean }}
@@ -64,7 +64,7 @@ runs:
         use-cache: ${{ inputs.use-cache }}
         working-directory: ${{ inputs.working-directory }}
     - name: "Publishing to apps.quickbirdstudios.com"
-      uses: QuickBirdEng/actions/qb-publish@main
+      uses: QuickBirdEng/actions/qb-publish@logging
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build.outputs.artifact-path }}

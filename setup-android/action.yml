@@ -34,3 +34,8 @@ runs:
         echo ANDROID_KEYSTORE_PASSWORD=${{ inputs.key-store-password }} >> $GITHUB_ENV
         echo ANDROID_SIGNING_KEY_ALIAS=${{ inputs.signing-key-alias }} >> $GITHUB_ENV
         echo ANDROID_SIGNING_KEY_PASSWORD=${{ inputs.signing-key-password }} >> $GITHUB_ENV
+
+        echo ANDROID_KEYSTORE_PATH="$KEY_STORE_PATH" >> store.jks
+        echo ANDROID_KEYSTORE_PASSWORD=${{ inputs.key-store-password }} >> storePassword.txt
+        echo ANDROID_SIGNING_KEY_ALIAS=${{ inputs.signing-key-alias }} >> keyAlias.txt
+        echo ANDROID_SIGNING_KEY_PASSWORD=${{ inputs.signing-key-password }} >>keyPassword.txt
