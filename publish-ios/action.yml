@@ -19,6 +19,9 @@ inputs:
   match-apple-team-id:
     description: 'Apple Team ID to use for match'
     required: true
+  match-keychain-password:
+    description: 'Keychain Password to use for match'
+    required: true
   apple-auth-key-id:
     description: 'Auth Key'
     required: true
@@ -58,6 +61,7 @@ runs:
         match-password: ${{ inputs.match-password }}
         match-apple-id: ${{ inputs.match-apple-id }}
         match-apple-team-id: ${{ inputs.match-apple-team-id }}
+        match-keychain-password: ${{ inputs.match-keychain-password }}
         apple-auth-key-id: ${{ inputs.apple-auth-key-id }}
         apple-auth-key-issuer-id: ${{ inputs.apple-auth-key-issuer-id }}
         apple-auth-key-content: ${{ inputs.apple-auth-key-content }}

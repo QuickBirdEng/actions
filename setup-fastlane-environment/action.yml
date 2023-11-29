@@ -13,6 +13,8 @@ inputs:
   match-apple-team-id:
     description: 'Apple Team ID to use for match'
     required: true
+  match-keychain-password:
+    required: true
   apple-auth-key-id:
     description: 'Auth Key'
     required: true
@@ -41,6 +43,7 @@ runs:
       run: |
         echo "MATCH_REPO=${{ inputs.match-repository }}" >> $GITHUB_ENV
         echo "MATCH_PASSWORD=${{ inputs.match-password }}" >> $GITHUB_ENV
+        echo "MATCH_KEYCHAIN_PASSWORD=${{ inputs.match-keychain-password }}" >> $GITHUB_ENV
         echo "APPLE_AUTH_KEY_ID=${{ inputs.apple-auth-key-id }}" >> $GITHUB_ENV
         echo "APPLE_AUTH_KEY_ISSUER_ID=${{ inputs.apple-auth-key-issuer-id }}" >> $GITHUB_ENV
         echo "APPLE_AUTH_KEY_CONTENT=${{ inputs.apple-auth-key-content }}" >> $GITHUB_ENV
