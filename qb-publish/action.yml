@@ -9,6 +9,9 @@ inputs:
     description: 'The file (IPA or APK) to upload'
     required: true
     type: string
+  name-suffix:
+    description: 'Suffix to add to the end of name'
+    type: string
 runs:
   using: "composite"
   steps:
@@ -16,7 +19,7 @@ runs:
       run: |
         response_code=$(curl https://apps.quickbirdstudios.com/apps/$PROTOTYPER_APP_ID/releases/ \
           --form 'upload_key="${{ inputs.upload-key }}"' \
-          --form 'release[branch]=${{ github.ref_name }}' \
+          --form 'release[branch]=${{ github.ref_name }}${{ inputs.name-suffix }}' \
           --form 'release[commit]=${{ github.sha }}' \
           --form 'release[build]=@${{ inputs.file }}' \
           -w "\n%{http_code}")

@@ -34,6 +34,10 @@ inputs:
   apple-auth-key-encoding:
     description: 'Auth Key Encoding'
     required: true
+  name-suffix:
+    description: 'Suffix to add to the end of branch/tag name'
+    type: string
+    default: ''
   working-directory:
     description: 'Working directory for action'
     default: '.'
@@ -86,3 +90,4 @@ runs:
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build-ipa.outputs.ipa-path }}
+        name-suffix: ${{ inputs.name-suffix == '' && '' || format('-{{0}}', inputs.name-suffix) }}
