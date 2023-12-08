@@ -36,6 +36,10 @@ inputs:
   qbs-maven-password:
     description: 'Needed if the project uses a private artifact from QBS Maven'
     required: false
+  name-suffix:
+    description: 'Suffix to add to the end of branch/tag name'
+    type: string
+    default: ''
   working-directory:
     description: 'Working directory for action'
     default: '.'
@@ -68,4 +72,4 @@ runs:
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build.outputs.artifact-path }}
-
+        name-suffix: ${{ inputs.name-suffix == "" && "" || format('-{{0}}', inputs.name-suffix) }}

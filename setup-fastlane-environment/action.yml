@@ -14,6 +14,7 @@ inputs:
     description: 'Apple Team ID to use for match'
     required: true
   match-keychain-password:
+    description: 'Keychain Password to use for match'
     required: true
   apple-auth-key-id:
     description: 'Auth Key'
