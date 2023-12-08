@@ -90,4 +90,4 @@ runs:
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build-ipa.outputs.ipa-path }}
-        name-suffix: ${{ inputs.name-suffix == '' && '' || format('-{{0}}', inputs.name-suffix) }}
+        name-suffix: ${{ github.event.inputs.name-suffix == '' && '' || format('-{{0}}', github.event.inputs.name-suffix) }}
