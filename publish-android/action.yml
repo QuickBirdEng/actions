@@ -72,4 +72,4 @@ runs:
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build.outputs.artifact-path }}
-        name-suffix: ${{ github.event.inputs.name-suffix == '' && '' || format('-{{0}}', github.event.inputs.name-suffix) }}
+        name-suffix: ${{ github.event.inputs.name-suffix == '' && '' || format('-{0}', github.event.inputs.name-suffix) }}
