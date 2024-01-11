@@ -1,0 +1,37 @@
+name: 'K8s Rollout'
+description: 'Rolling restart'
+
+inputs:
+  deployment_statefulset_name:
+    description: "Name of deployment to restart"
+    required: true
+  namespace:
+    description: "Namespace"
+    required: true
+  is_statefulset:
+    description: "Is a statefulset rather than a deployment"
+    required: true
+  api_url:
+    description: "API Server URL"
+    required: true
+  service_account_token:
+    description: "Service Account Token"
+    required: true
+
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+    - uses: azure/setup-kubectl@v3
+    - uses: azure/k8s-set-context@v3
+      with:
+         method: service-account
+         k8s-url: ${{ inputs.api_url }}
+         k8s-secret: ${{ inputs.service_account_token }}
+    - shell: bash
+      if: inputs.is_statefulset == 'false'
+      run: kubectl rollout restart deployment ${{ inputs.deployment_statefulset_name }} -n ${{ inputs.namespace }}
+    - shell: bash
+      if: inputs.is_statefulset == 'true'
+      run: kubectl rollout restart statefulset ${{ inputs.deployment_statefulset_name }} -n ${{ inputs.namespace  }}
