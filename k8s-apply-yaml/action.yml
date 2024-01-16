@@ -1,0 +1,29 @@
+name: 'K8s Apply Yaml File'
+description: 'Applies a yaml file to a k8s cluster'
+
+inputs:
+  yaml_file:
+    description: "Yaml file to apply"
+    required: true
+  namespace:
+    description: "Namespace"
+    required: true
+  api_url:
+    description: "API Server URL"
+    required: true
+  service_account_token:
+    description: "Service Account Token"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+    - uses: azure/setup-kubectl@v3
+    - uses: azure/k8s-set-context@v3
+      with:
+         method: service-account
+         k8s-url: ${{ inputs.api_url }}
+         k8s-secret: ${{ inputs.service_account_token }}
+    - shell: bash
+      run: kubectl apply -f ${{ inputs.yaml_file }} -n ${{ inputs.namespace }}
