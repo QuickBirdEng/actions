@@ -22,7 +22,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v4
     - uses: azure/setup-kubectl@v3
     - uses: azure/k8s-set-context@v3
       with:
