@@ -47,6 +47,20 @@ inputs:
   slack-slug:
     description: 'The part of slack hook url after services/'
     required: true
+  sentry-url:
+    description: 'The part of slack hook url after services/'
+    required: false
+  sentry-project:
+    description: 'The part of slack hook url after services/'
+    required: false
+  sentry-auth-token:
+    description: 'The part of slack hook url after services/'
+    required: false
+  sentry-organization:
+    description: 'The part of slack hook url after services/'
+    required: false
+    default: ''
+
 outputs:
   artifact-path: 
     description: 'The path to the xcarchive created by this action'
@@ -91,3 +105,15 @@ runs:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build-ipa.outputs.ipa-path }}
         name-suffix: ${{ github.event.inputs.name-suffix == '' && '' || format('-{0}', github.event.inputs.name-suffix) }}
+    - name: Sentry - Setup Node.js
+      uses: actions/setup-node@v4
+      if: ${{ inputs.sentry-project != '' }}
+      with:
+        node-version: 14
+    - name: Sentry - Install & Upload Debug Symbols
+      if: ${{ inputs.sentry-project != '' }}
+      shell: bash
+      run: |
+        npm install -g @sentry/cli
+        dSYMS_PATH="${{steps.build.outputs.artifact-path}}/dSYMs"
+        sentry-cli --url ${{inputs.sentry-url}} debug-files upload --auth-token ${{inputs.sentry-auth-token}} --org ${{inputs.sentry-organization}} --project ${{inputs.sentry-project}} $dSYMS_PATH || true
