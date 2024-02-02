@@ -47,9 +47,10 @@ inputs:
   slack-slug:
     description: 'The part of slack hook url after services/'
     required: true
+
 outputs:
-  artifact-path: 
-    description: 'The path to the xcarchive created by this action'
+  artifact-path:
+    description: 'The path to the ipa created by this action'
     value: ${{ steps.build-ipa.outputs.ipa-path }}
 runs:
   using: "composite"

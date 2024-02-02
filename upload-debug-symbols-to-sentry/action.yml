@@ -1,0 +1,34 @@
+name: 'Upload debug symbols to sentry'
+description: 'Upload debug symbols to sentry'
+inputs:
+  url:
+    description: 'The part of slack hook url after services/'
+    required: false
+  project:
+    description: 'The part of slack hook url after services/'
+    required: false
+  auth-token:
+    description: 'The part of slack hook url after services/'
+    required: false
+  organization:
+    description: 'The part of slack hook url after services/'
+    required: false
+    default: ''
+  xc-archive-path:
+    description: 'The path to the xcarchive created by this action'
+    required: false
+    default: 'ios/build/ios/archive'
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Install CLI
+      shell: bash
+      run: npm install -g @sentry/cli
+    - name: Upload Debug Symbols
+      shell: bash
+      run: |
+        dSYMS_PATH="${{inputs.xc-archive-path}}/dSYMs"
+        sentry-cli --url ${{inputs.url}} debug-files upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} $dSYMS_PATH || true
