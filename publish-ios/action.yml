@@ -77,7 +77,7 @@ runs:
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: cd ios && fastlane releaseToTestFlight
+      run: cd ios && fastlane releaseToTestFlight --verbose
     - name: Prepare for Upload to apps.quickbirdstudios.com
       id: build-ipa
       shell: bash -l {0}
