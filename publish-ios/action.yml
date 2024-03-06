@@ -64,7 +64,7 @@ runs:
       with:
         platform: flutter
         working-directory: ${{ inputs.working-directory }}
-    - uses: QuickBirdEng/actions/setup-fastlane-environment@main
+    - uses: QuickBirdEng/actions/setup-fastlane-environment@fastlane-release-notes
       with:
         match-repository: ${{ inputs.match-repository }}
         match-password: ${{ inputs.match-password }}
