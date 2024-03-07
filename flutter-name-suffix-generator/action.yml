@@ -1,0 +1,30 @@
+name: 'Build Flutter Artifact'
+description: 'Generates name suffix for flutter build artifact'
+inputs:
+  platform:
+    description: 'The platform to build for (ios or android)'
+    required: true
+  build-arguments:
+    description: 'The arguments which will be passed to the build command (used to extract stage information)'
+outputs:
+  name-suffix:
+    description: 'The generated name suffix for the flutter build artifact'
+    value: ${{ steps.name-suffix-generator.outputs.name-suffix }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate Name Suffix
+      id: name-suffix-generator
+      shell: bash
+      run: |
+        stage=$(echo "${{ inputs.build-arguments}}" | cut -d= -f2 | awk '{print $1}')
+        echo "Stage: $stage"
+
+        name_suffix="${{ inputs.platform }}"
+        if [[ -n $stage ]]; then
+          name_suffix="${name_suffix}-$stage"
+        fi
+
+        echo "name-suffix=$name_suffix" >> $GITHUB_OUTPUT
+        echo "Artifact Name Suffix: $name_suffix"
