@@ -35,6 +35,15 @@ inputs:
     description: 'Build Number. Only used for flutter applications'
     type: string
     required: false
+  release-notes:
+    description: 'Release Notes. Only used for flutter applications'
+    type: string
+    required: false
+  submit-for-review:
+    description: 'Submit TestFlight Build for Review'
+    type: boolean
+    default: false
+    required: false
 
 runs:
   using: "composite"
@@ -52,6 +61,8 @@ runs:
         echo "APPLE_ID=${{ inputs.match-apple-id }}" >> $GITHUB_ENV
         echo "APPLE_TEAM_ID=${{ inputs.match-apple-team-id }}" >> $GITHUB_ENV
         echo "SLACK_URL=https://hooks.slack.com/services/${{ inputs.slack-slug }}" >> $GITHUB_ENV
+        echo "BUILD_CHANGELOG=${{ inputs.release-notes }}" >> $GITHUB_ENV
+        echo "SUBMIT_FOR_REVIEW=${{ inputs.submit-for-review }}" >> $GITHUB_ENV
     - shell: bash
       if: ${{ inputs.build-number != '' }}
       run: echo "BUILD_NUMBER=${{ inputs.build-number }}" >> $GITHUB_ENV

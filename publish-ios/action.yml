@@ -47,6 +47,15 @@ inputs:
   slack-slug:
     description: 'The part of slack hook url after services/'
     required: true
+  release-notes:
+    description: 'Release Notes. Only used for flutter applications'
+    type: string
+    required: false
+  submit-for-review:
+    description: 'Submit TestFlight Build for Review'
+    type: boolean
+    default: false
+    required: false
 
 outputs:
   artifact-path:
@@ -73,6 +82,8 @@ runs:
         apple-auth-key-encoding: ${{ inputs.apple-auth-key-encoding }}
         build-number: ${{ inputs.build-number }}
         slack-slug: ${{ inputs.slack-slug }}
+        release-notes: ${{ inputs.release-notes }}
+        submit-for-review: ${{ inputs.submit-for-review }}
     - name: Publish to TestFlight
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
