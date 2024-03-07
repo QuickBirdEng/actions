@@ -51,6 +51,11 @@ inputs:
     description: 'Release Notes. Only used for flutter applications'
     type: string
     required: false
+  submit-for-review:
+    description: 'Submit TestFlight Build for Review'
+    type: boolean
+    default: false
+    required: false
 
 outputs:
   artifact-path:
@@ -64,7 +69,7 @@ runs:
       with:
         platform: flutter
         working-directory: ${{ inputs.working-directory }}
-    - uses: QuickBirdEng/actions/setup-fastlane-environment@fastlane-release-notes
+    - uses: QuickBirdEng/actions/setup-fastlane-environment@main
       with:
         match-repository: ${{ inputs.match-repository }}
         match-password: ${{ inputs.match-password }}
@@ -78,6 +83,7 @@ runs:
         build-number: ${{ inputs.build-number }}
         slack-slug: ${{ inputs.slack-slug }}
         release-notes: ${{ inputs.release-notes }}
+        submit-for-review: ${{ inputs.submit-for-review }}
     - name: Publish to TestFlight
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
