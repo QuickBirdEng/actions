@@ -24,4 +24,5 @@ runs:
         echo "FLUTTER_XCODE_DERIVED_DATA_PATH=$path/DerivedData" >> $GITHUB_ENV
         echo "FLUTTER_XCODE_TEMP_ROOT=$path/DerivedData" >> $GITHUB_ENV
         echo "ARCHIVE_PATH=$path/Archives" >> $GITHUB_ENV
+        echo "BUILD_LOG_PATH=$path/FastlaneLogs" >> $GITHUB_ENV
         echo "GEM_HOME=$path/gems" >> $GITHUB_ENV
