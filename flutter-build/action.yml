@@ -23,6 +23,31 @@ inputs:
   working-directory:
     description: 'Working directory for action'
     default: '.'
+  obfuscate: 
+    description: 'Build flutter app with obfuscation'
+    required: false
+    default: false
+  sentry-url:
+    description: 'Needed if obfuscate is enabled while building'
+    default: ''
+    type: string
+    required: false
+  sentry-org:
+    description: 'Needed if obfuscate is enabled while building'
+    default: ''
+    type: string
+    required: false
+  sentry-project:
+    description: 'Needed if obfuscate is enabled while building'
+    default: ''
+    type: string
+    required: false
+  sentry-auth-token:
+    description: 'Needed if obfuscate is enabled while building'
+    type: string
+    default: ''
+    required: false
+
 outputs:
   artifact-path: 
     description: 'The path to the artifact (ipa, apk or appbundle) created by this action'
@@ -50,13 +75,28 @@ runs:
           version_number_argument="--build-name=$version"
         fi
 
-        # 2. Build flutter with build number and version number
-        flutter build ${{ inputs.build-type }} --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
+        # 2. Obfuscate build if enabled
+        obfuscation_arguments=""
+        if [ ${{ inputs.obfuscate }} == true ]; then
+          echo "Building with obfuscation enabled"
+          obfuscation_arguments="--obfuscate --split-debug-info=./symbols"
+        fi
 
-        # 3. search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
+        # 3. Build flutter with build number and version number
+        flutter build ${{ inputs.build-type }} $obfuscation_arguments --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
+        # 4. search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
         artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive|.ipa/) print $word}' | sed 's/\.$//')
 
         case $artifact_path in
           /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
           *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
         esac
+    - if: ${{ inputs.sentry-project != '' && inputs.obfuscate }}
+      name: 'Upload flutter symbols to sentry'
+      uses: QuickBirdEng/actions/upload-debug-symbols-to-sentry@main 
+      with:
+        url: ${{ inputs.sentry-url }}
+        organization: ${{ inputs.sentry-org }}
+        project: ${{ inputs.sentry-project }}
+        auth-token: ${{ inputs.sentry-auth-token }}
+        xc-archive-path: ${{ inputs.working-directory }}/symbols
