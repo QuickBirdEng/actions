@@ -62,6 +62,7 @@ inputs:
     required: false
   sentry-auth-token:
     description: 'Needed if obfuscate is enabled while building'
+    required: false
     default: ''
 
 
@@ -83,7 +84,7 @@ runs:
         signing-key-password: ${{ inputs.signing-key-password }}
         qbs-maven-username: ${{ inputs.qbs-maven-username }}
         qbs-maven-password: ${{ inputs.qbs-maven-password }}
-    - uses: QuickBirdEng/actions/flutter-build@main
+    - uses: QuickBirdEng/actions/flutter-build@feature/dart-obfusication
       id: build
       with:
         clean: ${{ inputs.clean }}

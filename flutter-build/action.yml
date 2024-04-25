@@ -30,21 +30,17 @@ inputs:
   sentry-url:
     description: 'Needed if obfuscate is enabled while building'
     default: ''
-    type: string
     required: false
   sentry-org:
     description: 'Needed if obfuscate is enabled while building'
     default: ''
-    type: string
     required: false
   sentry-project:
-    description: 'Needed if obfuscate is enabled while building'
+    description: 'Sentry project name, required if obfuscate is enabled'
     default: ''
-    type: string
     required: false
   sentry-auth-token:
     description: 'Needed if obfuscate is enabled while building'
-    type: string
     default: ''
     required: false
 
@@ -77,26 +73,30 @@ runs:
 
         # 2. Obfuscate build if enabled
         obfuscation_arguments=""
-        if [ ${{ inputs.obfuscate }} == true ]; then
+        if [ ${{ inputs.obfuscate }} == 'true' ]; then
           echo "Building with obfuscation enabled"
-          obfuscation_arguments="--obfuscate --split-debug-info=./symbols"
+          
+          # Debug symbols should be generated in the path upload-debug-symbols-to sentry action i.e /dSYMs
+          obfuscation_arguments="--obfuscate --split-debug-info=./dSYMs"
         fi
 
         # 3. Build flutter with build number and version number
         flutter build ${{ inputs.build-type }} $obfuscation_arguments --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
         # 4. search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
+        
         artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive|.ipa/) print $word}' | sed 's/\.$//')
-
+      
         case $artifact_path in
           /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
           *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
         esac
-    - if: ${{ inputs.sentry-project != '' && inputs.obfuscate }}
+    - if: ${{ inputs.sentry-project != '' && inputs.obfuscate == 'true' }}
       name: 'Upload flutter symbols to sentry'
-      uses: QuickBirdEng/actions/upload-debug-symbols-to-sentry@main 
+      uses: QuickBirdEng/actions/upload-debug-symbols-to-sentry@main
+      continue-on-error: true
       with:
         url: ${{ inputs.sentry-url }}
         organization: ${{ inputs.sentry-org }}
         project: ${{ inputs.sentry-project }}
         auth-token: ${{ inputs.sentry-auth-token }}
-        xc-archive-path: ${{ inputs.working-directory }}/symbols
+        xc-archive-path: ${{ inputs.working-directory }}
