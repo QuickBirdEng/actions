@@ -88,13 +88,13 @@ runs:
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: cd ios && fastlane releaseToTestFlight --verbose
+      run: cd ios && bundle exec fastlane releaseToTestFlight --verbose
     - name: Prepare for Upload to apps.quickbirdstudios.com
       id: build-ipa
       shell: bash -l {0}
       working-directory: ${{ inputs.working-directory }}
       run: |
-        set -eo pipefail && cd ios && fastlane generate_ipa type:adhoc | tee fastlane.log
+        set -eo pipefail && cd ios && bundle exec fastlane generate_ipa type:adhoc | tee fastlane.log
         ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')
         echo "ipa-path=$ipa_path" >> $GITHUB_OUTPUT
     - name: "Publishing to apps.quickbirdstudios.com"
