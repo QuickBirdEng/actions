@@ -29,7 +29,7 @@ inputs:
     required: true
   signing-key-password:
     description: ''
-    required: true  
+    required: true
   qbs-maven-username:
     description: 'Needed if the project uses a private artifact from QBS Maven'
     required: false
@@ -43,36 +43,10 @@ inputs:
   working-directory:
     description: 'Working directory for action'
     default: '.'
-  obfuscate:
-    description: 'Obfuscate flutter build'
-    default: false
-    required: false,
-  sentry-url:
-    description: 'Needed if obfuscate is enabled while building'
-    default: ''
-    type: string
-    required: false
-  sentry-org:
-    description: 'Needed if obfuscate is enabled while building'
-    default: ''
-    required: false
-  sentry-project:
-    description: 'Needed if obfuscate is enabled while building'
-    default: ''
-    required: false
-  sentry-auth-token:
-    description: 'Needed if obfuscate is enabled while building'
-    required: false
-    default: ''
-
-
 outputs:
-  artifact-path: 
+  artifact-path:
     description: 'The path to the apk created by this action'
     value: ${{ steps.build.outputs.artifact-path }}
-  debug-symbol-artifact-path:
-    description: 'The path to flutter debug symbols created by this action'
-    value: ${{ steps.build.outputs.debug-symbol-artifact-path }}
 runs:
   using: "composite"
   steps:
@@ -84,7 +58,7 @@ runs:
         signing-key-password: ${{ inputs.signing-key-password }}
         qbs-maven-username: ${{ inputs.qbs-maven-username }}
         qbs-maven-password: ${{ inputs.qbs-maven-password }}
-    - uses: QuickBirdEng/actions/flutter-build@feature/dart-obfusication
+    - uses: QuickBirdEng/actions/flutter-build@main
       id: build
       with:
         clean: ${{ inputs.clean }}
@@ -93,11 +67,6 @@ runs:
         build-type: apk
         use-cache: ${{ inputs.use-cache }}
         working-directory: ${{ inputs.working-directory }}
-        obfuscate: ${{ inputs.obfuscate }}
-        sentry-url: ${{ inputs.sentry-url }}
-        sentry-org: ${{ inputs.sentry-org }}
-        sentry-project: ${{ inputs.sentry-project }}
-        sentry-auth-token: ${{ inputs.sentry-auth-token }} 
     - name: "Publishing to apps.quickbirdstudios.com"
       uses: QuickBirdEng/actions/qb-publish@main
       with:
