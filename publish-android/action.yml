@@ -29,7 +29,7 @@ inputs:
     required: true
   signing-key-password:
     description: ''
-    required: true  
+    required: true
   qbs-maven-username:
     description: 'Needed if the project uses a private artifact from QBS Maven'
     required: false
@@ -44,7 +44,7 @@ inputs:
     description: 'Working directory for action'
     default: '.'
 outputs:
-  artifact-path: 
+  artifact-path:
     description: 'The path to the apk created by this action'
     value: ${{ steps.build.outputs.artifact-path }}
 runs:

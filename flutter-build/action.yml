@@ -24,7 +24,7 @@ inputs:
     description: 'Working directory for action'
     default: '.'
 outputs:
-  artifact-path: 
+  artifact-path:
     description: 'The path to the artifact (ipa, apk or appbundle) created by this action'
     value: ${{ steps.build-artifact.outputs.artifact-path }}
 runs:

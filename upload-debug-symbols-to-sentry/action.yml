@@ -2,22 +2,26 @@ name: 'Upload debug symbols to sentry'
 description: 'Upload debug symbols to sentry'
 inputs:
   url:
-    description: 'The part of slack hook url after services/'
+    description: 'Url of the sentry server (in case of a custom one)'
     required: false
   project:
-    description: 'The part of slack hook url after services/'
+    description: 'Name of the project in sentry'
     required: false
   auth-token:
-    description: 'The part of slack hook url after services/'
+    description: 'Authorization token for sentry'
     required: false
   organization:
-    description: 'The part of slack hook url after services/'
+    description: 'Organization name'
     required: false
     default: ''
-  xc-archive-path:
-    description: 'The path to the xcarchive created by this action'
+  dsyms-path:
+    description: 'The path to the dsYMs folder'
     required: false
-    default: 'ios/build/ios/archive'
+    default: ''
+  proguard-mapping-file-path:
+    description: 'The path to the proguard mapping file'
+    required: false
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -27,8 +31,14 @@ runs:
     - name: Install CLI
       shell: bash
       run: npm install -g @sentry/cli
-    - name: Upload Debug Symbols
+    - name: Upload Debug Symbols (iOS)
+      if: ${{ inputs.dsyms-path != '' }}
       shell: bash
       run: |
-        dSYMS_PATH="${{inputs.xc-archive-path}}/dSYMs"
-        sentry-cli --url ${{inputs.url}} debug-files upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} $dSYMS_PATH || true
+        sentry-cli --url ${{inputs.url}} debug-files upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.dsyms-path}} || true
+        sentry-cli --url ${{inputs.url}} upload-dif --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} $dSYMS_PATH/app.ios-arm64.symbols || true
+    - name: Upload Proguard Mapping (Android)
+      if: ${{ inputs.proguard-mapping-file-path != '' }}
+      shell: bash
+      run: |
+        sentry-cli --url ${{inputs.url}} upload-proguard --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.proguard-mapping-file-path}} || true
