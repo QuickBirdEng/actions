@@ -58,7 +58,7 @@ runs:
         signing-key-password: ${{ inputs.signing-key-password }}
         qbs-maven-username: ${{ inputs.qbs-maven-username }}
         qbs-maven-password: ${{ inputs.qbs-maven-password }}
-    - uses: QuickBirdEng/actions/flutter-build@main
+    - uses: QuickBirdEng/actions/flutter-build@dart-obfuscation
       id: build
       with:
         clean: ${{ inputs.clean }}

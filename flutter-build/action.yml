@@ -51,7 +51,7 @@ runs:
         fi
 
         # 2. Build flutter with build number and version number
-        flutter build ${{ inputs.build-type }} --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
+        flutter build ${{ inputs.build-type }} --obfuscate --split-debug-info=app_symbols --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
 
         # 3. search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
         artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive|.ipa/) print $word}' | sed 's/\.$//')
@@ -60,3 +60,5 @@ runs:
           /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
           *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
         esac
+
+        ls -al app_symbols
