@@ -31,13 +31,15 @@ runs:
     - name: Install CLI
       shell: bash
       run: npm install -g @sentry/cli
+    - name: Sentry CLI Version
+      shell: bash
+      run: sentry-cli --version
     - name: Upload Debug Symbols (iOS)
       if: ${{ inputs.dsyms-path != '' }}
       shell: bash
       run: |
         ls -al ${{inputs.dsyms-path}}
         sentry-cli --url ${{inputs.url}} debug-files upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.dsyms-path}} || true
-        sentry-cli --url ${{inputs.url}} upload-dif --include-sources --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} $dSYMS_PATH/app.ios-arm64.symbols || true
     - name: Upload Proguard Mapping (Android)
       if: ${{ inputs.proguard-mapping-file-path != '' }}
       shell: bash
