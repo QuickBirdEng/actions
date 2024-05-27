@@ -46,15 +46,20 @@ runs:
       run: |
         # 1. Get version number from tag (in case a tag is pushed)
         version_number_argument=""
+        version_and_build_number=""
+
         # Get tag if it exists
         if [[ $GITHUB_REF_TYPE == 'tag' ]]; then
           version=$(echo $GITHUB_REF_NAME | grep --only-matching --extended-regexp '([0-9]+).([0-9]+).([0-9]+)' | head -1)
           echo "Using Version number from tag => $version"
           version_number_argument="--build-name=$version"
-          echo "version-and-build-number=$version+${{ inputs.build-number }}" >> $GITHUB_OUTPUT
+          version_and_build_number="$version+${{ inputs.build-number }}"
         else
-          echo "version-and-build-number=$(grep '^version:' pubspec.yaml | sed 's/version: //' | sed 's/+.*//')+${{ inputs.build-number }}" >> $GITHUB_OUTPUT
+          version_and_build_number="$(grep '^version:' pubspec.yaml | sed 's/version: //' | sed 's/+.*//')+${{ inputs.build-number }}"
         fi
+
+        echo "version-and-build-number=$version_and_build_number" >> $GITHUB_OUTPUT
+        echo "Version & Build: $version_and_build_number"
 
         # 2. Build flutter with build number and version number
         flutter build ${{ inputs.build-type }} --obfuscate --split-debug-info=app_symbols --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
