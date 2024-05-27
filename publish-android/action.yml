@@ -47,6 +47,13 @@ outputs:
   artifact-path:
     description: 'The path to the apk created by this action'
     value: ${{ steps.build.outputs.artifact-path }}
+  artifact-version-and-build-number:
+    description: 'The version and build number of the artifact'
+    value: ${{ steps.build.outputs.artifact-version-and-build-number }}
+  artifact-dart-symbols-file-path:
+    description: 'The path to the dart symbols file'
+    value: ${{ steps.build.outputs.artifact-dart-symbols-file-path }}
+
 runs:
   using: "composite"
   steps:

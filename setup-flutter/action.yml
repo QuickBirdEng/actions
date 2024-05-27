@@ -28,17 +28,10 @@ runs:
       if: ${{ inputs.clean == 'true' }}
       working-directory: ${{ inputs.working-directory }}
       run: flutter clean
-    - shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: flutter pub get
     - name: Fetch Project Dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: flutter pub get
-    - name: Project dependency graph
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: flutter pub deps
     - name: Code Generation using build_runner
       shell: bash
       if: ${{ env.RUN_BUILD_RUNNER == '' || env.RUN_BUILD_RUNNER == 'true' }}

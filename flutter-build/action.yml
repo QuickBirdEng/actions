@@ -30,6 +30,9 @@ outputs:
   artifact-version-and-build-number:
     description: 'The version and build number of the artifact'
     value: ${{ steps.build-artifact.outputs.version-and-build-number }}
+  artifact-dart-symbols-file-path:
+    description: 'The path to the dart symbols file'
+    value: ${{ steps.build-artifact.outputs.dart-symbols-path }}
 runs:
   using: "composite"
   steps:
@@ -47,7 +50,7 @@ runs:
         # 1. Get version number from tag (in case a tag is pushed)
         version_number_argument=""
         version_and_build_number=""
-
+        symbols_directory="app_symbols"
         # Get tag if it exists
         if [[ $GITHUB_REF_TYPE == 'tag' ]]; then
           version=$(echo $GITHUB_REF_NAME | grep --only-matching --extended-regexp '([0-9]+).([0-9]+).([0-9]+)' | head -1)
@@ -62,12 +65,14 @@ runs:
         echo "Version & Build: $version_and_build_number"
 
         # 2. Build flutter with build number and version number
-        flutter build ${{ inputs.build-type }} --obfuscate --split-debug-info=app_symbols --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
+        flutter build ${{ inputs.build-type }} --obfuscate --split-debug-info=$symbols_directory --build-number=${{ inputs.build-number }} $version_number_argument ${{ inputs.build-arguments }} | tee flutter_build.log
 
         # 3. search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
         artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive|.ipa/) print $word}' | sed 's/\.$//')
 
+        echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
+
         case $artifact_path in
-          /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
-          *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
+          /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT;;
+          *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT;;
         esac
