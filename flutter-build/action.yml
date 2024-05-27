@@ -27,6 +27,9 @@ outputs:
   artifact-path:
     description: 'The path to the artifact (ipa, apk or appbundle) created by this action'
     value: ${{ steps.build-artifact.outputs.artifact-path }}
+  artifact-version-and-build-number:
+    description: 'The version and build number of the artifact'
+    value: ${{ steps.build-artifact.outputs.version-and-build-number }}
 runs:
   using: "composite"
   steps:
@@ -48,6 +51,9 @@ runs:
           version=$(echo $GITHUB_REF_NAME | grep --only-matching --extended-regexp '([0-9]+).([0-9]+).([0-9]+)' | head -1)
           echo "Using Version number from tag => $version"
           version_number_argument="--build-name=$version"
+          echo "version-and-build-number=$version+${{ inputs.build-number }}" >> $GITHUB_OUTPUT
+        else
+          echo "version-and-build-number=$(grep '^version:' pubspec.yaml | sed 's/version: //' | sed 's/+.*//')+${{ inputs.build-number }}" >> $GITHUB_OUTPUT
         fi
 
         # 2. Build flutter with build number and version number
@@ -60,5 +66,3 @@ runs:
           /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
           *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
         esac
-
-        ls -al app_symbols

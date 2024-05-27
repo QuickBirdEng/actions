@@ -14,6 +14,9 @@ inputs:
     description: 'Organization name'
     required: false
     default: ''
+  version-and-build-number:
+    description: 'Version and build number concatenated by + e.g. 1.0.0+123534'
+    required: true
   dsyms-path:
     description: 'The path to the dsYMs folder'
     required: false
@@ -22,6 +25,9 @@ inputs:
     description: 'The path to the proguard mapping file'
     required: false
     default: ''
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
 runs:
   using: "composite"
   steps:
@@ -36,13 +42,19 @@ runs:
       run: sentry-cli --version
     - name: Upload Debug Symbols (iOS)
       if: ${{ inputs.dsyms-path != '' }}
+      working-directory: ${{ inputs.working-directory }}
       shell: bash
       run: |
         ls -al ${{inputs.dsyms-path}}
         sentry-cli --url ${{inputs.url}} debug-files upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.dsyms-path}} || true
+        ls -al app-symbols
+        sentry-cli --url ${{inputs.url}} files upload app-symbols --release=${{inputs.version}}-${{inputs.build-number}} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} app_symbols || true
     - name: Upload Proguard Mapping (Android)
       if: ${{ inputs.proguard-mapping-file-path != '' }}
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         ls -al ${{inputs.proguard-mapping-file-path}}
         sentry-cli --url ${{inputs.url}} upload-proguard --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.proguard-mapping-file-path}} || true
+        ls -al app_symbols
+        sentry-cli --url ${{inputs.url}} files upload app-symbols --release=${{inputs.version}}-${{inputs.build-number}} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.proguard-mapping-file-path}} || true
