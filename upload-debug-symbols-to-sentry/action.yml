@@ -14,9 +14,6 @@ inputs:
     description: 'Organization name'
     required: false
     default: ''
-  version-and-build-number:
-    description: 'Version and build number concatenated by + e.g. 1.0.0+123534'
-    required: true
   dsyms-path:
     description: 'The path to the dsYMs folder'
     required: false
@@ -45,7 +42,7 @@ runs:
       if: ${{ inputs.dart-symbols-file-path != '' }}
       shell: bash
       run: |
-        sentry-cli --url ${{inputs.url}} files upload ${{ inputs.dart-symbols-file-path }} --release=${{inputs.version-and-build-number}} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} || true
+        sentry-cli --url ${{inputs.url}} upload-dif ${{ inputs.dart-symbols-file-path }} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} || true
     - name: Upload Debug Symbols (iOS)
       if: ${{ inputs.dsyms-path != '' }}
       shell: bash

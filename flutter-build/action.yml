@@ -31,21 +31,12 @@ outputs:
   artifact-path:
     description: 'The path to the artifact (ipa, apk or appbundle) created by this action'
     value: ${{ steps.build-artifact.outputs.artifact-path }}
-  artifact-version-and-build-number:
-    description: 'The version and build number of the artifact'
-    value: ${{ steps.build-artifact.outputs.version-and-build-number }}
   artifact-dart-symbols-file-path:
     description: 'The path to the dart symbols file'
     value: ${{ steps.build-artifact.outputs.dart-symbols-path }}
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-flutter@main
-      with:
-        use-cache: ${{ inputs.use-cache }}
-        clean: ${{ inputs.clean }}
-        setup-gems: ${{ inputs.build-type == 'ipa' }}
-        working-directory: ${{ inputs.working-directory }}
     - id: build-artifact
       name: "Building Artifact"
       working-directory: ${{ inputs.working-directory }}
@@ -71,8 +62,6 @@ runs:
         fi
 
         extra_arguments="${extra_arguments_list[*]}"
-
-        echo "version-and-build-number=$version_and_build_number" >> $GITHUB_OUTPUT
 
         echo "Extra Arguments: $extra_arguments"
         echo "Version & Build: $version_and_build_number"
