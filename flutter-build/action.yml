@@ -43,6 +43,9 @@ runs:
         clean: ${{ inputs.clean }}
         setup-gems: ${{ inputs.build-type == 'ipa' }}
         working-directory: ${{ inputs.working-directory }}
+    - shell: bash
+      if: ${{ inputs.build-type == 'ipa' }}
+      run:  cd ios && bundle exec fastlane match_for_signing type:appstore
     - id: build-artifact
       name: "Building Artifact"
       working-directory: ${{ inputs.working-directory }}
