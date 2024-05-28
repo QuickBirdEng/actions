@@ -65,7 +65,7 @@ runs:
   using: "composite"
   steps:
     - uses: QuickBirdEng/actions/setup-ios@main
-    - uses: QuickBirdEng/actions/setup-fastlane@main
+    - uses: QuickBirdEng/actions/setup-fastlane@dart-obfuscation
       with:
         platform: flutter
         working-directory: ${{ inputs.working-directory }}
@@ -88,7 +88,7 @@ runs:
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: cd ios && bundle exec fastlane releaseToTestFlight --verbose
+      run: cd ios && bundle exec fastlane release type:appstore --verbose
     - name: Prepare for Upload to apps.quickbirdstudios.com
       id: build-ipa
       shell: bash -l {0}
@@ -97,9 +97,9 @@ runs:
         set -eo pipefail && cd ios && bundle exec fastlane generate_ipa type:adhoc | tee fastlane.log
         ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')
         echo "ipa-path=$ipa_path" >> $GITHUB_OUTPUT
-    - name: "Publishing to apps.quickbirdstudios.com"
-      uses: QuickBirdEng/actions/qb-publish@main
-      with:
-        upload-key: ${{ inputs.upload-key }}
-        file: ${{ steps.build-ipa.outputs.ipa-path }}
-        name-suffix: ${{ github.event.inputs.name-suffix == '' && '' || format('-{0}', github.event.inputs.name-suffix) }}
+    # - name: "Publishing to apps.quickbirdstudios.com"
+    #   uses: QuickBirdEng/actions/qb-publish@main
+    #   with:
+    #     upload-key: ${{ inputs.upload-key }}
+    #     file: ${{ steps.build-ipa.outputs.ipa-path }}
+    #     name-suffix: ${{ github.event.inputs.name-suffix == '' && '' || format('-{0}', github.event.inputs.name-suffix) }}
