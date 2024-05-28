@@ -24,7 +24,7 @@ runs:
           --form 'release[build]=@${{ inputs.file }}' \
           -w "\n%{http_code}")
 
-        if [[ $response_code -ge 400 ]]; then 
+        if [[ $response_code -ge 400 ]]; then
             echo "Upload failed with $response_code"
             exit 1
         fi

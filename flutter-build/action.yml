@@ -20,6 +20,10 @@ inputs:
     required: false
   extra-step:
     description: ''
+  skip-setup-step:
+    description: 'If the flutter setup step is already done, you can skip it by setting this to true'
+    required: false
+    default: false
   obfuscate:
     description: 'Should obfuscate the build?'
     required: false
@@ -37,15 +41,13 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-flutter@main
+    - uses: QuickBirdEng/actions/setup-flutter@dart-obfuscation
+      if: ${{ inputs.skip-setup-step == 'false' }}
       with:
         use-cache: ${{ inputs.use-cache }}
         clean: ${{ inputs.clean }}
         setup-gems: ${{ inputs.build-type == 'ipa' }}
         working-directory: ${{ inputs.working-directory }}
-    - shell: bash
-      if: ${{ inputs.build-type == 'ipa' }}
-      run:  cd ios && bundle exec fastlane match_for_signing type:appstore
     - id: build-artifact
       name: "Building Artifact"
       working-directory: ${{ inputs.working-directory }}
@@ -56,10 +58,13 @@ runs:
         version_and_build_number=""
         symbols_directory="app_symbols"
 
-        if [[ ${{inputs.obfuscate}} == 'true' ]]; then
+        if [[ ${{ inputs.obfuscate }} == 'true' ]]; then
           extra_arguments_list+=("--obfuscate --split-debug-info=$symbols_directory")
         fi
 
+        if [[ ${{ inputs.build-type }} == 'ipa' ]]; then
+          extra_arguments_list+=("--export-options-plist=ios/fastlane/ExportOptions.plist")
+        fi
         # Get tag if it exists (to get version number from it)
         if [[ $GITHUB_REF_TYPE == 'tag' ]]; then
           version=$(echo $GITHUB_REF_NAME | grep --only-matching --extended-regexp '([0-9]+).([0-9]+).([0-9]+)' | head -1)
