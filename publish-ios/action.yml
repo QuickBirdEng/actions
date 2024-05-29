@@ -102,7 +102,7 @@ runs:
     - shell: bash -l {0}
       working-directory: ${{ inputs.working-directory }}/ios
       run: bundle exec fastlane prepare_for_release type:appstore
-    - uses: QuickBirdEng/actions/flutter-build@main
+    - uses: QuickBirdEng/actions/flutter-build@signing-playground
       id: build
       with:
         build-type: ipa
@@ -112,7 +112,7 @@ runs:
         working-directory: ${{ inputs.working-directory }}
         obfuscate: ${{ inputs.obfuscate }}
         skip-setup-step: true
-    - name: Publish to TestFlight
-      shell: bash -l {0}
-      working-directory: ${{ inputs.working-directory }}/ios
-      run: bundle exec fastlane releaseToTestFlight xcarchive_path:${{steps.build.outputs.artifact-path}}
+    # - name: Publish to TestFlight
+    #   shell: bash -l {0}
+    #   working-directory: ${{ inputs.working-directory }}/ios
+    #   run: bundle exec fastlane releaseToTestFlight xcarchive_path:${{steps.build.outputs.artifact-path}}
