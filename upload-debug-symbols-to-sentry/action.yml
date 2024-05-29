@@ -22,6 +22,10 @@ inputs:
     description: 'The path to the proguard mapping file'
     required: false
     default: ''
+  dart-symbols-file-path:
+    description: 'The path to the dart symbols file'
+    required: false
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -31,14 +35,21 @@ runs:
     - name: Install CLI
       shell: bash
       run: npm install -g @sentry/cli
+    - name: Sentry CLI Version
+      shell: bash
+      run: sentry-cli --version
+    - name: Upload Dart Symbols
+      if: ${{ inputs.dart-symbols-file-path != '' }}
+      shell: bash
+      run: |
+        sentry-cli --url ${{inputs.url}} upload-dif ${{ inputs.dart-symbols-file-path }} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} || true
     - name: Upload Debug Symbols (iOS)
       if: ${{ inputs.dsyms-path != '' }}
       shell: bash
       run: |
-        sentry-cli --url ${{inputs.url}} debug-files upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.dsyms-path}} || true
-        sentry-cli --url ${{inputs.url}} upload-dif --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} $dSYMS_PATH/app.ios-arm64.symbols || true
+        sentry-cli --url ${{inputs.url}} debug-files upload ${{inputs.dsyms-path}} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} || true
     - name: Upload Proguard Mapping (Android)
       if: ${{ inputs.proguard-mapping-file-path != '' }}
       shell: bash
       run: |
-        sentry-cli --url ${{inputs.url}} upload-proguard --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{inputs.proguard-mapping-file-path}} || true
+        sentry-cli --url ${{inputs.url}} upload-proguard ${{inputs.proguard-mapping-file-path}} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} || true

@@ -56,11 +56,29 @@ inputs:
     type: boolean
     default: false
     required: false
-
+  build-arguments:
+    description: 'Build Arguments'
+    type: string
+    required: false
+    default: ''
+  obfuscate:
+    description: 'Should obfuscate dart code?'
+    required: false
+    default: false
 outputs:
   artifact-path:
     description: 'The path to the ipa created by this action'
     value: ${{ steps.build-ipa.outputs.ipa-path }}
+  flutter-artifact-path:
+    description: 'The path to the xcarchive created by this action'
+    value: ${{ steps.build.outputs.artifact-path }}
+  artifact-dsyms-path:
+    description: 'The path to the dsyms file'
+    value: ${{ steps.build.outputs.artifact-path }}/dSYMs
+  artifact-dart-symbols-file-path:
+    description: 'The path to the dart symbols file'
+    value: ${{ steps.build.outputs.artifact-dart-symbols-file-path }}
+
 runs:
   using: "composite"
   steps:
@@ -84,17 +102,36 @@ runs:
         slack-slug: ${{ inputs.slack-slug }}
         release-notes: ${{ inputs.release-notes }}
         submit-for-review: ${{ inputs.submit-for-review }}
+    - uses: QuickBirdEng/actions/setup-flutter@main
+      with:
+        use-cache: ${{ inputs.use-cache }}
+        clean: true
+        setup-gems: true
+        working-directory: ${{ inputs.working-directory }}
+    - shell: bash -l {0}
+      working-directory: ${{ inputs.working-directory }}/ios
+      run: bundle exec fastlane prepare_for_release type:appstore
+    - uses: QuickBirdEng/actions/flutter-build@main
+      id: build
+      with:
+        build-type: ipa
+        build-number: ${{ inputs.build-number }}
+        build-arguments: ${{ inputs.build-arguments }}
+        clean: true
+        working-directory: ${{ inputs.working-directory }}
+        obfuscate: ${{ inputs.obfuscate }}
+        skip-setup-step: true
     - name: Publish to TestFlight
       shell: bash -l {0}
       if: ${{ inputs.publish-to-testflight == 'true' }}
-      working-directory: ${{ inputs.working-directory }}
-      run: cd ios && bundle exec fastlane releaseToTestFlight --verbose
+      working-directory: ${{ inputs.working-directory }}/ios
+      run: bundle exec fastlane releaseToTestFlight xcarchive_path:${{steps.build.outputs.artifact-path}}
     - name: Prepare for Upload to apps.quickbirdstudios.com
       id: build-ipa
       shell: bash -l {0}
-      working-directory: ${{ inputs.working-directory }}
+      working-directory: ${{ inputs.working-directory }}/ios
       run: |
-        set -eo pipefail && cd ios && bundle exec fastlane generate_ipa type:adhoc | tee fastlane.log
+        set -eo pipefail && bundle exec fastlane generate_ipa type:adhoc xcarchive_path:${{steps.build.outputs.artifact-path}} | tee fastlane.log
         ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')
         echo "ipa-path=$ipa_path" >> $GITHUB_OUTPUT
     - name: "Publishing to apps.quickbirdstudios.com"

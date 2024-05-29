@@ -43,10 +43,17 @@ inputs:
   working-directory:
     description: 'Working directory for action'
     default: '.'
+  obfuscate:
+    description: 'Should obfuscate dart code?'
+    required: false
+    default: false
 outputs:
   artifact-path:
     description: 'The path to the apk created by this action'
     value: ${{ steps.build.outputs.artifact-path }}
+  artifact-dart-symbols-file-path:
+    description: 'The path to the dart symbols file'
+    value: ${{ steps.build.outputs.artifact-dart-symbols-file-path }}
 runs:
   using: "composite"
   steps:
@@ -67,6 +74,7 @@ runs:
         build-type: apk
         use-cache: ${{ inputs.use-cache }}
         working-directory: ${{ inputs.working-directory }}
+        obfuscate: ${{ inputs.obfuscate }}
     - name: "Publishing to apps.quickbirdstudios.com"
       uses: QuickBirdEng/actions/qb-publish@main
       with:
