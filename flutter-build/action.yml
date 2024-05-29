@@ -88,9 +88,9 @@ runs:
 
         echo "Artifact Path => $artifact_path"
 
-        # echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
+        echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
 
-        # case $artifact_path in
-        #   /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
-        #   *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
-        # esac
+        case $artifact_path in
+          /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
+          *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
+        esac
