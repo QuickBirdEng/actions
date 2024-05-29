@@ -1,12 +1,6 @@
 name: 'Publish IPA to Apps@QuickBird and TestFlight (conditions apply)'
 description: 'Publishing Flutter iOS builds'
 inputs:
-  upload-key:
-    description: 'upload-key'
-    required: true
-  publish-to-testflight:
-    description: 'Should publish to Testflight?'
-    default: false
   match-repository:
     description: 'Match Repository'
     required: true
@@ -67,10 +61,7 @@ inputs:
     default: false
 outputs:
   artifact-path:
-    description: 'The path to the ipa created by this action'
-    value: ${{ steps.build-ipa.outputs.ipa-path }}
-  flutter-artifact-path:
-    description: 'The path to the xcarchive created by this action'
+    description: 'The path to the xcarchive created as a result of this action'
     value: ${{ steps.build.outputs.artifact-path }}
   artifact-dsyms-path:
     description: 'The path to the dsyms file'
@@ -123,20 +114,5 @@ runs:
         skip-setup-step: true
     - name: Publish to TestFlight
       shell: bash -l {0}
-      if: ${{ inputs.publish-to-testflight == 'true' }}
       working-directory: ${{ inputs.working-directory }}/ios
       run: bundle exec fastlane releaseToTestFlight xcarchive_path:${{steps.build.outputs.artifact-path}}
-    - name: Prepare for Upload to apps.quickbirdstudios.com
-      id: build-ipa
-      shell: bash -l {0}
-      working-directory: ${{ inputs.working-directory }}/ios
-      run: |
-        set -eo pipefail && bundle exec fastlane generate_ipa type:adhoc xcarchive_path:${{steps.build.outputs.artifact-path}} | tee fastlane.log
-        ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')
-        echo "ipa-path=$ipa_path" >> $GITHUB_OUTPUT
-    - name: "Publishing to apps.quickbirdstudios.com"
-      uses: QuickBirdEng/actions/qb-publish@main
-      with:
-        upload-key: ${{ inputs.upload-key }}
-        file: ${{ steps.build-ipa.outputs.ipa-path }}
-        name-suffix: ${{ github.event.inputs.name-suffix == '' && '' || format('-{0}', github.event.inputs.name-suffix) }}
