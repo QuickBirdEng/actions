@@ -41,7 +41,7 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-flutter@dart-obfuscation
+    - uses: QuickBirdEng/actions/setup-flutter@main
       if: ${{ inputs.skip-setup-step == 'false' }}
       with:
         use-cache: ${{ inputs.use-cache }}
