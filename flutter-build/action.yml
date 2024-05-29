@@ -87,7 +87,7 @@ runs:
         artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive/) print $word}' | sed 's/\.$//')
 
         echo "Artifact Path => $artifact_path"
-
+        echo "Dart Symbols Path => ${{ inputs.working-directory }}/$symbols_directory"
         echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
 
         case $artifact_path in
