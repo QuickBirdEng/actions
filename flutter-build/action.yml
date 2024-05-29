@@ -13,7 +13,7 @@ inputs:
     required: false
     default: false
   build-type:
-    description: 'ipa, apk or appbundle'
+    description: 'ios, ipa, apk or appbundle'
     required: true
   build-arguments:
     description: 'any extra arguments such as using sksl or passing a variable using --dart-define etc.'
