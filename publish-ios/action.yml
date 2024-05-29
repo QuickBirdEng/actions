@@ -115,4 +115,4 @@ runs:
     - name: Publish to TestFlight
       shell: bash -l {0}
       working-directory: ${{ inputs.working-directory }}/ios
-      run: bundle exec fastlane releaseToTestFlight xcarchive_path:${{steps.build.outputs.artifact-path}}
+      run: bundle exec fastlane releaseToTestFlight ipa_path:../../build/ios/ipa
