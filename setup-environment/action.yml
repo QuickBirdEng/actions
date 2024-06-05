@@ -6,11 +6,13 @@ runs:
     - name: 'Setting up Environment'
       shell: bash
       run: |
-        if [[ -z $ENVIRONMENT_FILE ]]; then 
+        ls -al
+        if [[ -z $ENVIRONMENT_FILE ]]; then
           echo "WARNING: No Environment file found. Please make sure it is the intended action!!!"
           exit 0
         fi
 
+        cat $ENVIRONMENT_FILE
         awk 'NF' $ENVIRONMENT_FILE | sed '/^#/d' | while IFS= read -r LINE; do
             echo "$LINE" >> $GITHUB_ENV
         done
