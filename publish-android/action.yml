@@ -29,7 +29,7 @@ inputs:
     required: true
   signing-key-password:
     description: ''
-    required: true  
+    required: true
   qbs-maven-username:
     description: 'Needed if the project uses a private artifact from QBS Maven'
     required: false
@@ -44,13 +44,13 @@ inputs:
     description: 'Working directory for action'
     default: '.'
 outputs:
-  artifact-path: 
+  artifact-path:
     description: 'The path to the apk created by this action'
     value: ${{ steps.build.outputs.artifact-path }}
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-android@main
+    - uses: QuickBirdEng/actions/setup-android@flutter-legacy
       with:
         key-store-file-content: ${{ inputs.key-store-file-content }}
         key-store-password: ${{ inputs.key-store-password }}
@@ -58,7 +58,7 @@ runs:
         signing-key-password: ${{ inputs.signing-key-password }}
         qbs-maven-username: ${{ inputs.qbs-maven-username }}
         qbs-maven-password: ${{ inputs.qbs-maven-password }}
-    - uses: QuickBirdEng/actions/flutter-build@main
+    - uses: QuickBirdEng/actions/flutter-build@flutter-legacy
       id: build
       with:
         clean: ${{ inputs.clean }}
@@ -68,7 +68,7 @@ runs:
         use-cache: ${{ inputs.use-cache }}
         working-directory: ${{ inputs.working-directory }}
     - name: "Publishing to apps.quickbirdstudios.com"
-      uses: QuickBirdEng/actions/qb-publish@main
+      uses: QuickBirdEng/actions/qb-publish@flutter-legacy
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build.outputs.artifact-path }}

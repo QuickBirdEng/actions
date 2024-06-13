@@ -12,7 +12,7 @@ inputs:
     required: true
   signing-key-password:
     description: ''
-    required: true  
+    required: true
   qbs-maven-username:
     default: ""
   qbs-maven-password:
@@ -20,7 +20,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-android-for-build@main
+    - uses: QuickBirdEng/actions/setup-android-for-build@flutter-legacy
       with:
         qbs-maven-username: ${{ inputs.qbs-maven-username }}
         qbs-maven-password: ${{ inputs.qbs-maven-password }}
@@ -28,7 +28,7 @@ runs:
       shell: bash
       run: |
         KEY_STORE_PATH="${RUNNER_TEMP}"/keystore.jks
-        echo ${{ inputs.key-store-file-content }} | base64 -di > "$KEY_STORE_PATH" 
+        echo ${{ inputs.key-store-file-content }} | base64 -di > "$KEY_STORE_PATH"
 
         echo ANDROID_KEYSTORE_PATH="$KEY_STORE_PATH" >> $GITHUB_ENV
         echo ANDROID_KEYSTORE_PASSWORD=${{ inputs.key-store-password }} >> $GITHUB_ENV

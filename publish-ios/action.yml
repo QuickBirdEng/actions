@@ -64,12 +64,12 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-ios@main
-    - uses: QuickBirdEng/actions/setup-fastlane@main
+    - uses: QuickBirdEng/actions/setup-ios@flutter-legacy
+    - uses: QuickBirdEng/actions/setup-fastlane@flutter-legacy
       with:
         platform: flutter
         working-directory: ${{ inputs.working-directory }}
-    - uses: QuickBirdEng/actions/setup-fastlane-environment@main
+    - uses: QuickBirdEng/actions/setup-fastlane-environment@flutter-legacy
       with:
         match-repository: ${{ inputs.match-repository }}
         match-password: ${{ inputs.match-password }}
@@ -98,7 +98,7 @@ runs:
         ipa_path=$(cat fastlane.log | grep -o '\IPA Path => .*' | sed -e 's/IPA Path => //g')
         echo "ipa-path=$ipa_path" >> $GITHUB_OUTPUT
     - name: "Publishing to apps.quickbirdstudios.com"
-      uses: QuickBirdEng/actions/qb-publish@main
+      uses: QuickBirdEng/actions/qb-publish@flutter-legacy
       with:
         upload-key: ${{ inputs.upload-key }}
         file: ${{ steps.build-ipa.outputs.ipa-path }}

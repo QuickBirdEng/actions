@@ -1,7 +1,7 @@
 name: 'Compress & Upload Artifact to QB Spaces & (only on tags) to Release Assets'
 description: 'Compress & Upload Artifact to QB Spaces'
 inputs:
-  repo-token: 
+  repo-token:
     description: 'Github repository token (used for adding artifact to release)'
     type: string
   name:
@@ -30,7 +30,7 @@ runs:
       shell: bash
       run: |
         artifact_name="artifact"
-        
+
         if [[ '${{ inputs.name }}' == '' ]]; then
           [[ '${{ github.ref_type }}' == 'tag' ]] && artifact_name="${{ github.ref_name }}"
         else
@@ -41,12 +41,12 @@ runs:
         echo "artifact-name=$artifact_name" >> $GITHUB_OUTPUT
     - name: Compress XCArchive File as tar.gz
       id: compress
-      uses: QuickBirdEng/actions/compress-artifact@main
+      uses: QuickBirdEng/actions/compress-artifact@flutter-legacy
       with:
         name: ${{ steps.name-generator.outputs.artifact-name }}
         artifact-path: ${{ inputs.artifact-path }}
     - name: Upload Artifact to QB Spaces
-      uses: QuickBirdEng/actions/upload-artifact-qb@main
+      uses: QuickBirdEng/actions/upload-artifact-qb@flutter-legacy
       with:
         access-key: ${{ inputs.access-key }}
         secret-key: ${{ inputs.secret-key }}

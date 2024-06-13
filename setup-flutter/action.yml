@@ -18,7 +18,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-environment@main
+    - uses: QuickBirdEng/actions/setup-environment@flutter-legacy
     - uses: subosito/flutter-action@v2
       with:
         flutter-version: ${{ env.FLUTTER_VERSION }}

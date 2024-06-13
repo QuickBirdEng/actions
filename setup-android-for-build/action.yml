@@ -8,7 +8,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-environment@main
+    - uses: QuickBirdEng/actions/setup-environment@flutter-legacy
     - name: Setup Java Version
       id: setup-java
       shell: bash
@@ -16,10 +16,10 @@ runs:
         java_version=8
         java_distribution=adopt
 
-        # If environment variables are set, use those values 
-        [[ -z $JAVA_VERSION ]] || java_version=$JAVA_VERSION 
-        [[ -z $JAVA_DISTRIBUTION ]] || java_distribution=$JAVA_DISTRIBUTION 
-        
+        # If environment variables are set, use those values
+        [[ -z $JAVA_VERSION ]] || java_version=$JAVA_VERSION
+        [[ -z $JAVA_DISTRIBUTION ]] || java_distribution=$JAVA_DISTRIBUTION
+
         echo "java-version=$java_version" >> $GITHUB_OUTPUT
         echo "java-distribution=$java_distribution" >> $GITHUB_OUTPUT
     - name: Set up JDK

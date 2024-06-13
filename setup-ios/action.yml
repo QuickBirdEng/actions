@@ -8,7 +8,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-environment@main
+    - uses: QuickBirdEng/actions/setup-environment@flutter-legacy
     - uses: maxim-lobanov/setup-xcode@v1
       with:
         xcode-version: ${{ env.XCODE_VERSION }}
