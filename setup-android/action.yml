@@ -28,7 +28,10 @@ runs:
       shell: bash
       run: |
         KEY_STORE_PATH="${RUNNER_TEMP}"/keystore.jks
-        echo ${{ inputs.key-store-file-content }} | base64 -di > "$KEY_STORE_PATH" 
+        echo ${{ inputs.key-store-file-content }} | base64 -di > "$KEY_STORE_PATH"
+
+        export PASS=${{ inputs.key-store-password }}
+        openssl x509 -fingerprint -in "$KEY_STORE_PATH" -noout -passin env:PASS || true
 
         echo ANDROID_KEYSTORE_PATH="$KEY_STORE_PATH" >> $GITHUB_ENV
         echo ANDROID_KEYSTORE_PASSWORD=${{ inputs.key-store-password }} >> $GITHUB_ENV
