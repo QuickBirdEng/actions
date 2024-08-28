@@ -28,7 +28,7 @@ runs:
       shell: bash
       run: |
         KEY_STORE_PATH="${RUNNER_TEMP}"/keystore.jks
-        echo ${{ inputs.key-store-file-content }} | base64 -di > "$KEY_STORE_PATH"
+        echo ${{ inputs.key-store-file-content }} | base64 -d > "$KEY_STORE_PATH"
 
         keytool -list -v -keystore "$KEY_STORE_PATH" -alias ${{ inputs.signing-key-alias }} -storepass ${{ inputs.key-store-password }} -keypass ${{ inputs.signing-key-password }}
 
