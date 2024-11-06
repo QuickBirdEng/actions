@@ -1,5 +1,10 @@
 name: 'Run Static Analysis'
 description: ''
+inputs:
+  sonar-token:
+    description: 'Token for Sonarqube project'
+  sonar-host-url:
+    description: 'URL for the Sonarqube server'
 
 runs:
   using: "composite"
@@ -12,7 +17,7 @@ runs:
     - name: Run sonar-scanner
       shell: bash
       env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
       run: |
         $HOME/.sonar/sonar-scanner-6.1.0.4477-linux-x64/bin/sonar-scanner
