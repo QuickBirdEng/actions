@@ -1,0 +1,85 @@
+name: 'Publish IPA to Testflight'
+description: 'Publishing native iOS builds'
+inputs:
+  match-repository:
+    description: 'Match Repository'
+    required: true
+  match-password:
+    description: 'Password for Match Repo'
+    required: true
+  match-apple-id:
+    description: 'Apple ID to use for match'
+    required: true
+  match-apple-team-id:
+    description: 'Apple Team ID to use for match'
+    required: true
+  match-keychain-password:
+    description: 'Keychain Password to use for match'
+    required: true
+  apple-auth-key-id:
+    description: 'Auth Key'
+    required: true
+  apple-auth-key-issuer-id:
+    description: 'Auth Key Issuer ID'
+    required: true
+  apple-auth-key-content:
+    description: 'Auth Key Content'
+    required: true
+  apple-auth-key-encoding:
+    description: 'Auth Key Encoding'
+    required: true
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
+  build-number:
+    description: 'Build Number'
+  slack-slug:
+    description: 'The part of slack hook url after services/'
+    required: true
+  release-notes:
+    description: 'Release Notes. Only used for flutter applications'
+    required: false
+  submit-for-review:
+    description: 'Submit TestFlight Build for Review'
+    default: 'false'
+    required: false
+outputs:
+  artifact-path:
+    description: 'The path to the xcarchive created as a result of this action'
+    value: ${{ steps.build.outputs.artifact-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-ios@main
+    - uses: QuickBirdEng/actions/setup-fastlane@main
+      with:
+        platform: ios
+        working-directory: ${{ inputs.working-directory }}
+    - uses: QuickBirdEng/actions/setup-fastlane-environment@main
+      with:
+        match-repository: ${{ inputs.match-repository }}
+        match-password: ${{ inputs.match-password }}
+        match-apple-id: ${{ inputs.match-apple-id }}
+        match-apple-team-id: ${{ inputs.match-apple-team-id }}
+        match-keychain-password: ${{ inputs.match-keychain-password }}
+        apple-auth-key-id: ${{ inputs.apple-auth-key-id }}
+        apple-auth-key-issuer-id: ${{ inputs.apple-auth-key-issuer-id }}
+        apple-auth-key-content: ${{ inputs.apple-auth-key-content }}
+        apple-auth-key-encoding: ${{ inputs.apple-auth-key-encoding }}
+        build-number: ${{ inputs.build-number }}
+        slack-slug: ${{ inputs.slack-slug }}
+        release-notes: ${{ inputs.release-notes }}
+        submit-for-review: ${{ inputs.submit-for-review }}
+    - shell: bash -l {0}
+      working-directory: ${{ inputs.working-directory }}
+      run: bundle exec fastlane prepare_for_release type:appstore
+    - uses: QuickBirdEng/actions/native-ios-build@update-ios-workflows
+      id: build
+      with:
+        build-number: ${{ inputs.build-number }}
+        working-directory: ${{ inputs.working-directory }}
+    - name: Publish to TestFlight
+      shell: bash -l {0}
+      working-directory: ${{ inputs.working-directory }}
+      run: bundle exec fastlane releaseToTestFlight ipa_path:../../build/ios/ipa
