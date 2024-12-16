@@ -7,6 +7,12 @@ inputs:
   working-directory:
     description: 'Working directory for action'
     default: '.'
+  workspace-path:
+    description: 'Path to the workspace file'
+    required: true
+  scheme-name:
+    description: 'Scheme name'
+    required: true
 outputs:
   artifact-path:
     description: 'The path to the xcarchive created as a result of this action'
@@ -16,11 +22,6 @@ runs:
   using: "composite"
   steps:
     - uses: QuickBirdEng/actions/setup-ios@main
-    - uses: QuickBirdEng/actions/setup-fastlane@main
-      with:
-        platform: ios
-        working-directory: ${{ inputs.working-directory }}
-    - uses: QuickBirdEng/actions/setup-fastlane-environment@main
     - id: build
       name: "Building IPA"
       working-directory: ${{ inputs.working-directory }}
@@ -39,15 +40,4 @@ runs:
 
         echo "Version & Build: $version_and_build_number"
 
-        # Build
-        fastlane build | tee ios_build.log
-
-        # Search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
-        artifact_path=$(cat ios_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive/) print $word}' | sed 's/\.$//')
-
-        echo "Artifact Path => $artifact_path"
-       
-        case $artifact_path in
-          /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
-          *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
-        esac
+        xcodebuild build -workspace ${{ inputs.workspace-path }} -scheme ${{ inputs.scheme-name }} -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
