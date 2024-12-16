@@ -13,6 +13,9 @@ inputs:
   scheme-name:
     description: 'Scheme name'
     required: true
+  code-sign:
+    description: 'Boolean, whether to sign the app or not'
+    required: true
 outputs:
   artifact-path:
     description: 'The path to the xcarchive created as a result of this action'
@@ -27,17 +30,55 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       shell: bash
       run: |
-        version_and_build_number=""
+        version_and_build_version=""
+        version=""
+        build_version=""
+
+        artifact_path="build/app-build.xcarchive"
+        export_path="build/ios/ipa"
 
         # Get tag if it exists (to get version number from it)
         if [[ $GITHUB_REF_TYPE == 'tag' ]]; then
           version=$(echo $GITHUB_REF_NAME | grep --only-matching --extended-regexp '([0-9]+).([0-9]+).([0-9]+)' | head -1)
           echo "Using Version number from tag => $version"
-          version_and_build_number="$version+${{ inputs.build-number }}"
+          version="$(grep '^AS_APP_VERSION' config/iOS/xcconfig/Common.xcconfig | sed \"s/.*$/$version\")"
+          build_version="$(grep '^AS_APP_BUILD_VERSION' config/iOS/xcconfig/Common.xcconfig | sed 's/=.*$/= ${{ inputs.build-number }}')"
         else
-          version_and_build_number="$(grep '^AS_APP_VERSION' config/iOS/xcconfig/Common.xcconfig | sed 's/version: //' | sed 's/+.*//')+${{ inputs.build-number }}"
+          version="$(grep '^AS_APP_VERSION' config/iOS/xcconfig/Common.xcconfig)"
+          build_version="$(grep '^AS_APP_BUILD_VERSION' config/iOS/xcconfig/Common.xcconfig | sed 's/=.*$/= ${{ inputs.build-number }}/')"
         fi
 
-        echo "Version & Build: $version_and_build_number"
+        if [[ "${{ inputs.code-sign }}" == "true" ]]; then
+          sed -i '' "s/.*AS_APP_VERSION.*/$version/" config/iOS/xcconfig/Common.xcconfig
+          sed -i '' "s/.*AS_APP_BUILD_VERSION.*/$build_version/" config/iOS/xcconfig/Common.xcconfig
+        fi
 
-        xcodebuild build -workspace ${{ inputs.workspace-path }} -scheme ${{ inputs.scheme-name }} -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+        echo "Version: $version"
+        echo "Build Number: $build_version"
+
+        if [[ "${{ inputs.code-sign }}" == "true" ]]; then
+          IFS=' = ' read -r -a array_v <<< "$version"
+          IFS=' = ' read -r -a array_b <<< "$build_version"
+
+          version_v=( "${array_v[1]}" );
+          version_b=( "${array_b[1]}" );
+
+          find . -type f -name "*.plist" -exec sed -E -i '' "s/\\$\(AS_APP_VERSION\)/$version_v/" {} +;
+          find . -type f -name "*.plist" -exec sed -E -i '' "s/\\$\(AS_APP_BUILD_VERSION\)/$version_b/" {} +;
+
+          xcrun agvtool new-marketing-version $version_v
+          xcrun agvtool new-version -all $version_b
+
+          xcodebuild archive -workspace ${{ inputs.workspace-path }} -scheme ${{ inputs.scheme-name }} -destination 'generic/platform=iOS' -configuration Release -archivePath $artifact_path -quiet
+          xcodebuild build -exportArchive -configuration Release -allowProvisioningUpdates -archivePath $artifact_path -exportPath $export_path -exportOptionsPlist fastlane/ExportOptions.plist -quiet
+        else
+          xcodebuild archive -workspace ${{ inputs.workspace-path }} -scheme ${{ inputs.scheme-name }} -destination 'generic/platform=iOS' -configuration Release CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO -archivePath $artifact_path -quiet
+        fi
+
+        
+        echo "Artifact Path => $artifact_path"
+
+        case $artifact_path in
+          /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
+          *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
+        esac

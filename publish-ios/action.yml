@@ -59,6 +59,10 @@ inputs:
     description: 'Should obfuscate dart code?'
     required: false
     default: false
+  platform:
+    description: 'Platform to build for'
+    required: false
+    default: 'flutter'
 outputs:
   artifact-path:
     description: 'The path to the xcarchive created as a result of this action'
@@ -76,7 +80,7 @@ runs:
     - uses: QuickBirdEng/actions/setup-ios@main
     - uses: QuickBirdEng/actions/setup-fastlane@main
       with:
-        platform: flutter
+        platform: ${{ inputs.platform }}
         working-directory: ${{ inputs.working-directory }}
     - uses: QuickBirdEng/actions/setup-fastlane-environment@main
       with:
@@ -94,6 +98,7 @@ runs:
         release-notes: ${{ inputs.release-notes }}
         submit-for-review: ${{ inputs.submit-for-review }}
     - uses: QuickBirdEng/actions/setup-flutter@main
+      if: ${{ inputs.platform == 'flutter' }}
       with:
         use-cache: ${{ inputs.use-cache }}
         clean: true

@@ -1,5 +1,5 @@
-name: 'Publish IPA to Testflight'
-description: 'Publishing native iOS builds'
+name: 'Publish IPA to Apps@QuickBird and TestFlight (conditions apply)'
+description: 'Publishing Flutter iOS builds'
 inputs:
   match-repository:
     description: 'Match Repository'
@@ -28,33 +28,73 @@ inputs:
   apple-auth-key-encoding:
     description: 'Auth Key Encoding'
     required: true
+  name-suffix:
+    description: 'Suffix to add to the end of branch/tag name'
+    type: string
+    default: ''
   working-directory:
     description: 'Working directory for action'
     default: '.'
   build-number:
     description: 'Build Number'
+    type: string
   slack-slug:
     description: 'The part of slack hook url after services/'
     required: true
   release-notes:
     description: 'Release Notes. Only used for flutter applications'
+    type: string
     required: false
   submit-for-review:
     description: 'Submit TestFlight Build for Review'
-    default: 'false'
+    type: boolean
+    default: false
     required: false
+  build-arguments:
+    description: 'Build Arguments'
+    type: string
+    required: false
+    default: ''
+  platform:
+    description: 'Platform to build for'
+    required: false
+    default: 'ios'
+  workspace-path:
+    description: 'Path to the workspace file'
+    required: false
+    default: 'Runner.xcworkspace'
+  scheme-name:
+    description: 'Scheme name'
+    required: false
+    default: 'Runner'
 outputs:
   artifact-path:
     description: 'The path to the xcarchive created as a result of this action'
     value: ${{ steps.build.outputs.artifact-path }}
+  artifact-dsyms-path:
+    description: 'The path to the dsyms file'
+    value: ${{ steps.build.outputs.artifact-path }}/dSYMs
+  artifact-dart-symbols-file-path:
+    description: 'The path to the dart symbols file'
+    value: ${{ steps.build.outputs.artifact-dart-symbols-file-path }}
 
 runs:
   using: "composite"
   steps:
-    - uses: QuickBirdEng/actions/setup-ios@main
-    - uses: QuickBirdEng/actions/setup-fastlane@main
+    - uses: irgaly/setup-mint@v1
       with:
-        platform: ios
+        mint-executable-directory: ./mint-bin
+    - name: Xcodegen
+      shell: bash -l {0}
+      run: ./mint-bin/mint run xcodegen
+    - uses: QuickBirdEng/actions/setup-ios@main
+    - name: Setup Gems
+      shell: bash -l {0}
+      working-directory: ${{ inputs.working-directory }}
+      run: gem install bundler && bundle update
+    - uses: QuickBirdEng/actions/setup-fastlane@update-ios-workflows
+      with:
+        platform: ${{ inputs.platform }}
         working-directory: ${{ inputs.working-directory }}
     - uses: QuickBirdEng/actions/setup-fastlane-environment@main
       with:
@@ -79,7 +119,10 @@ runs:
       with:
         build-number: ${{ inputs.build-number }}
         working-directory: ${{ inputs.working-directory }}
+        scheme-name: ${{ inputs.scheme-name }}
+        workspace-path: ${{ inputs.workspace-path }}
+        code-sign: true
     - name: Publish to TestFlight
       shell: bash -l {0}
       working-directory: ${{ inputs.working-directory }}
-      run: bundle exec fastlane releaseToTestFlight ipa_path:../../build/ios/ipa
+      run: bundle exec fastlane releaseToTestFlight ipa_path:../build/ios/ipa
