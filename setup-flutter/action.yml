@@ -27,7 +27,7 @@ runs:
     - shell: bash
       if: ${{ inputs.clean == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: flutter clean
+      run: flutter clean && flutter pub cache clean
     - name: Fetch Project Dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -36,7 +36,7 @@ runs:
       shell: bash
       if: ${{ env.RUN_BUILD_RUNNER == '' || env.RUN_BUILD_RUNNER == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: flutter pub run build_runner build --delete-conflicting-outputs
+      run: flutter pub run build_runner clean && flutter pub run build_runner build --delete-conflicting-outputs
     - name: Setup Gems
       shell: bash -l {0}
       if: ${{ inputs.setup-gems == 'true' }}
