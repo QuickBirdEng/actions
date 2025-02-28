@@ -27,7 +27,7 @@ runs:
     - shell: bash
       if: ${{ inputs.clean == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: flutter clean && flutter pub cache clean
+      run: flutter clean && flutter pub cache clean -f
     - name: Fetch Project Dependencies
       shell: bash
       working-directory: ${{ inputs.working-directory }}
