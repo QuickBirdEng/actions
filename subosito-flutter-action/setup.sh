@@ -146,6 +146,8 @@ if [ -z "${PUB_CACHE:-}" ]; then
 fi
 
 echo "IP: $(hostname -i)"
+echo "External IP: $(curl -s ifconfig.me)"
+echo "External IP: $(curl ipinfo.io/ip)"
 
 if [ "$TEST_MODE" = true ]; then
 	RELEASE_MANIFEST=$(cat "$(dirname -- "${BASH_SOURCE[0]}")/test/$MANIFEST_JSON_PATH")
