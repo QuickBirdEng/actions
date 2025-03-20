@@ -145,6 +145,8 @@ if [ -z "${PUB_CACHE:-}" ]; then
 	fi
 fi
 
+echo "IP: $(hostname -i)"
+
 if [ "$TEST_MODE" = true ]; then
 	RELEASE_MANIFEST=$(cat "$(dirname -- "${BASH_SOURCE[0]}")/test/$MANIFEST_JSON_PATH")
 else
