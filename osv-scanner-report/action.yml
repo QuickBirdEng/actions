@@ -15,6 +15,8 @@ runs:
       - name: Run OSV-Scanner
         shell: bash
         run: osv-scanner --version
+      - run: ls -ahl
+        shell: bash
       - shell: bash
         run:  bash run_osv_scanner.sh
       - uses: actions/upload-artifact@v4
