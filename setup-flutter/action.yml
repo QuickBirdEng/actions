@@ -19,8 +19,8 @@ runs:
   using: "composite"
   steps:
     - uses: QuickBirdEng/actions/setup-environment@main
-    # - uses: subosito/flutter-action@v2
-    - uses: QuickBirdEng/actions/subosito-flutter-action@main
+    #- uses: QuickBirdEng/actions/subosito-flutter-action@main
+    - uses: subosito/flutter-action@v2
       with:
         flutter-version: ${{ env.FLUTTER_VERSION }}
         channel: 'stable'
