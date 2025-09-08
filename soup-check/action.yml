@@ -23,14 +23,16 @@ runs:
         fetch-depth: 0
     - name: Copy scripts
       shell: bash
-      run: cp $GITHUB_ACTION_PATH/scripts/* .
+      run: cp $GITHUB_ACTION_PATH/scripts/* . && chmod +x compare_deps.sh
     - name: Run dependency comparison (Web)
       if: inputs.project-type != 'flutter' && inputs.project-type != 'Flutter'
       id: compare-web
       shell: bash
       run: |
-        chmod +x compare_deps.sh
-        result=$(./compare_deps.sh package.json "${{ inputs.non-semver-dependencies }}")
+        pkg_file="package.json"
+        [[ "${{ inputs.project-type }}" != "web" && "${{ inputs.project-type }}" != "Web" ]] && pkg_file="web/$pkg_file"
+        echo "Package file: $pkg_file"
+        result=$(./compare_deps.sh ${{ github.event.pull_request.base.sha }} "$pkg_file" "${{ inputs.non-semver-dependencies }}")
         echo "$result"
         echo "result=$(echo "$result" | tail -n 1)" >> $GITHUB_OUTPUT
     - name: Run dependency comparison (Flutter)
@@ -38,8 +40,10 @@ runs:
       id: compare-flutter
       shell: bash
       run: |
-        chmod +x compare_deps.sh
-        result=$(./compare_deps.sh pubspec.yaml "${{ inputs.non-semver-dependencies }}")
+        pkg_file="pubspec.yaml"
+        [[ "${{ inputs.project-type }}" != "flutter" && "${{ inputs.project-type }}" != "Flutter" ]] && pkg_file="app/$pkg_file"
+        echo "Package file: $pkg_file"
+        result=$(./compare_deps.sh ${{ github.event.pull_request.base.sha }} "$pkg_file" "${{ inputs.non-semver-dependencies }}")
         echo "$result"
         echo "result=$(echo "$result" | tail -n 1)" >> $GITHUB_OUTPUT
     - name: Assign Reviewers

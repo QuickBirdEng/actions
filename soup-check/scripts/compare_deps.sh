@@ -1,10 +1,11 @@
 #!/bin/bash
 
-CURRENT_FILE="$1"
+BASE_SHA="$1"
+CURRENT_FILE="$2"
 
-if [[ -n "$2" ]]; then
-    echo "Dependencies Not Following Semantic Versioning: $2"
-    NON_SEMVER_DEP_LIST="$2"
+if [[ -n "$3" ]]; then
+    echo "Dependencies Not Following Semantic Versioning: $3"
+    NON_SEMVER_DEP_LIST="$3"
 fi
 
 if [[ ! -f "$CURRENT_FILE" ]]; then
@@ -12,11 +13,8 @@ if [[ ! -f "$CURRENT_FILE" ]]; then
     exit 1
 fi
 
-DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
-
-REF_FILE="package_${DEFAULT_BRANCH}.json"
-
-git show origin/$DEFAULT_BRANCH:package.json > $REF_FILE
+REF_FILE="package_${BASE_SHA}.json"
+git show "$BASE_SHA:$CURRENT_FILE" > $REF_FILE
 
 EXT="${CURRENT_FILE##*.}"
 
@@ -102,9 +100,9 @@ echo -e "🚨 RISK REPORT 🚨\n"
 [[ -n "$breaking_minor_changes" ]] && echo -e "=== ❗️ Breaking Changes (Minor i.e. 0.x.-): ===\n$breaking_minor_changes\n"
 
 summary=""
-[[ -n "$ADDED" ]] && summary+="additions+"
-[[ -n "$REMOVED" ]] && summary+="deletions+"
-[[ -n "$breaking_major_changes" || -n "$breaking_minor_changes" ]] && summary+="changes+"
+[[ -n "$ADDED" ]] && summary+="additions"
+[[ -n "$REMOVED" ]] && summary+="deletions"
+[[ -n "$breaking_major_changes" || -n "$breaking_minor_changes" ]] && summary+="changes"
 summary="${summary%+}"
 
 [[ -n "$summary" ]] && echo "$summary" || echo "nothing"
