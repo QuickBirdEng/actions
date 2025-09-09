@@ -2,7 +2,7 @@ name: 'Dependency Review Assignment'
 description: 'Assign reviewers based on dependency changes'
 inputs:
   project-type:
-    description: 'The type of project (e.g., web, flutter or * for both)'
+    description: 'The type of project (e.g., web, flutter or * for both). DEPRECATED'
     required: true
     default: '*'
   soup-approvers:
@@ -13,7 +13,10 @@ inputs:
     description: 'A list of dependencies that do not follow semantic versioning'
     required: false
     default: ''
-
+  ignore-files-list:
+    description: 'A list of dependencies files to ignore'
+    required: false
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -31,17 +34,32 @@ runs:
         FILES=$(git ls-files | grep -E "package\.json$|pubspec\.yaml$" || true)
         echo "Found files:"
         echo "$FILES"
+
+        IGNORE_LIST="${{ inputs.ignore-files-list }}"
+        if [[ -n "$IGNORE_LIST" ]]; then
+          for IGNORE_FILE in $(echo "$IGNORE_LIST" | tr ',' '\n'); do
+            FILES=$(echo "$FILES" | grep -v -F -x "$IGNORE_FILE")
+          done
+        fi
+
+        echo "Ignore List: $IGNORE_LIST"
+        if [[ -n "$IGNORE_LIST" ]]; then
+          echo "Files after applying ignore list:"
+          echo "$FILES"
+        fi
+
         HAS_CHANGED=false
         for PKG_FILE in $FILES; do
           result=$(./compare_deps.sh ${{ github.event.pull_request.base.sha }} "$PKG_FILE" "${{ inputs.non-semver-dependencies }}")
           echo "$result"
           status_line=$(echo "$result" | tail -n 1)
           [[ "$status_line" != "nothing" ]] && HAS_CHANGED=true
+          echo "Status Line: $status_line ($HAS_CHANGED)"
         done
 
         echo "has-changed=$HAS_CHANGED" >> $GITHUB_OUTPUT
     - name: Assign Reviewers
-      if: ${{ steps.compare.outputs.has-changed }}
+      if: ${{ steps.compare.outputs.has-changed == 'true' }}
       uses: actions/github-script@v7
       env:
         SOUP_APPROVERS: ${{ inputs.soup-approvers }}
@@ -89,7 +107,7 @@ runs:
           }
 
     - name: Require Approval From Assigned Reviewer
-      if: ${{ steps.compare.outputs.has-changed }}
+      if: ${{ steps.compare.outputs.has-changed == 'true' }}
       uses: actions/github-script@v7
       env:
         SOUP_APPROVERS: ${{ inputs.soup-approvers }}

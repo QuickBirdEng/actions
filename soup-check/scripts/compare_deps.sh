@@ -23,9 +23,15 @@ if [[ "$EXT" == "json" ]]; then
     REF_DEPS=$(jq -r '.dependencies // {} | to_entries[] | "\(.key)=\(.value)"' "$REF_FILE")
 elif [[ "$EXT" == "yaml" || "$EXT" == "yml" ]]; then
     CURRENT_DEPS=$(awk '/^dependencies:/{flag=1;next}/^[^ ]/{flag=0}flag' "$CURRENT_FILE" \
-      | sed 's/^[ \t]*//' | awk -F: '{print $1"="$2}' | sed 's/ //g')
+      | sed 's/^[ \t]*//' \
+      | awk -F: '/^[^ ]+:/ {print $1"="$2}' \
+      | sed 's/ //g' \
+      | grep -v '=') # ignore lines without a version
     REF_DEPS=$(awk '/^dependencies:/{flag=1;next}/^[^ ]/{flag=0}flag' "$REF_FILE" \
-      | sed 's/^[ \t]*//' | awk -F: '{print $1"="$2}' | sed 's/ //g')
+      | sed 's/^[ \t]*//' \
+      | awk -F: '/^[^ ]+:/ {print $1"="$2}' \
+      | sed 's/ //g' \
+      | grep -v '=') # ignore lines without a version
 else
     echo "Unsupported file type: $EXT"
     exit 1
@@ -89,8 +95,6 @@ while IFS= read -r line; do
     fi
 done <<< "$CHANGED"
 
-# Print risk report
-
 bang_bang="‼️ "
 echo -e "🚨 RISK REPORT for $CURRENT_FILE 🚨\n"
 [[ -n "$ADDED" ]] && echo -e "=== 🌱 Added: ===\n$ADDED\n"
@@ -100,10 +104,10 @@ echo -e "🚨 RISK REPORT for $CURRENT_FILE 🚨\n"
 [[ -n "$breaking_minor_changes" ]] && echo -e "=== ❗️ Breaking Changes (Minor i.e. 0.x.-): ===\n$breaking_minor_changes\n"
 
 summary=""
-[[ -n "$ADDED" ]] && summary+="additions"
-[[ -n "$REMOVED" ]] && summary+="deletions"
+[[ -n "$ADDED" ]] && summary+="additions,"
+[[ -n "$REMOVED" ]] && summary+="deletions,"
 [[ -n "$breaking_major_changes" || -n "$breaking_minor_changes" ]] && summary+="changes"
-summary="${summary%+}"
+summary="${summary%,}"
 
 [[ -n "$summary" ]] && echo "$summary" || echo "nothing"
 
