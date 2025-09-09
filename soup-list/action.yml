@@ -1,0 +1,45 @@
+name: 'Dependencies (SOUP) List'
+description: 'List of all dependencies in the repository'
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Dependencies List
+      shell: bash
+      run: |
+        RESULT_FLUTTER=""
+        RESULT_WEB=""
+
+        FILES=$(git ls-files | grep -E "package\.json$|pubspec\.yaml$" || true)
+        
+        for FILE in $FILES; do
+          EXT="${FILE##*.}"
+          if [[ "$EXT" == "json" ]]; then
+            while IFS= read -r line; do
+              RESULT_WEB+="$line"$'\n'
+            done < <(jq -r '.dependencies // {} | to_entries[] | "\(.key)=\(.value)"' "$FILE")
+          elif [[ "$EXT" == "yaml" ]]; then
+            RESULT_FLUTTER+=$(awk '/^dependencies:/ {flag=1; next} /^[^ ]/ {flag=0} flag' $FILE \
+              | sed 's/^[ \t]*//' \
+              | grep -vE '^(flutter|.*path:|.*git:|.*sdk:|$)' \
+              | awk -F: '{gsub(/^[ \t]+|[ \t]+$/,"",$1); gsub(/^[ \t]+|[ \t]+$/,"",$2); print $1"="$2}' \
+              | grep -vE '^(url|ref)=')
+            fi
+        done
+
+        echo "$RESULT_FLUTTER"
+        echo "$RESULT_WEB"
+        mkdir -p results
+
+        echo "Dependency,Version" > results/flutter.csv
+        echo "$RESULT_FLUTTER" | sort | sed 's/=/,/' >> results/flutter.csv
+        echo "Dependency,Version" > results/web.csv
+        echo "$RESULT_WEB" | sort | sed 's/=/,/' >> results/web.csv
+    - uses: actions/upload-artifact@v4
+      with:
+        name: dependencies-list
+        path: results
+        retention-days: 90
+
+
