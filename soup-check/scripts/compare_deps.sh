@@ -26,12 +26,12 @@ elif [[ "$EXT" == "yaml" || "$EXT" == "yml" ]]; then
       | sed 's/^[ \t]*//' \
       | awk -F: '/^[^ ]+:/ {print $1"="$2}' \
       | sed 's/ //g' \
-      | grep -v '=') # ignore lines without a version
+      | grep -E '=[^[:space:]]+')
     REF_DEPS=$(awk '/^dependencies:/{flag=1;next}/^[^ ]/{flag=0}flag' "$REF_FILE" \
       | sed 's/^[ \t]*//' \
       | awk -F: '/^[^ ]+:/ {print $1"="$2}' \
       | sed 's/ //g' \
-      | grep -v '=') # ignore lines without a version
+      | grep -E '=[^[:space:]]+')
 else
     echo "Unsupported file type: $EXT"
     exit 1
@@ -41,6 +41,8 @@ TMP_CUR=$(mktemp)
 TMP_REF=$(mktemp)
 echo "$CURRENT_DEPS" | sort > "$TMP_CUR"
 echo "$REF_DEPS" | sort > "$TMP_REF"
+
+echo "$CURRENT_DEPS"
 
 ADDED=$(comm -23 <(cut -d= -f1 "$TMP_CUR") <(cut -d= -f1 "$TMP_REF") | while read dep; do
     ver=$(grep "^$dep=" "$TMP_CUR" | cut -d= -f2)

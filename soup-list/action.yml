@@ -1,0 +1,87 @@
+name: 'Dependencies (SOUP) List'
+description: 'List of all dependencies in the repository'
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Install yq
+      shell: bash
+      run: |
+        YQ="$HOME/.local/bin/yq"
+        mkdir -p "$(dirname "$YQ")"
+
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          curl -L -o "$YQ" https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+          curl -L -o "$YQ" https://github.com/mikefarah/yq/releases/latest/download/yq_darwin_amd64
+        else
+          echo "Unsupported OS: $RUNNER_OS"
+          exit 1
+        fi
+
+        chmod +x "$YQ"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+    - shell: bash
+      run: yq --version
+    - name: Dependencies List
+      shell: bash
+      run: |
+        mkdir -p results
+        echo '"Dependency","Version"' > results/web.csv
+        echo '"Dependency","Version"' > results/flutter.csv
+
+        FILES=$(git ls-files | grep -E "package\.json$|pubspec\.yaml$" || true)
+
+        for FILE in $FILES; do
+          echo "Processing: $FILE"
+          EXT="${FILE##*.}"
+          if [[ "$EXT" == "json" ]]; then
+            # Extract web dependencies
+            jq -r '.dependencies // {} | to_entries[] | "\(.key),\(.value)"' "$FILE" | sort >> results/web.csv
+          elif [[ "$EXT" == "yaml" ]]; then
+            TMP_JSON=$(mktemp)
+            yq e -o=json '.' "$FILE" > "$TMP_JSON"
+
+          jq -r '
+            .dependencies as $deps |
+            $deps
+            | to_entries[]
+            | select(
+                # Keep only entries that are NOT {sdk: "flutter"}
+                (.value | type != "object" or (.sdk // "") != "flutter")
+              )
+            | {
+                name: .key,
+                version_or_url: (
+                    if (.value | type == "string") then
+                        .value
+                    elif (.value | type == "object" and has("git")) then
+                        .value.git.url + (if (.value.git.ref // empty) != "" then "@" + .value.git.ref else "" end)
+                    elif (.value | type == "object" and has("version")) then
+                        .value.version
+                    else
+                        "unknown"
+                    end
+                )
+            }
+            | [.name, .version_or_url]
+            | @csv
+          ' "$TMP_JSON" >> flutter_temp.csv
+
+            rm "$TMP_JSON"
+          fi
+        done
+
+        if [[ -f flutter_temp.csv ]]; then
+          sort -t, -k1,1 flutter_temp.csv >> results/flutter.csv
+          rm flutter_temp.csv
+        fi
+
+    - name: Upload Artifacts 
+      uses: actions/upload-artifact@v4
+      with:
+        name: dependencies-list
+        path: results
+        retention-days: 90
+
