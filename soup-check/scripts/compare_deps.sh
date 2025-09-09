@@ -92,7 +92,7 @@ done <<< "$CHANGED"
 # Print risk report
 
 bang_bang="‼️ "
-echo -e "🚨 RISK REPORT 🚨\n"
+echo -e "🚨 RISK REPORT for $CURRENT_FILE 🚨\n"
 [[ -n "$ADDED" ]] && echo -e "=== 🌱 Added: ===\n$ADDED\n"
 [[ -n "$REMOVED" ]] && echo -e "=== ❌ Removed: ===\n$REMOVED\n"
 [[ -n "$CHANGED" ]] && echo -e "=== 🔄 All Changes: ===\n$CHANGED\n"

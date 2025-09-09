@@ -24,30 +24,24 @@ runs:
     - name: Copy scripts
       shell: bash
       run: cp $GITHUB_ACTION_PATH/scripts/* . && chmod +x compare_deps.sh
-    - name: Run dependency comparison (Web)
-      if: inputs.project-type != 'flutter' && inputs.project-type != 'Flutter'
-      id: compare-web
+    - name: Compare Dependencies
+      id: compare
       shell: bash
       run: |
-        pkg_file="package.json"
-        [[ "${{ inputs.project-type }}" != "web" && "${{ inputs.project-type }}" != "Web" ]] && pkg_file="web/$pkg_file"
-        echo "Package file: $pkg_file"
-        result=$(./compare_deps.sh ${{ github.event.pull_request.base.sha }} "$pkg_file" "${{ inputs.non-semver-dependencies }}")
-        echo "$result"
-        echo "result=$(echo "$result" | tail -n 1)" >> $GITHUB_OUTPUT
-    - name: Run dependency comparison (Flutter)
-      if: inputs.project-type != 'web' && inputs.project-type != 'Web'
-      id: compare-flutter
-      shell: bash
-      run: |
-        pkg_file="pubspec.yaml"
-        [[ "${{ inputs.project-type }}" != "flutter" && "${{ inputs.project-type }}" != "Flutter" ]] && pkg_file="app/$pkg_file"
-        echo "Package file: $pkg_file"
-        result=$(./compare_deps.sh ${{ github.event.pull_request.base.sha }} "$pkg_file" "${{ inputs.non-semver-dependencies }}")
-        echo "$result"
-        echo "result=$(echo "$result" | tail -n 1)" >> $GITHUB_OUTPUT
+        FILES=$(git ls-files | grep -E "package\.json$|pubspec\.yaml$" || true)
+        echo "Found files:"
+        echo "$FILES"
+        HAS_CHANGED=false
+        for PKG_FILE in $FILES; do
+          result=$(./compare_deps.sh ${{ github.event.pull_request.base.sha }} "$PKG_FILE" "${{ inputs.non-semver-dependencies }}")
+          echo "$result"
+          status_line=$(echo "$result" | tail -n 1)
+          [[ "$status_line" != "nothing" ]] && HAS_CHANGED=true
+        done
+
+        echo "has-changed=$HAS_CHANGED" >> $GITHUB_OUTPUT
     - name: Assign Reviewers
-      if: ${{ steps.compare-web.outputs.result != 'nothing' && steps.compare-flutter.outputs.result != 'nothing' }}
+      if: ${{ steps.compare.outputs.has-changed }}
       uses: actions/github-script@v7
       env:
         SOUP_APPROVERS: ${{ inputs.soup-approvers }}
@@ -95,7 +89,7 @@ runs:
           }
 
     - name: Require Approval From Assigned Reviewer
-      if: ${{ steps.compare-web.outputs.result != 'nothing' && steps.compare-flutter.outputs.result != 'nothing' }}
+      if: ${{ steps.compare.outputs.has-changed }}
       uses: actions/github-script@v7
       env:
         SOUP_APPROVERS: ${{ inputs.soup-approvers }}
