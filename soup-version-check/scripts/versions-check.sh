@@ -14,7 +14,7 @@ DART_DEPENDENCIES_OUTPUT='dart_dependencies.csv'
 NODE_DEPENDENCIES_OUTPUT='node_dependencies.csv'
 OUTPUT_FILE_TMP='tmp.csv'
 
-rm -r $DART_DEPENDENCIES_OUTPUT $NODE_DEPENDENCIES_OUTPUT $OUTPUT_FILE $OUTPUT_FILE_TMP
+rm -rf $DART_DEPENDENCIES_OUTPUT $NODE_DEPENDENCIES_OUTPUT $OUTPUT_FILE $OUTPUT_FILE_TMP
 
 fetch_dependencies() { 
     mkdir -p results
@@ -64,19 +64,46 @@ verify_version() {
     NAME=$2
     VERSION=$3
     
-    CLEAN_VERSION=$(echo "$VERSION" | sed -E 's/^[^0-9]*//; s/^["'\'']//; s/["'\'']$//')
-
-    JSON_OUTPUT=$("$SCRIPT" "$RUNTIME" "$NAME" "$CLEAN_VERSION" "$MONTHS")
+    JSON_OUTPUT=$("$SCRIPT" "$RUNTIME" "$NAME" "$VERSION" "$MONTHS")
     echo "$RUNTIME,$JSON_OUTPUT" | tee -a $OUTPUT_FILE_TMP
 }
 
 verify_versions() {
     FILE="$1"
     TYPE="$2"
-
-    while IFS=',' read -r name version
+    
+    while IFS=',' read -r PACKAGE VERSION
     do
-        verify_version "$TYPE" "$name" "$version"
+        if [ "$TYPE" == "dart" ]; then
+            DEPS_FILE="dart-deps.csv"
+        elif [ "$TYPE" == "node" ]; then
+            DEPS_FILE="yarn-deps.csv"
+        else
+            echo "Unknown type: $TYPE"
+            exit 1
+        fi
+        
+        CLEAN_PACKAGE=$(echo "$PACKAGE" | tr -d '"')        
+        RESOLVED_VERSION=$(awk -F, -v pkg="$CLEAN_PACKAGE" '
+            {
+                # Remove quotes from first field
+                gsub(/^"|"$/, "", $1)
+                if ($1 == pkg) {
+                    gsub(/^"|"$/, "", $2)
+                    print $2
+                    exit
+                }
+            }' "$DEPS_FILE")
+
+        if [ -z "$RESOLVED_VERSION" ] || [ "$RESOLVED_VERSION" = "null" ]; then
+            CLEAN_VERSION=$(echo "$VERSION" | sed -E 's/^[^0-9]*//; s/^["'\'']//; s/["'\'']$//')
+            echo "Warning: Could not find version for $PACKAGE in $TYPE dependencies, using provided version '$CLEAN_VERSION'"
+            FINAL_VERSION="$CLEAN_VERSION"
+        else
+            FINAL_VERSION="$RESOLVED_VERSION"
+        fi
+
+        verify_version "$TYPE" "$PACKAGE" "$FINAL_VERSION"
     done < "$FILE"
 }
 

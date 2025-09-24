@@ -19,32 +19,34 @@ output_error() {
     exit 0
 }
 
-get_published_date() {    
-    if [[ "$TYPE" == *"dart"* ]]; then
-        local url="https://pub.dev/api/packages/$PACKAGE"
-        local json=$(curl -s "$url") || output_error "failed to fetch package"
-        local pub=$(echo "$json" | jq -r --arg v "$VERSION" '.versions[] | select(.version==$v) | .published')
-        [ -z "$pub" ] && output_error "package not found $url"
-        [ "$pub" == "null" ] && output_error "version not found"
-        echo "$pub"
-    elif [ "$TYPE" == "node" ]; then
-        local url="https://registry.npmjs.org/$PACKAGE"
-        local json=$(curl -s "$url") || output_error "failed to fetch package"
-        local pub=$(echo "$json" | jq -r --arg v "$VERSION" '.time[$v] // empty')
-        [ -z "$pub" ] && output_error "package or version not found ($PACKAGE@$VERSION)"
-        echo "$pub"
-    else
-        output_error "unknown package type: '$TYPE'"
-    fi
-}
+IS_DISCONTINUED="false"
 
-PUBLISHED=$(get_published_date "$TYPE" "$PACKAGE" "$VERSION")
+if [[ "$TYPE" == *"dart"* ]]; then
+    URL="https://pub.dev/api/packages/$PACKAGE"
+    JSON=$(curl -s "$URL") || output_error "failed to fetch package"
+
+    IS_DISCONTINUED=$(echo "$JSON" | jq -r '.isDiscontinued // false')
+    PUBLISHED=$(echo "$JSON" | jq -r --arg v "$VERSION" '.versions[] | select(.version==$v) | .published')
+    [ -z "$PUBLISHED" ] && output_error "package not found $URL"
+    [ "$PUBLISHED" == "null" ] && output_error "version not found"
+elif [ "$TYPE" == "node" ]; then
+    URL="https://registry.npmjs.org/$PACKAGE"
+    JSON=$(curl -s "$URL") || output_error "failed to fetch package"
+    PUBLISHED=$(echo "$JSON" | jq -r --arg v "$VERSION" '.time[$v] // empty')
+    [ -z "$PUBLISHED" ] && output_error "package or version not found"
+
+    DEPRECATED=$(echo "$JSON" | jq -r --arg v "$VERSION" '.versions[$v].deprecated // empty')
+    if [ -n "$DEPRECATED" ]; then
+        IS_DISCONTINUED="true"
+    fi
+else
+    output_error "unknown package type: '$TYPE'"
+fi
 
 if ! date -d "$PUBLISHED" >/dev/null 2>&1; then
     output_error "Package or version not found / invalid published date"
     exit 0
 fi
-
 
 to_epoch() {
     local ts="$1"
@@ -60,7 +62,9 @@ DIFF_SECONDS=$(( TODAY_EPOCH - PUBLISHED_TS ))
 DIFF_DAYS=$(( DIFF_SECONDS / 86400 ))
 DIFF_MONTHS=$(( DIFF_DAYS / 30 ))
 
-if [ "$PUBLISHED_TS" -ge "$REF_TS" ]; then
+if [ "$IS_DISCONTINUED" == "true" ]; then
+    STATUS="DISCONTINUED"
+elif [ "$PUBLISHED_TS" -ge "$REF_TS" ]; then
     STATUS="OK"
 else
     STATUS="EXCEEDS_LIMIT (of $MONTHS months)"

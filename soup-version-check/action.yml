@@ -4,34 +4,14 @@ inputs:
   validity-months:
     description: 'The number of months to consider for validity (e.g., 6 for 6 months).'
     required: true
+    type: string
     default: '6'
 runs:
   using: "composite"
   steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
     - name: Copy scripts
       shell: bash
       run: cp $GITHUB_ACTION_PATH/scripts/* . && chmod +x versions-check.sh version-check.sh
-    - name: Install yq
-      shell: bash
-      run: |
-        YQ="$HOME/.local/bin/yq"
-        mkdir -p "$(dirname "$YQ")"
-
-        if [[ "$RUNNER_OS" == "Linux" ]]; then
-          curl -L -o "$YQ" https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-        elif [[ "$RUNNER_OS" == "macOS" ]]; then
-          curl -L -o "$YQ" https://github.com/mikefarah/yq/releases/latest/download/yq_darwin_amd64
-        else
-          echo "Unsupported OS: $RUNNER_OS"
-          exit 1
-        fi
-
-        chmod +x "$YQ"
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
     - shell: bash
       run: yq --version
     - name: Version Check
