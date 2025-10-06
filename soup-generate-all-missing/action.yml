@@ -1,0 +1,126 @@
+name: 'Generate Missing SOUPs and Create PR'
+description: 'Generate missing SOUP files and create a pull request'
+inputs:
+  repository:
+    description: 'The name of the repository (e.g., soups)'
+    required: true
+  gh-api-token:
+    description: 'GitHub API token with repo access'
+    required: true
+  soup-approvers:
+    description: 'List of GitHub usernames to assign as reviewers for SOUP PRs'
+    required: true
+  base-branch:
+    description: 'The base branch to compare against (e.g., main)'
+    required: true
+  branch-name:
+    description: 'The name of the branch to create or use for the PR'
+    required: true
+    default: 'soups/missing-soups'
+runs:
+  using: "composite"
+  steps:
+    - name: Copy scripts
+      shell: bash
+      run: cp $GITHUB_ACTION_PATH/scripts/* .
+    - name: Create branch (if needed)
+      shell: bash
+      run: |
+        git remote prune origin
+        if git ls-remote --exit-code --heads origin "${{ inputs.branch-name }}" > /dev/null; then
+            git fetch origin "${{ inputs.branch-name }}"
+            git checkout "${{ inputs.branch-name }}" && git pull --rebase
+        else
+            git checkout -b "${{ inputs.branch-name }}"
+        fi
+    - name: Generate Missing SOUPs
+      shell: bash
+      run: git fetch origin && bash generate-all-missing-soups.sh ${{ inputs.base-branch }}
+    - name: Commit and Push Changes
+      shell: bash
+      run: |
+        USER_INFO=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user)
+        echo "User Info: $USER_INFO"
+
+        PR_AUTHOR=$(echo "$USER_INFO" | jq -r .login)
+        PR_NAME=$(echo "$USER_INFO" | jq -r .name)
+
+        EMAILS=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user/emails)
+        echo "User Emails: $EMAILS"
+        PR_EMAIL=$(echo "$EMAILS" | jq -r '.[] | select(.primary == true) | .email')
+        git config --local user.email "$PR_EMAIL"
+        git config --local user.name "$PR_NAME"
+        (git add soups/**/*.json && git commit -m "generate missing soup files") || echo "No changes to commit"
+        
+        git push origin ${{ inputs.branch-name }}
+        echo "PR_AUTHOR=$PR_AUTHOR" >> $GITHUB_ENV
+    - name: Create Pull Request
+      shell: bash
+      run: |
+        RESPONSE=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls?head=QuickBirdEng:${{ inputs.branch-name }}&base=main")
+        EXISTING_PR=$(echo "$RESPONSE" | jq -r '.[0].number')
+        echo "Found PR: $EXISTING_PR"
+        
+        if [ "$EXISTING_PR" != "null" ] && [ -n "$EXISTING_PR" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            exit 0
+        fi
+
+        PR_RESPONSE=$(curl -s -X POST \
+          -H "Authorization: token ${{ inputs.gh-api-token }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls \
+          -d "{
+            \"title\": \"Add Missing SOUPs\",
+            \"body\": \"Automated soup generation of missing soups\",
+            \"head\": \"${{ inputs.branch-name }}\",
+            \"base\": \"main\"
+          }")
+          
+        PR_NUMBER=$(echo "$PR_RESPONSE" | jq -r '.number')
+        echo "Created PR #$PR_NUMBER"
+          
+        curl -s -X POST \
+          -H "Authorization: token ${{ inputs.gh-api-token }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/issues/$PR_NUMBER/labels \
+          -d '{
+            "labels": ["soup"]
+          }'
+
+        if [ -n "${{ inputs.soup-approvers }}" ]; then
+          echo "Original approvers list: ${{ inputs.soup-approvers }}"
+          echo "Filtering out PR author: $PR_AUTHOR"
+
+          IFS=',' read -ra APPROVER_LIST <<< "${{ inputs.soup-approvers }}"
+          FILTERED_APPROVERS=""
+            
+          for approver in "${APPROVER_LIST[@]}"; do
+            approver_trimmed=$(echo "$approver" | xargs)
+            if [ "$approver_trimmed" != "$PR_AUTHOR" ]; then
+              if [ -z "$FILTERED_APPROVERS" ]; then
+                FILTERED_APPROVERS="$approver_trimmed"
+              else
+                FILTERED_APPROVERS="$FILTERED_APPROVERS,$approver_trimmed"
+              fi
+            fi
+          done
+          
+          if [ -z "$FILTERED_APPROVERS" ]; then
+            echo "No reviewers to assign after filtering out PR author"
+          else
+            echo "Assigning reviewers: $FILTERED_APPROVERS"
+              
+            REVIEWERS_JSON=$(echo "$FILTERED_APPROVERS" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' | sed 's/^/[/' | sed 's/$/]/')
+              
+            curl -X POST \
+              -H "Authorization: token ${{ inputs.gh-api-token }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls/$PR_NUMBER/requested_reviewers \
+              -d "{\"reviewers\": $REVIEWERS_JSON}"
+                
+              echo "Reviewers assigned successfully"
+          fi
+        else
+          echo "No SOUP_APPROVERS configured - skipping reviewer assignment"
+        fi
