@@ -44,6 +44,7 @@ runs:
 
         git add soups/**/*.json
         git commit -m "generate missing soup files"
+        git push origin ${{ inputs.branch-name }}
 
         echo "soup_files_generated=true" >> $GITHUB_OUTPUT
     - name: Add SOUP Approvers as Reviewers
