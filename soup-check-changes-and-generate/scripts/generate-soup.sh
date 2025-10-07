@@ -202,8 +202,10 @@ check_license_compliance_status() {
     local license_name="$2"
 
     if [[ -z "$license_key" || "$license_key" == "N/A" ]]; then
-        echo "UNKNOWN: License not available"
-        return 2
+        if [[ -z "$license_name" || "$license_name" == "N/A" ]]; then
+            echo "UNKNOWN: License not available"
+            return 2
+        fi
     fi
     
     local license_lower=$(echo "$license_key" | tr '[:upper:]' '[:lower:]')
@@ -216,7 +218,7 @@ check_license_compliance_status() {
     else
         for allowed in $(echo "$allowed_lower" | tr ',' ' '); do
             if [[ "$name_lower" == *"$allowed"* ]]; then
-                echo "ALLOWED: License '$license_key' (matched by name) is in allowed list"
+                echo "ALLOWED: License '$license_name' (matched by name) is in allowed list"
                 return 0
             fi
         done
