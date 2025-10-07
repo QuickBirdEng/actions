@@ -6,8 +6,9 @@ INPUT_VERSION=$3
 NORMALIZED_VERSION=$4
 ORIGINAL_CREATION_DATE=${5:-""}
 JSON_ONLY=${6:-true}
-MONTHS=${7:-6}
+MONTHS=${7:-12}
 MIN_RELEASES=${8:-2}
+MIN_EXTENDED_RELEASES=${9:-3}
 
 ALLOWED_LICENSES=${ALLOWED_LICENSES:-"mit,apache-2.0,bsd-2-clause,bsd-3-clause,isc,mpl-2.0,0bsd"}
 
@@ -23,31 +24,31 @@ if [ "$TYPE" == "dart" ]; then
     VERSION_OBJECT_QUERY='[.versions[] | select(.published >= $cutoff)] | sort_by(.published) | reverse | map({(.version): (.published | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | strftime("%B %d, %Y"))}) | add'
     
     INFO_QUERY='
-        (
-            if (.latest.pubspec.repository? | type) == "object" then
-                .latest.pubspec.repository.url // ""
-            elif (.latest.pubspec.repository? | type) == "string" then
-                .latest.pubspec.repository
-            elif (.latest.pubspec.homepage? | type) == "object" then
-                .latest.pubspec.homepage.url // ""
-            elif (.latest.pubspec.homepage? | type) == "string" then
-                .latest.pubspec.homepage
+        . as $pkg
+        | (
+            if ($pkg.latest.pubspec.repository? | type) == "object" then
+                $pkg.latest.pubspec.repository.url // ""
+            elif ($pkg.latest.pubspec.repository? | type) == "string" then
+                $pkg.latest.pubspec.repository
+            elif ($pkg.latest.pubspec.homepage? | type) == "object" then
+                $pkg.latest.pubspec.homepage.url // ""
+            elif ($pkg.latest.pubspec.homepage? | type) == "string" then
+                $pkg.latest.pubspec.homepage
             else
                 ""
             end
-        )
-        | capture("https://github\\.com/(?<org>[^/]+)/(?<repo>[^/]+)") 
-        | "https://github.com/\(.org)/\(.repo)"
-        as $repo
+        ) as $repo_url
+        | ($repo_url | capture("https://github\\.com/(?<org>[^/]+)/(?<repo>[^/]+)")?
+           | if . != null then "https://github.com/\(.org)/\(.repo)" else "" end) as $repo
         | {
-            name: .name,
-            description: (.latest.pubspec.description // "N/A"),
-            homepage: (.latest.pubspec.homepage // ("https://pub.dev/packages/" + .name)),
+            name: $pkg.name,
+            description: ($pkg.latest.pubspec.description // "N/A"),
+            homepage: ($pkg.latest.pubspec.homepage // ("https://pub.dev/packages/" + $pkg.name)),
             repository: $repo,
-            documentation: (.latest.pubspec.documentation // ("https://pub.dev/packages/" + .name)),
-            issues: (.latest.pubspec.issue_tracker // ""),
+            documentation: ($pkg.latest.pubspec.documentation // ("https://pub.dev/packages/" + $pkg.name)),
+            issues: ($pkg.latest.pubspec.issue_tracker // ""),
             publisher: ($repo | capture("github\\.com/(?<owner>[^/]+)").owner?),
-            license: (.latest.pubspec.license // "N/A"),
+            license: ($pkg.latest.pubspec.license // "N/A"),
             license_spdx_id: "N/A",
             license_key: "N/A",
             license_url: "N/A",
@@ -254,15 +255,23 @@ RECENT_RELEASES=$(echo "$PACKAGE_JSON" | jq --arg cutoff "$CUTOFF_DATE" "$COUNT_
 RECENT_VERSIONS=$(echo "$PACKAGE_JSON" | jq -r --arg cutoff "$CUTOFF_DATE" "[$DISPLAY_QUERY] | join(\", \")")
 RECENT_VERSIONS_OBJECT=$(echo "$PACKAGE_JSON" | jq --arg cutoff "$CUTOFF_DATE" "$VERSION_OBJECT_QUERY")
 
+FINAL_RECENT_VERSIONS_OBJECT="$RECENT_VERSIONS_OBJECT"
+FINAL_MIN_RELEASES="$MIN_RELEASES"
+FINAL_RECENT_RELEASES="$RECENT_RELEASES"
+ANALYSIS_PERIOD="$MONTHS"
+
+if [[ -z "$RECENT_VERSIONS" || "$RECENT_VERSIONS" == "" || "$RECENT_RELEASES" -lt "$MIN_RELEASES" ]]; then
+    EXTENDED_MONTHS=$((MONTHS + 12))
+    CUTOFF_DATE=$(date -d "$EXTENDED_MONTHS months ago" -u +%Y-%m-%dT%H:%M:%SZ)
+
+    FINAL_RECENT_VERSIONS_OBJECT=$(echo "$PACKAGE_JSON" | jq --arg cutoff "$CUTOFF_DATE" "$VERSION_OBJECT_QUERY")
+    FINAL_MIN_RELEASES="$MIN_EXTENDED_RELEASES"
+    FINAL_RECENT_RELEASES=$(echo "$PACKAGE_JSON" | jq --arg cutoff "$CUTOFF_DATE" "$COUNT_QUERY")
+    ANALYSIS_PERIOD="$EXTENDED_MONTHS"
+fi
 
 if [[ -z "$RECENT_VERSIONS" || "$RECENT_VERSIONS" == "" ]]; then
-    EXTENDED_MONTHS=$((MONTHS + 18))
-    CUTOFF_DATE=$(date -d "$EXTENDED_MONTHS months ago" -u +%Y-%m-%dT%H:%M:%SZ)
-    EXTENDED_RECENT_RELEASES=$(echo "$PACKAGE_JSON" | jq --arg cutoff "$CUTOFF_DATE" "$COUNT_QUERY")
-    EXTENDED_RECENT_VERSIONS=$(echo "$PACKAGE_JSON" | jq -r --arg cutoff "$CUTOFF_DATE" "[$DISPLAY_QUERY] | join(\", \")")
-    EXTENDED_RECENT_VERSIONS_OBJECT=$(echo "$PACKAGE_JSON" | jq --arg cutoff "$CUTOFF_DATE" "$VERSION_OBJECT_QUERY")
-
-    MOST_RECENT_VERSION=$(echo "$EXTENDED_RECENT_VERSIONS_OBJECT" | jq -r 'keys[]' | sort -V | tail -n 1)
+    MOST_RECENT_VERSION=$(echo "$FINAL_RECENT_VERSIONS_OBJECT" | jq -r 'keys[]' | sort -V | tail -n 1)
 else
     MOST_RECENT_VERSION=$(echo "$RECENT_VERSIONS_OBJECT" | jq -r 'keys[]' | sort -V | tail -n 1)
 fi
@@ -353,7 +362,7 @@ fi
 
 if [[ "$JSON_ONLY" != "true" ]]; then
     echo "=== RELEASE ACTIVITY ==="
-    echo "Releases in last $MONTHS months: $RECENT_RELEASES (min expected: $MIN_RELEASES)"
+    echo "Releases in last $EXTENDED_MONTHS months: $FINAL_RECENT_RELEASES (min expected: $FINAL_MIN_RELEASES)"
     echo "Recent versions:"
     echo "$PACKAGE_JSON" | jq -r --arg cutoff "$CUTOFF_DATE" "$DISPLAY_QUERY"
 
@@ -379,6 +388,9 @@ fi
 if [ "$RECENT_RELEASES" -ge "$MIN_RELEASES" ]; then
     [[ "$JSON_ONLY" != "true" ]] && echo "✅ PASS: Package has regular releases"
     RELEASE_STATUS="PASS"
+elif [ "$FINAL_RECENT_RELEASES" -ge "$MIN_EXTENDED_RELEASES" ]; then
+    [[ "$JSON_ONLY" != "true" ]] && echo "⚠️ WARN: Package lacks regular releases in $MONTHS months but has enough releases in $EXTENDED_MONTHS months"
+    RELEASE_STATUS="PASS"
 else
     [[ "$JSON_ONLY" != "true" ]] && echo "❌ FAIL: Package lacks regular releases"
     RELEASE_STATUS="FAIL"
@@ -396,6 +408,8 @@ CVE_INFO=$(get_cve_info "$TYPE" "$PACKAGE" "$INPUT_VERSION")
 CREATION_DATE="$CURRENT_DATE"
 [[ -n "$ORIGINAL_CREATION_DATE" ]] && CREATION_DATE="$ORIGINAL_CREATION_DATE"
 
+ANALYSIS_PERIOD="${ANALYSIS_PERIOD} months"
+
 echo "$PACKAGE_INFO" | jq -r \
     --arg package_name "$PACKAGE" \
     --arg license_api_url "$BASE_URL/license" \
@@ -405,15 +419,15 @@ echo "$PACKAGE_INFO" | jq -r \
     --arg release_status "$RELEASE_STATUS" \
     --argjson license_is_compliant "$LICENSE_IS_COMPLIANT" \
     --arg license_compliance_text "$LICENSE_COMPLIANCE_TEXT" \
-    --arg recent_releases "$RECENT_RELEASES" \
-    --arg min_releases "$MIN_RELEASES" \
-    --argjson recent_versions_object "$RECENT_VERSIONS_OBJECT" \
+    --arg recent_releases "$FINAL_RECENT_RELEASES" \
+    --arg min_releases "$FINAL_MIN_RELEASES" \
+    --argjson recent_versions_object "$FINAL_RECENT_VERSIONS_OBJECT" \
     --arg created_at "$CREATION_DATE" \
     --arg next_major_version "$NEXT_MAJOR_RELEASE" \
     --argjson version_is_obsolete "$VERSION_IS_OBSOLETE" \
     --arg newer_versions "$NEWER_VERSIONS" \
     --argjson cve_info "$CVE_INFO" \
-    --arg months $MONTHS \
+    --arg analysis_period "$ANALYSIS_PERIOD" \
     '{
         "package": $package_name,
         "version": (if ($normalized_version // "") != "" then $normalized_version else $version end),
@@ -461,7 +475,7 @@ echo "$PACKAGE_INFO" | jq -r \
                     fulfilled_visual: (if $fulfilled then "\u2705" else "\u274C" end),
                     reason_if_requirement_not_fulfilled: "",
                     metadata: {
-                        analysis_period: ($months + " months"),
+                        analysis_period: $analysis_period,
                         releases_found: ($recent_releases | tonumber),
                         min_expected: ($min_releases | tonumber),
                         recent_versions: $recent_versions_object

@@ -24,31 +24,31 @@ if [ "$TYPE" == "dart" ]; then
     VERSION_OBJECT_QUERY='[.versions[] | select(.published >= $cutoff)] | sort_by(.published) | reverse | map({(.version): (.published | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | strftime("%B %d, %Y"))}) | add'
     
     INFO_QUERY='
-        (
-            if (.latest.pubspec.repository? | type) == "object" then
-                .latest.pubspec.repository.url // ""
-            elif (.latest.pubspec.repository? | type) == "string" then
-                .latest.pubspec.repository
-            elif (.latest.pubspec.homepage? | type) == "object" then
-                .latest.pubspec.homepage.url // ""
-            elif (.latest.pubspec.homepage? | type) == "string" then
-                .latest.pubspec.homepage
+        . as $pkg
+        | (
+            if ($pkg.latest.pubspec.repository? | type) == "object" then
+                $pkg.latest.pubspec.repository.url // ""
+            elif ($pkg.latest.pubspec.repository? | type) == "string" then
+                $pkg.latest.pubspec.repository
+            elif ($pkg.latest.pubspec.homepage? | type) == "object" then
+                $pkg.latest.pubspec.homepage.url // ""
+            elif ($pkg.latest.pubspec.homepage? | type) == "string" then
+                $pkg.latest.pubspec.homepage
             else
                 ""
             end
-        )
-        | capture("https://github\\.com/(?<org>[^/]+)/(?<repo>[^/]+)") 
-        | "https://github.com/\(.org)/\(.repo)"
-        as $repo
+        ) as $repo_url
+        | ($repo_url | capture("https://github\\.com/(?<org>[^/]+)/(?<repo>[^/]+)")?
+           | if . != null then "https://github.com/\(.org)/\(.repo)" else "" end) as $repo
         | {
-            name: .name,
-            description: (.latest.pubspec.description // "N/A"),
-            homepage: (.latest.pubspec.homepage // ("https://pub.dev/packages/" + .name)),
+            name: $pkg.name,
+            description: ($pkg.latest.pubspec.description // "N/A"),
+            homepage: ($pkg.latest.pubspec.homepage // ("https://pub.dev/packages/" + $pkg.name)),
             repository: $repo,
-            documentation: (.latest.pubspec.documentation // ("https://pub.dev/packages/" + .name)),
-            issues: (.latest.pubspec.issue_tracker // ""),
+            documentation: ($pkg.latest.pubspec.documentation // ("https://pub.dev/packages/" + $pkg.name)),
+            issues: ($pkg.latest.pubspec.issue_tracker // ""),
             publisher: ($repo | capture("github\\.com/(?<owner>[^/]+)").owner?),
-            license: (.latest.pubspec.license // "N/A"),
+            license: ($pkg.latest.pubspec.license // "N/A"),
             license_spdx_id: "N/A",
             license_key: "N/A",
             license_url: "N/A",
