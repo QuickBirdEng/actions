@@ -1,0 +1,99 @@
+name: 'Check for SOUP changes and generate missing SOUP files'
+description: 'Check for changes in dependencies and generate missing SOUP files'
+inputs:
+  repository:
+    description: 'The name of the repository (e.g., soups)'
+    required: true
+  gh-api-token:
+    description: 'GitHub API token with repo access'
+    required: true
+  soup-approvers:
+    description: 'List of GitHub usernames to assign as reviewers for SOUP PRs'
+    required: true
+  base-branch:
+    description: 'The base branch to compare against (e.g., main)'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Copy scripts
+      shell: bash
+      run: cp $GITHUB_ACTION_PATH/scripts/* .
+    - name: Generate Missing SOUPs
+      shell: bash
+      run: git fetch origin && git checkout ${{ github.head_ref }} && bash soups-check.sh ${{ inputs.base-branch }}
+    - name: Commit and Push Changes
+      id: commit
+      shell: bash
+      run: |
+        if ! git add soups/**/*.json 2>/dev/null || git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo "soup_files_generated=false" >> $GITHUB_OUTPUT
+            exit 0
+        fi
+
+        USER_INFO=$(curl -s -H "Authorization: token $GH_API_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/user)
+        EMAILS=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user/emails)
+        echo "User Emails: $EMAILS"
+
+        PR_NAME=$(echo "$USER_INFO" | jq -r .name)
+        PR_EMAIL=$(echo "$EMAILS" | jq -r '.[] | select(.primary == true) | .email')
+
+        git config --local user.email "$PR_EMAIL"
+        git config --local user.name "$PR_NAME"
+
+        git add soups/**/*.json
+        git commit -m "generate missing soup files"
+
+        echo "soup_files_generated=true" >> $GITHUB_OUTPUT
+    - name: Add SOUP Approvers as Reviewers
+      shell: bash
+      if: steps.commit.outputs.soup_files_generated == 'true'
+      run: |
+        PR_NUMBER=${{ github.event.pull_request.number }}
+        PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+
+        if [ -n "${{ inputs.soup-approvers }}" ]; then
+          echo "Original approvers list: ${{ inputs.soup-approvers }}"
+          echo "Filtering out PR author: $PR_AUTHOR"
+
+          IFS=',' read -ra APPROVER_LIST <<< "${{ inputs.soup-approvers }}"
+          FILTERED_APPROVERS=""
+            
+          for approver in "${APPROVER_LIST[@]}"; do
+            approver_trimmed=$(echo "$approver" | xargs)
+            if [ "$approver_trimmed" != "$PR_AUTHOR" ]; then
+              if [ -z "$FILTERED_APPROVERS" ]; then
+                FILTERED_APPROVERS="$approver_trimmed"
+              else
+                FILTERED_APPROVERS="$FILTERED_APPROVERS,$approver_trimmed"
+              fi
+            fi
+          done
+            
+          curl -s -X POST \
+            -H "Authorization: token ${{ inputs.gh-api-token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/issues/$PR_NUMBER/labels \
+            -d '{
+              "labels": ["soup"]
+            }'
+
+            if [ -z "$FILTERED_APPROVERS" ]; then
+              echo "No reviewers to assign after filtering out PR author"
+            else
+              echo "Assigning reviewers: $FILTERED_APPROVERS"
+              
+              REVIEWERS_JSON=$(echo "$FILTERED_APPROVERS" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' | sed 's/^/[/' | sed 's/$/]/')
+              
+              curl -X POST \
+                -H "Authorization: token ${{ inputs.gh-api-token }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls/$PR_NUMBER/requested_reviewers \
+                -d "{\"reviewers\": $REVIEWERS_JSON}"
+                
+              echo "Reviewers assigned successfully"
+            fi
+          else
+            echo "No SOUP_APPROVERS configured - skipping reviewer assignment"
+          fi
