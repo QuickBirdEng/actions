@@ -50,7 +50,7 @@ runs:
         PR_EMAIL=$(echo "$EMAILS" | jq -r '.[] | select(.primary == true) | .email')
         git config --local user.email "$PR_EMAIL"
         git config --local user.name "$PR_NAME"
-        (git add soups/**/*.json && git commit -m "generate missing soup files") || echo "No changes to commit"
+        (git add .soups/**/*.json && git commit -m "generate missing soup files") || echo "No changes to commit"
         
         git push origin ${{ inputs.branch-name }}
         echo "PR_AUTHOR=$PR_AUTHOR" >> $GITHUB_ENV

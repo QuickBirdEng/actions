@@ -1,4 +1,4 @@
-SOUPS_DIR="soups"
+SOUPS_DIR=".soups"
 mkdir -p $SOUPS_DIR/npm
 mkdir -p $SOUPS_DIR/dart
 

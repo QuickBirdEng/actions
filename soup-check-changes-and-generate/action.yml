@@ -26,7 +26,7 @@ runs:
       id: commit
       shell: bash
       run: |
-        if ! git add soups/**/*.json 2>/dev/null || git diff --staged --quiet; then
+        if ! git add .soups/**/*.json 2>/dev/null || git diff --staged --quiet; then
             echo "No changes to commit"
             echo "soup_files_generated=false" >> $GITHUB_OUTPUT
             exit 0
@@ -42,7 +42,7 @@ runs:
         git config --local user.email "$PR_EMAIL"
         git config --local user.name "$PR_NAME"
 
-        git add soups/**/*.json
+        git add .soups/**/*.json
         git commit -m "generate missing soup files"
         git push origin ${{ inputs.branch-name }}
 

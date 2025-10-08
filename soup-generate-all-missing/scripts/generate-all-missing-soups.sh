@@ -40,7 +40,7 @@ normalized_version() {
 }
 
 get_list_of_existing_soup_files() {
-    SOUPS=$(git ls-tree -r --name-only "$BASE_BRANCH" | grep '^soups/.*\.json$' | sort)
+    SOUPS=$(git ls-tree -r --name-only "$BASE_BRANCH" | grep '^.soups/.*\.json$' | sort)
     echo "$SOUPS"
 }
 
@@ -71,13 +71,7 @@ generate_soups() {
     done < "$FILE"
 }
 
-SOUPS_DIR="soups"
-BASE_BRANCH="${1:-origin/main}"
-
-mkdir -p $SOUPS_DIR/npm
-mkdir -p $SOUPS_DIR/dart
-
-LIST_OF_EXISTING_SOUP_FILES=$(git ls-tree -r --name-only "$BASE_BRANCH" | grep '^soups/.*\.json$' | sort)
+LIST_OF_EXISTING_SOUP_FILES=$(git ls-tree -r --name-only "$BASE_BRANCH" | grep '^.soups/.*\.json$' | sort)
 echo "--- Existing soup files in branch $BASE_BRANCH ---"
 echo "$LIST_OF_EXISTING_SOUP_FILES"
 
