@@ -49,10 +49,10 @@ if [ "$TYPE" == "dart" ]; then
             documentation: ($pkg.latest.pubspec.documentation // ("https://pub.dev/packages/" + $pkg.name)),
             issues: ($pkg.latest.pubspec.issue_tracker // ""),
             publisher: ($repo | capture("github\\.com/(?<owner>[^/]+)").owner?),
-            license: ($pkg.latest.pubspec.license // "N/A"),
+            license: $license,
             license_spdx_id: "N/A",
             license_key: "N/A",
-            license_url: "N/A",
+            license_url: $license_url,
             stars_count: 0,
             watchers_count: 0,
             forks_count: 0,
@@ -199,6 +199,24 @@ get_github_info() {
     fi
 }
 
+pub_dev_license_url() { 
+    echo "https://pub.dev/packages/$1/license"
+}
+
+fetch_pub_dev_license() {
+    url=$(pub_dev_license_url "$1")
+    html=$(curl -s "$url")
+    section=$(echo "$html" | grep -A 2 '<h3 class="title">License</h3>')
+    license=$(echo "$section" | grep -oP '(?<=/>)[^<]+(?= \()' | head -n1)
+
+    if [[ -z "$license" ]]; then
+        license=$(echo "$html" | grep -Ei -m1 'MIT|BSD|Apache|GPL|LGPL|MPL|Unlicense|ISC|EPL|AGPL')
+        license=$(echo "$license" | grep -oE 'MIT|BSD[- ]?[0-9]*|Apache[- ]?[0-9.]*|GPL[- ]?[0-9.]*|LGPL[- ]?[0-9.]*|MPL[- ]?[0-9.]*|Unlicense|ISC|EPL[- ]?[0-9.]*|AGPL[- ]?[0-9.]*' | head -n1)
+    fi
+
+    echo "$license"
+}
+
 check_license_compliance_status() {
     local license_key="$1"
     local license_name="$2"
@@ -302,7 +320,10 @@ else
     AUTHOR_LABEL="Publisher/Provider"
 fi
 
-PACKAGE_INFO=$(echo "$PACKAGE_JSON" | jq -r "$INFO_QUERY")
+PUB_DEV_LICENSE_URL=$(pub_dev_license_url "$PACKAGE")
+PUB_DEV_LICENSE=$(fetch_pub_dev_license "$PACKAGE")
+
+PACKAGE_INFO=$(echo "$PACKAGE_JSON" | jq -r  --arg license "$PUB_DEV_LICENSE" --arg license_url "$PUB_DEV_LICENSE_URL" "$INFO_QUERY")
 PUBLISHER=$(echo "$PACKAGE_INFO" | jq -r '.publisher // ""')
 PROVIDER_URL=$(echo "$PACKAGE_INFO" | jq -r '.repository // ""')
 BASE_URL=$(get_github_repo_url "$PUBLISHER" "$PACKAGE" "$PROVIDER_URL")
@@ -312,10 +333,10 @@ if [[ -n "$PUBLISHER" && "$PUBLISHER" != "N/A" && "$PUBLISHER" != "" ]]; then
     
     PACKAGE_INFO=$(echo "$PACKAGE_INFO" | jq \
         --argjson github_info "$GITHUB_INFO" \
-        '.license = (if .license != "N/A" then .license else $github_info.license_name end) |
+        '.license = (if $github_info.license_name != "N/A" then $github_info.license_name else .license end) |
          .license_spdx_id = $github_info.license_spdx_id | 
          .license_key = $github_info.license_key | 
-         .license_url = $github_info.license_url |
+         .license_url = (if $github_info.license_url != "N/A" then $github_info.license_url else .license_url end) |
          .stars_count = $github_info.stars_count |
          .watchers_count = $github_info.watchers_count |
          .forks_count = $github_info.forks_count |
