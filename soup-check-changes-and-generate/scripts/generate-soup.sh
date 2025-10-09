@@ -43,6 +43,7 @@ if [ "$TYPE" == "dart" ]; then
         | {
             name: $pkg.name,
             description: ($pkg.latest.pubspec.description // "N/A"),
+            discontinued: (($pkg.isDiscontinued // false) as $disc | if $disc then "This package is discontinued." else "" end),
             homepage: ($pkg.latest.pubspec.homepage // ("https://pub.dev/packages/" + $pkg.name)),
             repository: $repo,
             documentation: ($pkg.latest.pubspec.documentation // ("https://pub.dev/packages/" + $pkg.name)),
@@ -74,6 +75,7 @@ elif [ "$TYPE" == "npm" ]; then
     INFO_QUERY='."dist-tags".latest as $v | {
         name: .name,
         description: (.versions[$v].description // "N/A"),
+        discontinued: (.versions[$v].deprecated // ""),
         homepage: (.versions[$v].homepage // "N/A"),
         repository: (if (.versions[$v].repository | type) == "object" then .versions[$v].repository.url else .versions[$v].repository end // .versions[$v].homepage // "N/A"),
         documentation: (.versions[$v].homepage // "N/A"),
@@ -470,18 +472,20 @@ echo "$PACKAGE_INFO" | jq -r \
                 }
             ),
             "grq-3": (
-                ($release_status == "PASS") as $fulfilled |
+                ($release_status == "PASS" and (.discontinued == "" or .discontinued == null)) as $fulfilled |
                 {
                     description: "Is maintained and support is available",
                     fulfilled: $fulfilled,
                     fulfilled_visual: (if $fulfilled then "\u2705" else "\u274C" end),
                     reason_if_requirement_not_fulfilled: "",
-                    metadata: {
-                        analysis_period: $analysis_period,
-                        releases_found: ($recent_releases | tonumber),
-                        min_expected: ($min_releases | tonumber),
-                        recent_versions: $recent_versions_object
-                    }
+                    metadata: (
+                        {
+                            analysis_period: $analysis_period,
+                            releases_found: ($recent_releases | tonumber),
+                            min_expected: ($min_releases | tonumber),
+                            recent_versions: $recent_versions_object,
+                        } + (if (.discontinued != "" and .discontinued != null) then { deprecation: ("❌ " + .discontinued) } else {} end)
+                    )
                 }
             ),
             "grq-4": (
