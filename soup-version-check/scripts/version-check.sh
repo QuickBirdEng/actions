@@ -20,6 +20,7 @@ output_error() {
 }
 
 IS_DISCONTINUED="false"
+DEPRECATION_TEXT=""
 
 if [[ "$TYPE" == *"dart"* ]]; then
     URL="https://pub.dev/api/packages/$PACKAGE"
@@ -38,6 +39,7 @@ elif [ "$TYPE" == "node" ]; then
     DEPRECATED=$(echo "$JSON" | jq -r --arg v "$VERSION" '.versions[$v].deprecated // empty')
     if [ -n "$DEPRECATED" ]; then
         IS_DISCONTINUED="true"
+        DEPRECATION_TEXT="${DEPRECATED//,/;}"
     fi
 else
     output_error "unknown package type: '$TYPE'"
@@ -63,7 +65,7 @@ DIFF_DAYS=$(( DIFF_SECONDS / 86400 ))
 DIFF_MONTHS=$(( DIFF_DAYS / 30 ))
 
 if [ "$IS_DISCONTINUED" == "true" ]; then
-    STATUS="DISCONTINUED"
+    STATUS="DISCONTINUED ($DEPRECATION_TEXT)"
 elif [ "$PUBLISHED_TS" -ge "$REF_TS" ]; then
     STATUS="OK"
 else
