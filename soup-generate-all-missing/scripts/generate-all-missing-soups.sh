@@ -72,8 +72,8 @@ generate_soups() {
 }
 
 LIST_OF_EXISTING_SOUP_FILES=$(git ls-tree -r --name-only "$BASE_BRANCH" | grep '^.soups/.*\.json$' | sort)
-echo "--- Existing soup files in branch $BASE_BRANCH ---"
-echo "$LIST_OF_EXISTING_SOUP_FILES"
-
+[ -n $LIST_OF_EXISTING_SOUP_FILES ] && echo "--- Existing soup files in branch $BASE_BRANCH ---"
+[ -n $LIST_OF_EXISTING_SOUP_FILES ] && echo "$LIST_OF_EXISTING_SOUP_FILES"
+[ -n $LIST_OF_EXISTING_SOUP_FILES ] && echo "--------"
 generate_soups $DEPS_YARN_FINAL_FILE npm "$LIST_OF_EXISTING_SOUP_FILES"
 generate_soups $DEPS_DART_FINAL_FILE dart "$LIST_OF_EXISTING_SOUP_FILES"
