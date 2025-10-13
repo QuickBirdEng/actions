@@ -217,6 +217,25 @@ fetch_pub_dev_license() {
     echo "$license"
 }
 
+get_statistics() {
+    local package="$1"
+    local type="$2"
+
+    local downloadsCount=0
+    local likesCount=0
+
+    if [[ "$type" == "dart" ]]; then
+        local scores_json=$(curl -s "https://pub.dev/api/packages/$package/score")
+        downloadsCount=$(jq -r '.downloadCount30Days // 0' <<<"$scores_json")
+        likesCount=$(jq -r '.likeCount // 0' <<<"$scores_json")
+    elif [[ "$type" == "npm" ]]; then
+        local downloads_json=$(curl -s "https://api.npmjs.org/downloads/point/last-month/$package" 2>/dev/null)
+        downloadsCount=$(jq -r '.downloads // 0' <<<"$downloads_json")
+    fi
+
+    echo "{\"downloads_last_30_days\": $downloadsCount, \"likes\": $likesCount}"
+}
+
 check_license_compliance_status() {
     local license_key="$1"
     local license_name="$2"
@@ -331,10 +350,9 @@ if [[ "$PROVIDER_URL" != "$FINAL_PROVIDER_URL" ]]; then
   if [[ $FINAL_PROVIDER_URL =~ ^https://github\.com/([^/]+)/?.*$ ]]; then
         publisher="${BASH_REMATCH[1]}"
         PACKAGE_INFO=$(echo "$PACKAGE_INFO" | jq --arg publisher "$publisher" '.publisher = $publisher')
-else
-  echo "URL does not match the expected pattern."
-fi
-    PROVIDER_URL="$FINAL_PROVIDER_URL"
+  fi
+
+  PROVIDER_URL="$FINAL_PROVIDER_URL"
 fi
 
 PACKAGE_INFO=$(echo "$PACKAGE_INFO" | jq --arg repository "$FINAL_PROVIDER_URL" '.repository = $repository')
@@ -450,6 +468,11 @@ CREATION_DATE="$CURRENT_DATE"
 
 ANALYSIS_PERIOD="${ANALYSIS_PERIOD} months"
 
+PACKAGE_STATS=$(get_statistics "$PACKAGE" "$TYPE") 
+
+DOWNLOADS_LAST_30_DAYS=$(jq -r '.downloads_last_30_days // 0' <<<"$PACKAGE_STATS")
+LIKES_COUNT=$(jq -r '.likes // 0' <<<"$PACKAGE_STATS")
+
 echo "$PACKAGE_INFO" | jq -r \
     --arg package_name "$PACKAGE" \
     --arg license_api_url "$BASE_URL/license" \
@@ -467,6 +490,8 @@ echo "$PACKAGE_INFO" | jq -r \
     --argjson version_is_obsolete "$VERSION_IS_OBSOLETE" \
     --arg newer_versions "$NEWER_VERSIONS" \
     --argjson cve_info "$CVE_INFO" \
+    --argjson downloads_last_30_days $DOWNLOADS_LAST_30_DAYS \
+    --argjson likes_count $LIKES_COUNT \
     --arg analysis_period "$ANALYSIS_PERIOD" \
     '{
         "package": $package_name,
@@ -535,7 +560,7 @@ echo "$PACKAGE_INFO" | jq -r \
                 }
             ),
             "grq-5": (
-                ((.stars_count // 0) >= 1000 or (.forks_count // 0) >= 1000 or (.subscribers_count // 0) >= 1000 or ((.stars_count // 0) + (.forks_count // 0) + (.subscribers_count // 0) >= 2000)) as $fulfilled |
+                ((.stars_count // 0) >= 1500 or (.forks_count // 0) >= 1500 or (.subscribers_count // 0) >= 1500 or ((.stars_count // 0) + (.forks_count // 0) + (.subscribers_count // 0) >= 3000) or ($downloads_last_30_days // 0) >= 100000 or ($likes_count // 0) >= 1500) as $fulfilled |
                 {
                     description: "Provider is reliable, trustworthy and communicative",
                     fulfilled: (if $fulfilled then $fulfilled else "" end),
@@ -544,6 +569,8 @@ echo "$PACKAGE_INFO" | jq -r \
                     metadata: {
                         stars: (.stars_count // 0),
                         forks: (.forks_count // 0),
+                        downloads_last_30_days: ($downloads_last_30_days // 0),
+                        likes: ($likes_count // 0),
                         watchers: (.watchers_count // 0),
                         subscribers: (.subscribers_count // 0),
                         network: (.network_count // 0),
@@ -553,7 +580,13 @@ echo "$PACKAGE_INFO" | jq -r \
                         watch_events: (.watch_events // 0),
                         fork_events: (.fork_events // 0),
                         pull_request_events: (.pull_request_events // 0),
-                        issues_events: (.issues_events // 0)
+                        issues_events: (.issues_events // 0),
+                        one_of_following_conditions: {
+                            stars_or_forks_or_subscribers_any_greater_than_or_equal_to_1500: (if ((.stars_count // 0) >= 1500 or (.forks_count // 0) >= 1500 or (.subscribers_count // 0) >= 1500) then "\u2705" else "\u274C" end),
+                            sum_of_stars_forks_subscribers_greater_than_or_equal_to_3000: (if ((.stars_count // 0) + (.forks_count // 0) + (.subscribers_count // 0) >= 3000) then "\u2705" else "\u274C" end),
+                            downloads_last_30_days_greater_than_or_equal_to_100K: (if (($downloads_last_30_days // 0) >= 100000) then "\u2705" else "\u274C" end),
+                            likes_greater_than_or_equal_to_1500: (if (($likes_count // 0) >= 1500) then "\u2705" else "\u274C" end)
+                        }
                     }
                 }
             ),
