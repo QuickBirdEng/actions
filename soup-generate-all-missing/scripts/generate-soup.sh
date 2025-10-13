@@ -144,9 +144,9 @@ get_github_info() {
     base_url=$(get_github_repo_url "$publisher" "$package" "$provider_url")
 
     if [[ -n "$publisher" && "$publisher" != "N/A" ]]; then
-        local repo_json=$(curl -s -H "Authorization: token $GH_API_TOKEN" "$base_url" 2>/dev/null)
-        local license_json=$(curl -s -H "Authorization: token $GH_API_TOKEN" "$base_url/license" 2>/dev/null)
-        local events_json=$(curl -s -H "Authorization: token $GH_API_TOKEN" "https://api.github.com/users/$publisher/events/public" 2>/dev/null)
+        local repo_json=$(curl -sL -H "Authorization: token $GH_API_TOKEN" "$base_url" 2>/dev/null)
+        local license_json=$(curl -sL -H "Authorization: token $GH_API_TOKEN" "$base_url/license" 2>/dev/null)
+        local events_json=$(curl -sL -H "Authorization: token $GH_API_TOKEN" "https://api.github.com/users/$publisher/events/public" 2>/dev/null)
 
         if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
             local license_info='{"license_name": "N/A", "license_spdx_id": "N/A", "license_key": "N/A", "license_url": "N/A"}'
@@ -324,6 +324,21 @@ PUB_DEV_LICENSE_URL=$(pub_dev_license_url "$PACKAGE")
 PUB_DEV_LICENSE=$(fetch_pub_dev_license "$PACKAGE")
 
 PACKAGE_INFO=$(echo "$PACKAGE_JSON" | jq -r  --arg license "$PUB_DEV_LICENSE" --arg license_url "$PUB_DEV_LICENSE_URL" "$INFO_QUERY")
+PROVIDER_URL=$(echo "$PACKAGE_INFO" | jq -r '.repository // ""' | sed -E 's|^git\+||; s|\.git$||')
+FINAL_PROVIDER_URL=$(curl -Ls -o /dev/null -w '%{url_effective}' "$PROVIDER_URL")
+
+if [[ "$PROVIDER_URL" != "$FINAL_PROVIDER_URL" ]]; then
+  if [[ $FINAL_PROVIDER_URL =~ ^https://github\.com/([^/]+)/?.*$ ]]; then
+        publisher="${BASH_REMATCH[1]}"
+        PACKAGE_INFO=$(echo "$PACKAGE_INFO" | jq --arg publisher "$publisher" '.publisher = $publisher')
+else
+  echo "URL does not match the expected pattern."
+fi
+    PROVIDER_URL="$FINAL_PROVIDER_URL"
+fi
+
+PACKAGE_INFO=$(echo "$PACKAGE_INFO" | jq --arg repository "$FINAL_PROVIDER_URL" '.repository = $repository')
+
 PUBLISHER=$(echo "$PACKAGE_INFO" | jq -r '.publisher // ""')
 PROVIDER_URL=$(echo "$PACKAGE_INFO" | jq -r '.repository // ""')
 BASE_URL=$(get_github_repo_url "$PUBLISHER" "$PACKAGE" "$PROVIDER_URL")
