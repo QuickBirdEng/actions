@@ -1,0 +1,36 @@
+name: 'SOUP - Generate PDF for Approved'
+description: 'Generate PDF reports for approved SOUP dependencies'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Copy scripts
+      shell: bash
+      run: cp $GITHUB_ACTION_PATH/scripts/* .
+    - name: Generate PDFs
+      shell: bash
+      run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install reportlab
+
+          mkdir -p soup_reports
+  
+          files=$(git ls-files '.soups/**/*.json')
+          for file in $files; do
+            [[ -f "$file" ]] || continue
+
+            approval_on=$(jq -r '.metadata.approval.date // empty' "$file" 2>/dev/null || true)
+
+            if [[ -z "$approval_on" ]]; then
+              echo "❌ $file: Missing Approval"
+              continue
+            fi
+
+            python3 generate-soup-pdf.py "$file"
+          done
+    - name: Upload PDFs
+      uses: actions/upload-artifact@v4
+      with:
+        name: soup_reports
+        path: soup_reports
