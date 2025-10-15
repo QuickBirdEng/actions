@@ -19,10 +19,12 @@ find . \( -name "package.json" -o -name "pubspec.yaml" \) | while read -r FILE; 
 
         FILE_PATH=$SOUPS_DIR/$TYPE/$NORMALIZED_PACKAGE-$NORMALIZED_VERSION.json
 
-        if [ -f "$FILE_PATH" ]; then
-            echo "File $FILE_PATH already exists, skipping..."
+        retire_soup_older_versions_if_present "$NORMALIZED_PACKAGE" "$TYPE" "$NORMALIZED_VERSION"
+        check_if_soup_exists_and_is_approved "$FILE_PATH"
+        if [[ $? -ne 0 ]]; then
             continue
         fi
+
         echo "Generating soup for $PACKAGE -> $VERSION"
         bash generate-soup.sh "$TYPE" "$PACKAGE" "$VERSION" "$NORMALIZED_VERSION" > $FILE_PATH
     done

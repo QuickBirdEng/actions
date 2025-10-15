@@ -42,7 +42,8 @@ runs:
         git config --local user.email "$PR_EMAIL"
         git config --local user.name "$PR_NAME"
 
-        git add .soups/**/*.json
+        git add -A .soups
+        git status
         git commit -m "generate missing soup files"
         git push origin ${{ inputs.branch-name }}
 
