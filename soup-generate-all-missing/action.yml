@@ -10,9 +10,6 @@ inputs:
   soup-approvers:
     description: 'List of GitHub usernames to assign as reviewers for SOUP PRs'
     required: true
-  base-branch:
-    description: 'The base branch to compare against (e.g., main)'
-    required: true
   branch-name:
     description: 'The name of the branch to create or use for the PR'
     required: true
@@ -35,7 +32,7 @@ runs:
         fi
     - name: Generate Missing SOUPs
       shell: bash
-      run: git fetch origin && bash generate-all-missing-soups.sh ${{ inputs.base-branch }}
+      run: git fetch origin && bash generate-all-missing-soups.sh
     - name: Commit and Push Changes
       shell: bash
       run: |

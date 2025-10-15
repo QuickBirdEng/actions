@@ -39,15 +39,9 @@ normalized_version() {
     fi
 }
 
-get_list_of_existing_soup_files() {
-    SOUPS=$(git ls-tree -r --name-only "$BASE_BRANCH" | grep '^.soups/.*\.json$' | sort)
-    echo "$SOUPS"
-}
-
 generate_soups() { 
     FILE="$1"
     TYPE="$2"
-    LIST_OF_EXISTING_SOUP_FILES="$3"
         
     while IFS=',' read -r PACKAGE VERSION
     do            
@@ -56,9 +50,14 @@ generate_soups() {
         NORMALIZED_PACKAGE=$(echo "$PACKAGE" | tr '/' '-')
 
         FILE_PATH=$SOUPS_DIR/$TYPE/$NORMALIZED_PACKAGE-$NORMALIZED_VERSION.json
-        if echo "$LIST_OF_EXISTING_SOUP_FILES" | grep -q "$FILE_PATH"; then
-            echo "File $FILE_PATH already exists, skipping..."
-            continue
+
+        if [[ -f "$FILE_PATH" ]]; then
+            if jq -e '.metadata.approval.by != null and .metadata.approval.by != "" and
+                      .metadata.approval.date != null and .metadata.approval.date != ""' "$FILE_PATH" > /dev/null; then
+              APPROVAL_DATE=$(jq -r '.metadata.approval.date' "$FILE_PATH")
+              echo "ℹ️$FILE_PATH already exists and is approved on $APPROVAL_DATE, skipping..."
+              continue
+            fi
         fi
 
         CREATION_DATE=""
@@ -71,9 +70,5 @@ generate_soups() {
     done < "$FILE"
 }
 
-LIST_OF_EXISTING_SOUP_FILES=$(git ls-tree -r --name-only "$BASE_BRANCH" | grep '^.soups/.*\.json$' | sort)
-[ -n $LIST_OF_EXISTING_SOUP_FILES ] && echo "--- Existing soup files in branch $BASE_BRANCH ---"
-[ -n $LIST_OF_EXISTING_SOUP_FILES ] && echo "$LIST_OF_EXISTING_SOUP_FILES"
-[ -n $LIST_OF_EXISTING_SOUP_FILES ] && echo "--------"
-generate_soups $DEPS_YARN_FINAL_FILE npm "$LIST_OF_EXISTING_SOUP_FILES"
-generate_soups $DEPS_DART_FINAL_FILE dart "$LIST_OF_EXISTING_SOUP_FILES"
+generate_soups $DEPS_YARN_FINAL_FILE npm
+generate_soups $DEPS_DART_FINAL_FILE dart
