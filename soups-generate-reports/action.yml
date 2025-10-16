@@ -1,0 +1,22 @@
+name: SOUP - Generate Reports optionally including PDFs
+description: 'Generate SOUP Reports'
+
+inputs:
+  generate-pdfs:
+    description: 'Set to true to generate PDFs'
+    required: true
+    type: boolean
+runs:
+  using: "composite"
+  steps:
+    - name: Copy scripts
+      shell: bash
+      run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
+    - name: Validate SOUPs and optionally Generate PDFs
+      shell: bash
+      run: bash validate-soups-and-optionally-generate-pdfs.sh "${{ inputs.generate-pdfs }}"
+    - name: Upload Reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: soup_reports
+        path: soup_reports
