@@ -15,7 +15,8 @@ runs:
           pip install reportlab
 
           mkdir -p soup_reports
-  
+          LOG_FILE="soup_reports/_soup_report.log" 
+
           files=$(git ls-files '.soups/**/*.json')
           for file in $files; do
             [[ -f "$file" ]] || continue
@@ -23,9 +24,11 @@ runs:
             approval_on=$(jq -r '.metadata.approval.date // empty' "$file" 2>/dev/null || true)
 
             if [[ -z "$approval_on" ]]; then
-              echo "❌ $file: Missing Approval"
+              echo "❌ $file: Missing Approval" | tee -a "$LOG_FILE"
               continue
             fi
+
+            echo "✅ $file: Approved on $approval_on" | tee -a "$LOG_FILE"
 
             python3 generate-soup-pdf.py "$file"
           done
