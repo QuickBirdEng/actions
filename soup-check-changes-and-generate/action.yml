@@ -16,12 +16,15 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Fetch and Checkout branch
+      shell: bash
+      run: git fetch origin && git checkout ${{ github.head_ref }}
     - name: Copy scripts
       shell: bash
-      run: cp $GITHUB_ACTION_PATH/scripts/* .
+      run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Generate Missing SOUPs
       shell: bash
-      run: git fetch origin && git checkout ${{ github.head_ref }} && bash soups-check.sh ${{ inputs.base-branch }}
+      run: bash soups-check.sh ${{ inputs.base-branch }}
     - name: Commit and Push Changes
       id: commit
       shell: bash

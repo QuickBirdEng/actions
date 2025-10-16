@@ -17,9 +17,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Copy scripts
-      shell: bash
-      run: cp $GITHUB_ACTION_PATH/scripts/* .
     - name: Create branch (if needed)
       shell: bash
       run: |
@@ -30,10 +27,14 @@ runs:
         else
             git checkout -b "${{ inputs.branch-name }}"
         fi
+    - name: Copy scripts
+      shell: bash
+      run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Generate Missing SOUPs
       shell: bash
       run: git fetch origin && bash generate-all-missing-soups.sh
     - name: Commit and Push Changes
+      id: commit-changes
       shell: bash
       run: |
         USER_INFO=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user)
@@ -47,11 +48,18 @@ runs:
         PR_EMAIL=$(echo "$EMAILS" | jq -r '.[] | select(.primary == true) | .email')
         git config --local user.email "$PR_EMAIL"
         git config --local user.name "$PR_NAME"
-        (git add -A .soups && git commit -m "generate missing soup files") || echo "No changes to commit"        
-        git status
+
+        if git add -A .soups && git commit -m "generate missing soup files"; then
+          echo "skip-remaining-steps=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "skip-remaining-steps=true" >> "$GITHUB_OUTPUT"
+          echo "No changes to commit"
+        fi
+
         git push origin ${{ inputs.branch-name }}
         echo "PR_AUTHOR=$PR_AUTHOR" >> $GITHUB_ENV
     - name: Create Pull Request
+      if: steps.commit-changes.outputs.skip-remaining-steps == 'false'
       shell: bash
       run: |
         RESPONSE=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls?head=QuickBirdEng:${{ inputs.branch-name }}&base=main")

@@ -6,7 +6,7 @@ runs:
   steps:
     - name: Copy scripts
       shell: bash
-      run: cp $GITHUB_ACTION_PATH/scripts/* .
+      run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Generate PDFs
       shell: bash
       run: |
