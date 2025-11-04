@@ -6,36 +6,17 @@ inputs:
     description: 'Set to true to generate PDFs'
     required: true
     type: boolean
-  repository-name:
-    description: 'The name of the repository'
-    required: false
-    type: string
 runs:
   using: "composite"
   steps:
     - name: Copy scripts
       shell: bash
       run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
-    - name: Where is it running?
-      shell: bash
-      run: echo "Running in repository ${{ inputs.repository-name }}"
     - name: Validate SOUPs and optionally Generate PDFs
       shell: bash
       run: bash validate-soups-and-optionally-generate-pdfs.sh "${{ inputs.generate-pdfs }}"
-    - name: Rename Reports Folder
-      id: rename
-      shell: bash
-      run: |
-        if [[ ! -z "${{ inputs.repository-name }}" ]]; then
-          echo "Repository name provided. Using it in folder name."
-          datetime=$(date +%d%m%Y%H%M%S)
-          folder_name="soups-${{ inputs.repository-name }}-$datetime"
-          mv soup_reports "$folder_name"
-        fi
-
-        echo "soups-folder-name=$folder_name" >> $GITHUB_OUTPUT
     - name: Upload Reports
       uses: actions/upload-artifact@v4
       with:
-        name: "${{ steps.rename.outputs.soups-folder-name }}"
-        path: soup_report
+        name: soup_reports
+        path: soup_reports
