@@ -19,6 +19,8 @@ runs:
     - name: Fetch and Checkout branch
       shell: bash
       run: git fetch origin && git checkout ${{ github.head_ref }}
+    - shell: bash
+      run: git clean -fdx
     - name: Copy scripts
       shell: bash
       run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
