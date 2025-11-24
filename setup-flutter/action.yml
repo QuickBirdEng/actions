@@ -15,6 +15,10 @@ inputs:
   working-directory:
     description: 'Working directory for action'
     default: '.'
+  skip-build-runner:
+    description: 'Run build_runner for code generation'
+    required: false
+    default: false
 runs:
   using: "composite"
   steps:
@@ -35,7 +39,7 @@ runs:
       run: flutter pub get
     - name: Code Generation using build_runner
       shell: bash
-      if: ${{ env.RUN_BUILD_RUNNER == '' || env.RUN_BUILD_RUNNER == 'true' }}
+      if: ${{ env.RUN_BUILD_RUNNER == '' || env.RUN_BUILD_RUNNER == 'true' && inputs.skip-build-runner == 'false' }}
       working-directory: ${{ inputs.working-directory }}
       run: flutter pub run build_runner clean && flutter pub run build_runner build --delete-conflicting-outputs
     - name: Setup Gems
