@@ -19,6 +19,10 @@ inputs:
     description: 'Run build_runner for code generation'
     required: false
     default: false
+  skip-pub-get:
+    description: 'Skip flutter pub get'
+    required: false
+    default: false
 runs:
   using: "composite"
   steps:
@@ -35,6 +39,7 @@ runs:
       run: flutter clean && flutter pub cache clean -f
     - name: Fetch Project Dependencies
       shell: bash
+      if: ${{ inputs.skip-pub-get == 'false' }}
       working-directory: ${{ inputs.working-directory }}
       run: flutter pub get
     - name: Code Generation using build_runner
