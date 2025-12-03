@@ -51,7 +51,7 @@ runs:
       shell: bash -l {0}
       if: ${{ inputs.setup-gems == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: cd ios && gem install bundler && bundle update
+      run: cd ios && gem install bundler -v 2.7.2 && bundle _2.7.2_ update
     - name: Install Pods
       shell: bash -l {0}
       if: ${{ inputs.setup-gems == 'true' }}
