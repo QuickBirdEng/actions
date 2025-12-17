@@ -13,6 +13,9 @@ inputs:
   base-branch:
     description: 'The base branch to compare against (e.g., main)'
     required: true
+  slack-webhook-url:
+    description: 'Slack webhook URL for notifications'
+    required: true
 runs:
   using: "composite"
   steps:
@@ -37,7 +40,7 @@ runs:
             exit 0
         fi
 
-        USER_INFO=$(curl -s -H "Authorization: token $GH_API_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/user)
+        USER_INFO=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user)
         EMAILS=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user/emails)
         echo "User Emails: $EMAILS"
 
@@ -104,3 +107,44 @@ runs:
           else
             echo "No SOUP_APPROVERS configured - skipping reviewer assignment"
           fi
+    - name: Send Slack Notification
+      shell: bash
+      if: steps.commit.outputs.soup_files_generated == 'true' and ${{ github.event_name == 'pull_request' && github.event.action == 'opened' }}
+      run: |
+        PR_NUMBER=${{ github.event.pull_request.number }}
+        PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+        PR_TITLE=$(jq -r .pull_request.title "$GITHUB_EVENT_PATH")
+        REPO_NAME="${{ inputs.repository }}"
+        PR_URL="https://github.com/QuickBirdEng/$REPO_NAME/pull/$PR_NUMBER"
+
+        curl -X POST -H "Content-Type: application/json" \
+          --data @- \
+          ${{ inputs.slack-webhook-url }} <<EOF
+        {
+          "blocks": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "$PR_TITLE (#$PR_NUMBER) on $REPO_NAME by @$PR_AUTHOR",
+                "emoji": false
+              }
+            },
+            {
+              "type": "actions",
+              "elements": [
+                {
+                  "type": "button",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "View Pull Request",
+                    "emoji": true
+                  },
+                  "url": "$PR_URL",
+                  "style": "primary"
+                }
+              ]
+            }
+          ]
+        }
+        EOF
