@@ -132,7 +132,7 @@ runs:
           fi
     - name: Send Slack Notification
       shell: bash
-      if: steps.commit.outputs.soup_files_generated == 'true' and ${{ github.event_name == 'pull_request' && github.event.action == 'opened' }}
+      if: steps.commit.outputs.soup_files_generated == 'true' && github.event_name == 'pull_request' && github.event.action == 'opened'
       run: |
         PR_NUMBER=${{ github.event.pull_request.number }}
         PR_AUTHOR="${{ github.event.pull_request.user.login }}"
