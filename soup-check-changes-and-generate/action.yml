@@ -16,6 +16,9 @@ inputs:
   slack-webhook-url:
     description: 'Slack webhook URL for notifications'
     required: true
+  github-to-slack-mapping:
+    description: 'JSON mapping of GitHub usernames to Slack user IDs (e.g., {"github-user1":"U12345","github-user2":"U67890"})'
+    required: false
 runs:
   using: "composite"
   steps:
@@ -93,15 +96,35 @@ runs:
               echo "No reviewers to assign after filtering out PR author"
             else
               echo "Assigning reviewers: $FILTERED_APPROVERS"
-              
+
+              IFS=',' read -ra FILTERED_ARRAY <<< "$FILTERED_APPROVERS"
+              ARRAY_SIZE=${#FILTERED_ARRAY[@]}
+
+              if [ $ARRAY_SIZE -le 2 ]; then
+                RANDOM_APPROVERS="$FILTERED_APPROVERS"
+              else
+                SELECTED_INDICES=$(shuf -i 0-$((ARRAY_SIZE-1)) -n 2)
+                RANDOM_APPROVERS=""
+                for idx in $SELECTED_INDICES; do
+                  if [ -z "$RANDOM_APPROVERS" ]; then
+                    RANDOM_APPROVERS="${FILTERED_ARRAY[$idx]}"
+                  else
+                    RANDOM_APPROVERS="$RANDOM_APPROVERS,${FILTERED_ARRAY[$idx]}"
+                  fi
+                done
+              fi
+
+              echo "Randomly selected approvers: $RANDOM_APPROVERS"
+              echo "RANDOM_APPROVERS=$RANDOM_APPROVERS" >> $GITHUB_ENV
+
               REVIEWERS_JSON=$(echo "$FILTERED_APPROVERS" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' | sed 's/^/[/' | sed 's/$/]/')
-              
+
               curl -X POST \
                 -H "Authorization: token ${{ inputs.gh-api-token }}" \
                 -H "Accept: application/vnd.github.v3+json" \
                 https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls/$PR_NUMBER/requested_reviewers \
                 -d "{\"reviewers\": $REVIEWERS_JSON}"
-                
+
               echo "Reviewers assigned successfully"
             fi
           else
@@ -117,6 +140,30 @@ runs:
         REPO_NAME="${{ inputs.repository }}"
         PR_URL="https://github.com/QuickBirdEng/$REPO_NAME/pull/$PR_NUMBER"
 
+        SLACK_MENTIONS=""
+        if [ -n "$RANDOM_APPROVERS" ] && [ -n "${{ inputs.github-to-slack-mapping }}" ]; then
+          IFS=',' read -ra APPROVER_ARRAY <<< "$RANDOM_APPROVERS"
+          for approver in "${APPROVER_ARRAY[@]}"; do
+            approver_trimmed=$(echo "$approver" | xargs)
+            SLACK_ID=$(echo '${{ inputs.github-to-slack-mapping }}' | jq -r --arg user "$approver_trimmed" '.[$user] // empty')
+            if [ -n "$SLACK_ID" ]; then
+              SLACK_MENTIONS="$SLACK_MENTIONS <@$SLACK_ID>"
+            fi
+          done
+        fi
+
+        MENTION_BLOCK=""
+        if [ -n "$SLACK_MENTIONS" ]; then
+          MENTION_BLOCK=',
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "Assigned Reviewers: '$SLACK_MENTIONS'"
+              }
+            }'
+        fi
+
         curl -X POST -H "Content-Type: application/json" \
           --data @- \
           ${{ inputs.slack-webhook-url }} <<EOF
@@ -126,10 +173,17 @@ runs:
               "type": "header",
               "text": {
                 "type": "plain_text",
-                "text": "$PR_TITLE (#$PR_NUMBER) on $REPO_NAME by @$PR_AUTHOR",
+                "text": "$PR_TITLE (#$PR_NUMBER)",
                 "emoji": false
               }
             },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "Repo: $REPO_NAME, Author: @$PR_AUTHOR"
+              }
+            }$MENTION_BLOCK,
             {
               "type": "actions",
               "elements": [
