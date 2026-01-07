@@ -171,7 +171,7 @@ runs:
         fi
     - name: Send Slack Notification
       shell: bash
-      if:  steps.commit-changes.outputs.skip-remaining-steps == 'false'
+      if:  steps.commit-changes.outputs.skip-remaining-steps == 'false' && env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
       run: |
         PR_TITLE="Add Missing SOUPs"
         REPO_NAME="${{ inputs.repository }}"
