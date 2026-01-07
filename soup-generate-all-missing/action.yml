@@ -1,6 +1,11 @@
 name: 'Generate Missing SOUPs and Create PR'
 description: 'Generate missing SOUP files and create a pull request'
 inputs:
+  excluded-requirements:
+    description: 'A comma-separated list of requirements to exclude from SOUP generation'
+    required: false
+    type: string
+    default: ''
   repository:
     description: 'The name of the repository (e.g., soups)'
     required: true
@@ -41,6 +46,8 @@ runs:
       shell: bash
       run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Generate Missing SOUPs
+      env:
+        EXCLUDED_REQUIREMENTS: ${{ inputs.excluded-requirements }}
       shell: bash
       run: git fetch origin && bash generate-all-missing-soups.sh
     - name: Commit and Push Changes

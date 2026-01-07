@@ -1,6 +1,11 @@
 name: 'Check for SOUP changes and generate missing SOUP files'
 description: 'Check for changes in dependencies and generate missing SOUP files'
 inputs:
+  excluded-requirements:
+    description: 'A comma-separated list of requirements to exclude from SOUP generation'
+    required: false
+    type: string
+    default: ''
   repository:
     description: 'The name of the repository (e.g., soups)'
     required: true
@@ -31,6 +36,8 @@ runs:
       shell: bash
       run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Generate Missing SOUPs
+      env:
+        EXCLUDED_REQUIREMENTS: ${{ inputs.excluded-requirements }}
       shell: bash
       run: bash soups-check.sh ${{ inputs.base-branch }}
     - name: Commit and Push Changes
