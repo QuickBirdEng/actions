@@ -66,7 +66,7 @@ runs:
         git config --local user.email "$PR_EMAIL"
         git config --local user.name "$PR_NAME"
 
-        if git add -A .soups && git commit -m "generate missing soup files"; then
+        if git add -A .soups && git commit  --no-verify -m "generate missing soup files"; then
           echo "skip-remaining-steps=false" >> "$GITHUB_OUTPUT"
         else
           echo "skip-remaining-steps=true" >> "$GITHUB_OUTPUT"

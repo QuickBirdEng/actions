@@ -62,7 +62,7 @@ runs:
 
         git add -A .soups
         git status
-        git commit -m "generate missing soup files"
+        git commit  --no-verify -m "generate missing soup files"
         git push origin ${{ inputs.branch-name }}
 
         echo "soup_files_generated=true" >> $GITHUB_OUTPUT
