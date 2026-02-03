@@ -29,7 +29,10 @@ runs:
   steps:
     - name: Fetch and Checkout branch
       shell: bash
-      run: git fetch origin && git checkout ${{ github.head_ref }}
+      run: |
+        BASE_BRANCH="${{ inputs.base-branch }}"
+        BASE_BRANCH="${BASE_BRANCH#origin/}"
+        git fetch --unshallow origin && git remote set-head origin --auto && git checkout ${{ github.head_ref }}
     - shell: bash
       run: git clean -fdx
     - name: Copy scripts
