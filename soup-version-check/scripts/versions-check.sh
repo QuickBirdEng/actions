@@ -112,5 +112,5 @@ fetch_dependencies
 verify_versions "$NODE_DEPENDENCIES_OUTPUT" "node" || true
 verify_versions "$DART_DEPENDENCIES_OUTPUT" "dart" || true
 
-echo "Ecosystem,Name,Version,Status,Age" > $OUTPUT_FILE
+echo "Ecosystem,Name,Version,Status,Age,Last Versions,Version Recency" > $OUTPUT_FILE
 sort -t',' -k4,4 -k1,1 -k2,2 $OUTPUT_FILE_TMP >> $OUTPUT_FILE

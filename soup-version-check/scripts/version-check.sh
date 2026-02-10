@@ -14,7 +14,7 @@ MONTHS=${4//\"/}
 
 output_error() {
     local msg="$1"
-    CSV_LINE=$(printf '%s,%s,%s,"%s"\n' "$PACKAGE" "$VERSION" "ERROR: $msg" "N/A")
+    CSV_LINE=$(printf '%s,%s,%s,"%s","%s","%s"\n' "$PACKAGE" "$VERSION" "ERROR: $msg" "N/A" "N/A" "N/A")
     echo "$CSV_LINE"
     exit 0
 }
@@ -72,6 +72,27 @@ else
     STATUS="EXCEEDS_LIMIT (of $MONTHS months)"
 fi
 
+# Compute the last 2 version families ignoring patches (group by major.minor),
+# then check if the current version's major.minor is one of the last 2.
+INPUT_MAJOR=$(echo "$VERSION" | cut -d. -f1)
+INPUT_MINOR=$(echo "$VERSION" | cut -d. -f2)
+CURRENT_FAMILY="${INPUT_MAJOR}.${INPUT_MINOR}"
 
-CSV_LINE=$(printf '%s,%s,%s,"%s"\n' "$PACKAGE" "$VERSION" "$STATUS" "${DIFF_MONTHS} months (${DIFF_DAYS} days)")
+if [[ "$TYPE" == *"dart"* ]]; then
+    ALL_VERSIONS_RAW=$(echo "$JSON" | jq -r '[.versions[].version] | .[]' 2>/dev/null)
+else
+    ALL_VERSIONS_RAW=$(echo "$JSON" | jq -r '[.time | keys[] | select(. != "created" and . != "modified")] | .[]' 2>/dev/null)
+fi
+
+# Extract unique major.minor families, sort by major then minor numerically, take last 2
+FAMILIES=$(echo "$ALL_VERSIONS_RAW" | grep -oE '^[0-9]+\.[0-9]+' | sort -t. -k1,1n -k2,2n -u | tail -n 2 | sort -t. -k1,1n -k2,2n -r | tr '\n' ' ' | xargs)
+
+FAMILIES_STR=$(echo "$FAMILIES" | tr ' ' '|')
+if echo " $FAMILIES " | grep -qw "$CURRENT_FAMILY"; then
+    VERSION_RECENCY="OK"
+else
+    VERSION_RECENCY="OUTDATED"
+fi
+
+CSV_LINE=$(printf '%s,%s,%s,"%s","%s","%s"\n' "$PACKAGE" "$VERSION" "$STATUS" "${DIFF_MONTHS} months (${DIFF_DAYS} days)" "$FAMILIES_STR" "$VERSION_RECENCY")
 echo "$CSV_LINE"
