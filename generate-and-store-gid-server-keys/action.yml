@@ -1,0 +1,78 @@
+name: 'GID Server - Generate and Store Keys'
+description: 'Generate GID server keys and store them in "GID Keys" 1Password note'
+inputs:
+  service-account-token:
+    description: 'The 1Password service account token to be used for the step'
+    type: string
+    required: true
+  project-name:
+    description: 'The 1PW project this note belongs to'
+    type: string
+    required: true
+  environment:
+    description: 'The environment this note belongs to'
+    type: string
+    required: true
+runs:
+  using: "composite"
+  steps:
+  - name: Generate Keys
+    id: generate-keys
+    shell: bash
+    run: |
+      private_key=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null)
+      public_key=$(echo "$private_key" | openssl ec -pubout 2>/dev/null)
+
+      pub_der=$(echo "$private_key" | openssl ec -pubout -outform DER 2>/dev/null | xxd -p | tr -d '\n')
+      pub_point="${pub_der: -130}"
+
+      x_b64=$(echo "${pub_point:2:64}" | xxd -r -p | base64 | tr '+/' '-_' | tr -d '=\n')
+      y_b64=$(echo "${pub_point:66:64}" | xxd -r -p | base64 | tr '+/' '-_' | tr -d '=\n')
+
+      key_id=$(echo -n "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"${x_b64}\",\"y\":\"${y_b64}\"}" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=\n')
+
+      # Mask the keys in the logs
+      while IFS= read -r line; do [ -n "$line" ] && echo "::add-mask::$line"; done <<< "$private_key"
+      while IFS= read -r line; do [ -n "$line" ] && echo "::add-mask::$line"; done <<< "$public_key"
+
+      {
+        echo "private_key<<EOF"
+        echo "$private_key"
+        echo "EOF"
+        echo "public_key<<EOF"
+        echo "$public_key"
+        echo "EOF"
+        echo "key_id=$key_id"
+      } >> $GITHUB_OUTPUT
+
+      echo "Generated keys with Key ID: $key_id"
+  - name: Install 1Password CLI
+    uses: 1password/install-cli-action@v1
+  - name: Write key to 1Password note
+    shell: bash
+    env:
+      OP_SERVICE_ACCOUNT_TOKEN: ${{ inputs.service-account-token }}
+      PRIVATE_KEY: ${{ steps.generate-keys.outputs.private_key }}
+      PUBLIC_KEY: ${{ steps.generate-keys.outputs.public_key }}
+      KEY_ID: ${{ steps.generate-keys.outputs.key_id }}
+      OP_VAULT: "GID Keys"
+      SECTION_NAME: "${{ inputs.environment }}"
+      OP_NOTE: "${{ inputs.project-name }}"
+    run: |
+      if ! op item get "$OP_NOTE" --vault "$OP_VAULT" > /dev/null 2>&1; then
+        op item create --vault "$OP_VAULT" --category "Secure Note" --title "$OP_NOTE" < /dev/null
+      fi
+
+      op item get "$OP_NOTE" --vault "$OP_VAULT" --format json \
+        | jq \
+        --arg private_key "$PRIVATE_KEY" \
+        --arg public_key "$PUBLIC_KEY" \
+        --arg key_id "$KEY_ID" \
+        --arg section_name "$SECTION_NAME" \
+        '.sections = [(.sections // [] | map(select(.id != $section_name)))[],  {"id": $section_name, "label": $section_name}] |
+        .fields = [(.fields // [] | map(select(.section.id != $section_name)))[],
+          {section: {id: $section_name}, label: "Private Key", type: "CONCEALED", value: $private_key},
+          {section: {id: $section_name}, label: "Public Key", type: "STRING", value: $public_key},
+          {section: {id: $section_name}, label: "Key ID", type: "STRING", value: $key_id}
+        ]' \
+        | op item edit "$OP_NOTE" --vault "$OP_VAULT" > /dev/null 2>&1 && echo "Keys stored successfully" || { echo "Failed to store keys"; exit 1; }
