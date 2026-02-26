@@ -2,10 +2,19 @@ name: SOUP - Generate Reports optionally including PDFs
 description: 'Generate SOUP Reports'
 
 inputs:
+  repo-token: 
+    description: 'Github repository token (used for adding artifact to release)'
+    type: string
+    required: false
+    default: ''
   generate-pdfs:
     description: 'Set to true to generate PDFs'
     required: true
     type: boolean
+  report-artifact-name:
+    description: 'Name of the reports artifact'
+    required: false
+    default: 'soup_reports'
 runs:
   using: "composite"
   steps:
@@ -14,9 +23,25 @@ runs:
       run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Validate SOUPs and optionally Generate PDFs
       shell: bash
-      run: bash validate-soups-and-optionally-generate-pdfs.sh "${{ inputs.generate-pdfs }}"
+      run: bash validate-soups-and-optionally-generate-pdfs.sh "${{ github.ref_type == 'tag' || inputs.generate-pdfs }}"
     - name: Upload Reports
       uses: actions/upload-artifact@v4
       with:
-        name: soup_reports
-        path: soup_reports
+        name: ${{ inputs.report-artifact-name }}
+        path: ${{ inputs.report-artifact-name }}
+    - name: Compress XCArchive File as tar.gz
+      if: ${{ github.ref_type == 'tag' }}
+      id: compress
+      uses: QuickBirdEng/actions/compress-artifact@main
+      with:
+        name: ${{ inputs.report-artifact-name }}
+        artifact-path: ${{ inputs.report-artifact-name }}
+    - name: Add Artifacts to Release Assets (Only for tags)
+      if: ${{ github.ref_type == 'tag' }}
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ inputs.repo-token }}
+        file: ${{ steps.compress.outputs.artifact-path }}
+        asset_name: ${{ github.ref_name }}-${{ inputs.report-artifact-name }}.tar.gz
+        tag: ${{ github.ref }}
+
