@@ -38,6 +38,9 @@ outputs:
   artifact-dart-symbols-file-path:
     description: 'The path to the dart symbols file'
     value: ${{ steps.build-artifact.outputs.dart-symbols-path }}
+  version-and-build-number:
+    description: 'The version and build number used for this build (e.g. 1.0.0+12345)'
+    value: ${{ steps.build-artifact.outputs.version-and-build-number }}
 runs:
   using: "composite"
   steps:
@@ -88,7 +91,9 @@ runs:
 
         echo "Artifact Path => $artifact_path"
         echo "Dart Symbols Path => ${{ inputs.working-directory }}/$symbols_directory"
+        echo "Version & Build Number => $version_and_build_number"
         echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
+        echo "version-and-build-number=$version_and_build_number" >> $GITHUB_OUTPUT
 
         case $artifact_path in
           /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;

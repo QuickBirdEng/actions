@@ -26,6 +26,10 @@ inputs:
     description: 'The path to the dart symbols file'
     required: false
     default: ''
+  release:
+    description: 'Sentry release name to create and finalize (e.g. 1.0.0+12345). If empty, release finalization is skipped.'
+    required: false
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -53,3 +57,10 @@ runs:
       shell: bash
       run: |
         sentry-cli --url ${{inputs.url}} upload-proguard ${{inputs.proguard-mapping-file-path}} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} || true
+    - name: Create & Finalize Sentry Release
+      if: ${{ inputs.release != '' }}
+      shell: bash
+      run: |
+        sentry-cli --url ${{ inputs.url }} releases --org ${{ inputs.organization }} new "${{ inputs.release }}" --auth-token ${{ inputs.auth-token }} || true
+        sentry-cli --url ${{ inputs.url }} releases --org ${{ inputs.organization }} set-commits "${{ inputs.release }}" --auto --auth-token ${{ inputs.auth-token }} || true
+        sentry-cli --url ${{ inputs.url }} releases --org ${{ inputs.organization }} finalize "${{ inputs.release }}" --auth-token ${{ inputs.auth-token }} || true
