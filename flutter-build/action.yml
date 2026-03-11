@@ -96,7 +96,9 @@ runs:
         echo "Dart Symbols Path => ${{ inputs.working-directory }}/$symbols_directory"
         echo "Version & Build Number => $version_and_build_number"
         echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
-        echo "obfuscation-map-path=${{ inputs.working-directory }}/$symbols_directory/obfuscation.map.json" >> $GITHUB_OUTPUT
+        if [[ ${{ inputs.obfuscate }} == 'true' ]]; then
+          echo "obfuscation-map-path=${{ inputs.working-directory }}/$symbols_directory/obfuscation.map.json" >> $GITHUB_OUTPUT
+        fi
         echo "version-and-build-number=$version_and_build_number" >> $GITHUB_OUTPUT
 
         case $artifact_path in
