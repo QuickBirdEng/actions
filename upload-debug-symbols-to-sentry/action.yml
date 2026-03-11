@@ -26,7 +26,7 @@ inputs:
     description: 'The path to the dart symbols file'
     required: false
     default: ''
-  obfuscation-map-file-path:
+  dart-obfuscation-map-file-path:
     description: 'The path to the dart obfuscation map JSON file'
     required: false
     default: ''
@@ -52,13 +52,13 @@ runs:
       run: |
         sentry-cli --url ${{inputs.url}} debug-files upload ${{ inputs.dart-symbols-file-path }} --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} || true
     - name: Upload Dart Obfuscation Map
-      if: ${{ inputs.obfuscation-map-file-path != '' && inputs.dart-symbols-file-path != '' }}
+      if: ${{ inputs.dart-obfuscation-map-file-path != '' && inputs.dart-symbols-file-path != '' }}
       shell: bash
       run: |
         for debug_file in ${{ inputs.dart-symbols-file-path }}/*.symbols; do
           if [ -f "$debug_file" ]; then
             echo "Uploading obfuscation map for $debug_file"
-            sentry-cli --url ${{inputs.url}} dart-symbol-map upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{ inputs.obfuscation-map-file-path }} "$debug_file" || true
+            sentry-cli --url ${{inputs.url}} dart-symbol-map upload --auth-token ${{inputs.auth-token}} --org ${{inputs.organization}} --project ${{inputs.project}} ${{ inputs.dart-obfuscation-map-file-path }} "$debug_file" || true
           fi
         done
     - name: Upload Debug Symbols (iOS)

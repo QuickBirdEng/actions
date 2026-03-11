@@ -54,9 +54,9 @@ outputs:
   artifact-dart-symbols-file-path:
     description: 'The path to the dart symbols file'
     value: ${{ steps.build.outputs.artifact-dart-symbols-file-path }}
-  artifact-obfuscation-map-file-path:
+  artifact-dart-obfuscation-map-file-path:
     description: 'The path to the obfuscation map file'
-    value: ${{ steps.build.outputs.artifact-obfuscation-map-file-path }}
+    value: ${{ steps.build.outputs.artifact-dart-obfuscation-map-file-path }}
   version-and-build-number:
     description: 'The version and build number used for this build (e.g. 1.0.0+12345)'
     value: ${{ steps.build.outputs.version-and-build-number }}
