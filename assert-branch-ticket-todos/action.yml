@@ -1,0 +1,57 @@
+name: "Assert Branch Ticket Todos"
+description: "Fails when the branch ticket identifier still exists in the repository."
+inputs:
+  branch-name:
+    description: "Branch name to inspect. Defaults to GITHUB_REF_NAME when omitted."
+    required: false
+    default: ""
+  ticket-prefixes:
+    description: "Optional comma- or newline-separated ticket prefixes used to build the matcher."
+    required: false
+    default: ""
+  ticket-regex:
+    description: "Regex with a single capture group used when ticket-prefixes is empty."
+    required: false
+    default: "([A-Z][A-Z0-9]+-[0-9X]+)"
+  fail-on-missing-ticket:
+    description: "Whether to fail when the branch name does not contain a matching ticket identifier."
+    required: false
+    default: "true"
+  skip-dependabot:
+    description: "Skip the check for Dependabot branches or actor."
+    required: false
+    default: "true"
+  search-directory:
+    description: "Directory to scan for leftover ticket identifiers."
+    required: false
+    default: "."
+  search-exclude-dirs:
+    description: "Comma- or newline-separated directories excluded from the search."
+    required: false
+    default: ".git,.idea,node_modules"
+  search-exclude-globs:
+    description: "Comma- or newline-separated file globs excluded from the search."
+    required: false
+    default: "*.dill,*.bin,*.xml"
+outputs:
+  ticket-identifier:
+    description: "Ticket identifier extracted from the branch name."
+    value: ${{ steps.assert-ticket.outputs.ticket-identifier }}
+  match-count:
+    description: "Number of matches found for the extracted ticket identifier."
+    value: ${{ steps.assert-ticket.outputs.match-count }}
+runs:
+  using: "composite"
+  steps:
+    - id: assert-ticket
+      shell: bash
+      env:
+        INPUT_BRANCH_NAME: ${{ inputs.branch-name }}
+        INPUT_TICKET_PREFIXES: ${{ inputs.ticket-prefixes }}
+        INPUT_TICKET_REGEX: ${{ inputs.ticket-regex }}
+        INPUT_FAIL_ON_MISSING_TICKET: ${{ inputs.fail-on-missing-ticket }}
+        INPUT_SKIP_DEPENDABOT: ${{ inputs.skip-dependabot }}
+        INPUT_SEARCH_DIRECTORY: ${{ inputs.search-directory }}
+        INPUT_SEARCH_EXCLUDE_DIRS: ${{ inputs.search-exclude-dirs }}
+        INPUT_SEARCH_EXCLUDE_GLOBS: ${{ inputs.search-exclude-globs }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/assert_branch_ticket_todos.sh"
