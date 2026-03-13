@@ -38,6 +38,9 @@ outputs:
   artifact-dart-symbols-file-path:
     description: 'The path to the dart symbols file'
     value: ${{ steps.build-artifact.outputs.dart-symbols-path }}
+  artifact-dart-obfuscation-map-file-path:
+    description: 'The path to the obfuscation map file'
+    value: ${{ steps.build-artifact.outputs.obfuscation-map-path }}
   version-and-build-number:
     description: 'The version and build number used for this build (e.g. 1.0.0+12345)'
     value: ${{ steps.build-artifact.outputs.version-and-build-number }}
@@ -62,7 +65,7 @@ runs:
         symbols_directory="app_symbols"
 
         if [[ ${{ inputs.obfuscate }} == 'true' ]]; then
-          extra_arguments_list+=("--obfuscate --split-debug-info=$symbols_directory")
+          extra_arguments_list+=("--obfuscate --split-debug-info=$symbols_directory --extra-gen-snapshot-options=--save-obfuscation-map=$symbols_directory/obfuscation.map.json")
         fi
 
         if [[ ${{ inputs.build-type }} == 'ipa' ]]; then
@@ -93,6 +96,7 @@ runs:
         echo "Dart Symbols Path => ${{ inputs.working-directory }}/$symbols_directory"
         echo "Version & Build Number => $version_and_build_number"
         echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
+        echo "obfuscation-map-path=${{ inputs.working-directory }}/$symbols_directory/obfuscation.map.json" >> $GITHUB_OUTPUT
         echo "version-and-build-number=$version_and_build_number" >> $GITHUB_OUTPUT
 
         case $artifact_path in
