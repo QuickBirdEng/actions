@@ -1,5 +1,10 @@
 name: 'Dependencies (SOUP) List'
 description: 'List of all dependencies in the repository'
+inputs:
+  html-output:
+    description: 'Generate a unified HTML report of all dependencies'
+    required: false
+    default: 'true'
 runs:
   using: "composite"
   steps:
@@ -78,7 +83,66 @@ runs:
           rm flutter_temp.csv
         fi
 
-    - name: Upload Artifacts 
+    - name: Generate HTML Report
+      if: ${{ inputs.html-output == 'true' }}
+      shell: bash
+      run: |
+        OUT="results/dependencies.html"
+        cat > "$OUT" <<'EOF'
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>Software Bill of Material</title>
+          <style>
+            body { font-family: sans-serif; padding: 2rem; }
+            h2 { margin-top: 2rem; }
+            ul { list-style: disc; padding-left: 1.5rem; }
+            li { padding: 0.2rem 0; }
+          </style>
+        </head>
+        <body>
+        <h1>Software Bill of Material</h1>
+        EOF
+
+        clean_version() {
+          local v="$1"
+          # Strip leading ^ or ~ or = or v
+          v="${v#^}"
+          v="${v#\~}"
+          v="${v#=}"
+          v="${v#v}"
+          # If it looks like a git URL ending in @vX.Y.Z or @X.Y.Z, extract that part
+          if [[ "$v" == *".git@"* ]]; then
+            v="${v##*.git@}"
+            v="${v#v}"
+          fi
+          echo "$v"
+        }
+
+        add_section() {
+          local title="$1"
+          local file="$2"
+          if [[ -f "$file" ]]; then
+            echo "<h2>$title</h2>" >> "$OUT"
+            echo "<ul>" >> "$OUT"
+            tail -n +2 "$file" | while IFS=, read -r name version; do
+              name="${name//\"/}"
+              version="${version//\"/}"
+              [[ "$version" == file:* ]] && continue
+              version=$(clean_version "$version")
+              echo "<li>$name → <em>$version</em></li>" >> "$OUT"
+            done
+            echo "</ul>" >> "$OUT"
+          fi
+        }
+
+        add_section "Mobile (Flutter)" "results/flutter.csv"
+        add_section "Web" "results/web.csv"
+
+        echo "</body></html>" >> "$OUT"
+
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: dependencies-list
