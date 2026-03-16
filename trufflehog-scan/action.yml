@@ -20,9 +20,11 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Configure git safe directory
+    - name: Configure git safe directory for TruffleHog container
       shell: bash
-      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      run: |
+        mkdir -p "$RUNNER_TEMP/_github_home"
+        git config -f "$RUNNER_TEMP/_github_home/.gitconfig" --add safe.directory /tmp
     - name: TruffleHog OSS
       uses: trufflesecurity/trufflehog@main
       with:
