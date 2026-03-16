@@ -7,7 +7,7 @@ if [[ -z "$BASE" ]]; then
     BASE="$(git rev-parse "origin/$REF")"
 fi
 
-ARGS="--only-verified --fail --no-update"
+ARGS="--fail --no-update"
 [[ -n "${INPUT_EXCLUDE_PATHS:-}" ]] && ARGS="$ARGS --exclude-paths=$INPUT_EXCLUDE_PATHS"
 [[ -n "${INPUT_INCLUDE_PATHS:-}" ]] && ARGS="$ARGS --include-paths=$INPUT_INCLUDE_PATHS"
 
