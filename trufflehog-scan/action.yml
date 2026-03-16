@@ -1,0 +1,33 @@
+name: 'TruffleHog Scan'
+description: 'Scans for verified secrets using TruffleHog OSS.'
+inputs:
+  base:
+    description: 'Base branch to compare against. Defaults to the repository default branch.'
+    required: false
+    default: ''
+  exclude-paths:
+    description: 'Path to a file listing paths to exclude from the scan.'
+    required: false
+    default: ''
+  include-paths:
+    description: 'Path to a file listing paths to include in the scan.'
+    required: false
+    default: ''
+runs:
+  using: "composite"
+  steps:
+    - name: Set exclude paths
+      if: inputs.exclude-paths != ''
+      shell: bash
+      run: echo 'TH_EXCLUDE_PATHS=--exclude-paths=${{ inputs.exclude-paths }}' >> $GITHUB_ENV
+    - name: Set include paths
+      if: inputs.include-paths != ''
+      shell: bash
+      run: echo 'TH_INCLUDE_PATHS=--include-paths=${{ inputs.include-paths }}' >> $GITHUB_ENV
+    - name: TruffleHog OSS
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: ${{ inputs.base || github.event.repository.default_branch }}
+        head: HEAD
+        extra_args: --debug --only-verified ${{ env.TH_EXCLUDE_PATHS }} ${{ env.TH_INCLUDE_PATHS }}
