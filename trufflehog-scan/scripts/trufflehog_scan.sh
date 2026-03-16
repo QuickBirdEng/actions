@@ -16,6 +16,5 @@ docker run --rm \
   github \
   --repo="https://github.com/$GITHUB_REPOSITORY" \
   --token="$GITHUB_TOKEN" \
-  --branch="$GITHUB_HEAD_REF" \
-  --since-commit="$BASE" \
+  --pr="$GITHUB_PR_NUMBER" \
   $ARGS
