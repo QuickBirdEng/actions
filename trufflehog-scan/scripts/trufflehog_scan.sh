@@ -12,9 +12,10 @@ ARGS="--only-verified --fail --no-update"
 [[ -n "${INPUT_INCLUDE_PATHS:-}" ]] && ARGS="$ARGS --include-paths=$INPUT_INCLUDE_PATHS"
 
 docker run --rm \
-  -v "$GITHUB_WORKSPACE:/repo" \
   ghcr.io/trufflesecurity/trufflehog:latest \
-  git file:///repo \
-  --since-commit "$BASE" \
-  --branch HEAD \
+  github \
+  --repo="https://github.com/$GITHUB_REPOSITORY" \
+  --token="$GITHUB_TOKEN" \
+  --branch="$GITHUB_HEAD_REF" \
+  --since-commit="$BASE" \
   $ARGS
