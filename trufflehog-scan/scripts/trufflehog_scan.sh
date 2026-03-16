@@ -13,8 +13,8 @@ ARGS="--only-verified --fail --no-update"
 
 docker run --rm \
   ghcr.io/trufflesecurity/trufflehog:latest \
-  github \
-  --repo="https://github.com/$GITHUB_REPOSITORY" \
-  --token="$GITHUB_TOKEN" \
-  --pr="$GITHUB_PR_NUMBER" \
+  git \
+  "https://oauth2:$GITHUB_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
+  --since-commit="$BASE" \
+  --branch="$GITHUB_HEAD_REF" \
   $ARGS
