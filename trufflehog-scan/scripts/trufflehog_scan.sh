@@ -46,7 +46,6 @@ with open(sys.argv[1]) as f:
             d = json.loads(line)
         except json.JSONDecodeError:
             continue
-        print(json.dumps(d.get('SourceMetadata')), file=sys.stderr)
         git = find_git_metadata(d.get('SourceMetadata', {}))
         file_path = git.get('file', git.get('File', ''))
         line_num = git.get('line', git.get('Line', 1)) or 1
