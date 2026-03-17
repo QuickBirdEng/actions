@@ -44,7 +44,7 @@ chmod +x "$COSIGN_BIN"
 RELEASE_BASE="https://github.com/trufflesecurity/trufflehog/releases/download/v${VERSION}"
 TARBALL_NAME="trufflehog_${VERSION}_linux_${ARCH}.tar.gz"
 
-curl -sSfL "${RELEASE_BASE}/${TARBALL_NAME}"                          -o "$TMPDIR/trufflehog.tar.gz"
+curl -sSfL "${RELEASE_BASE}/${TARBALL_NAME}"                          -o "$TMPDIR/${TARBALL_NAME}"
 curl -sSfL "${RELEASE_BASE}/trufflehog_${VERSION}_checksums.txt"      -o "$TMPDIR/checksums.txt"
 curl -sSfL "${RELEASE_BASE}/trufflehog_${VERSION}_checksums.txt.pem"  -o "$TMPDIR/checksums.txt.pem"
 curl -sSfL "${RELEASE_BASE}/trufflehog_${VERSION}_checksums.txt.sig"  -o "$TMPDIR/checksums.txt.sig"
@@ -61,7 +61,7 @@ curl -sSfL "${RELEASE_BASE}/trufflehog_${VERSION}_checksums.txt.sig"  -o "$TMPDI
 (cd "$TMPDIR" && grep "${TARBALL_NAME}" checksums.txt | sha256sum -c)
 
 # ── Extract binary ────────────────────────────────────────────────────────────
-tar -xz -C "$TMPDIR" -f "$TMPDIR/trufflehog.tar.gz"
+tar -xz -C "$TMPDIR" -f "$TMPDIR/${TARBALL_NAME}"
 TRUFFLEHOG="$TMPDIR/trufflehog"
 chmod +x "$TRUFFLEHOG"
 
