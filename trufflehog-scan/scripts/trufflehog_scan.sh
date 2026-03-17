@@ -25,6 +25,17 @@ docker run --rm \
 python3 - "$TMPFILE" << 'PYEOF'
 import sys, json
 
+def find_git_metadata(node):
+    """Recursively search for the dict that contains a 'file' key."""
+    if isinstance(node, dict):
+        if 'file' in node or 'File' in node:
+            return node
+        for v in node.values():
+            result = find_git_metadata(v)
+            if result:
+                return result
+    return {}
+
 count = 0
 with open(sys.argv[1]) as f:
     for line in f:
@@ -35,8 +46,7 @@ with open(sys.argv[1]) as f:
             d = json.loads(line)
         except json.JSONDecodeError:
             continue
-        src = d.get('SourceMetadata', {}).get('Data', {})
-        git = src.get('Git', src.get('git', {}))
+        git = find_git_metadata(d.get('SourceMetadata', {}))
         file_path = git.get('file', git.get('File', ''))
         line_num = git.get('line', git.get('Line', 1)) or 1
         detector = d.get('DetectorName', 'Unknown')
