@@ -5,10 +5,6 @@ inputs:
     description: 'Base branch to compare against. Defaults to the PR base or repository default branch.'
     required: false
     default: ''
-  head:
-    description: 'Head commit or branch to scan to. Defaults to HEAD.'
-    required: false
-    default: 'HEAD'
   exclude-paths:
     description: 'Path to a file listing paths to exclude from the scan.'
     required: false
@@ -20,12 +16,24 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Run TruffleHog
+    - name: Compute base SHA
+      id: base
       shell: bash
       env:
         INPUT_BASE: ${{ inputs.base }}
-        INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
-        INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
         GITHUB_BASE_REF: ${{ github.base_ref }}
         DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/trufflehog_scan.sh"
+      run: |
+        BASE="${INPUT_BASE:-}"
+        if [[ -z "$BASE" ]]; then
+          REF="${GITHUB_BASE_REF:-$DEFAULT_BRANCH}"
+          BASE="$(git rev-parse "origin/$REF")"
+        fi
+        echo "sha=$BASE" >> "$GITHUB_OUTPUT"
+
+    - name: TruffleHog OSS
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: ${{ steps.base.outputs.sha }}
+        extra_args: --only-verified --fail
