@@ -15,11 +15,14 @@ TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
 docker run --rm \
+  -v "$GITHUB_WORKSPACE:/repo" \
+  -e GIT_CONFIG_COUNT=1 \
+  -e GIT_CONFIG_KEY_0=safe.directory \
+  -e GIT_CONFIG_VALUE_0=/repo \
   ghcr.io/trufflesecurity/trufflehog:latest \
   git \
-  "https://oauth2:$GITHUB_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
+  file:///repo \
   --since-commit="$BASE" \
-  --branch="$GITHUB_HEAD_REF" \
   $ARGS > "$TMPFILE"
 
 python3 - "$TMPFILE" << 'PYEOF'

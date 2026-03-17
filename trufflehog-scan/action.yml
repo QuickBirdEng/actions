@@ -28,5 +28,4 @@ runs:
         INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
         GITHUB_BASE_REF: ${{ github.base_ref }}
         DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        GITHUB_HEAD_REF: ${{ github.head_ref }}
       run: bash "$GITHUB_ACTION_PATH/scripts/trufflehog_scan.sh"
