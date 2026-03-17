@@ -10,7 +10,10 @@ fi
 
 HEAD_SHA="$(git rev-parse HEAD)"
 
-# ── Download TruffleHog binary ───────────────────────────────────────────────
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# ── Resolve TruffleHog version ───────────────────────────────────────────────
 VERSION="${INPUT_VERSION:-}"
 if [[ -z "$VERSION" ]]; then
     VERSION=$(curl -sSf "https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest" \
@@ -21,13 +24,44 @@ ARCH=$(uname -m)
 [[ "$ARCH" == "x86_64" ]]  && ARCH="amd64"
 [[ "$ARCH" == "aarch64" ]] && ARCH="arm64"
 
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+# ── Download cosign (pinned, SHA256-verified) ─────────────────────────────────
+# Pinned to cosign v3.0.5 — update both values together when bumping.
+COSIGN_VERSION="3.0.5"
+declare -A COSIGN_SHA256=(
+    [amd64]="db15cc99e6e4837daabab023742aaddc3841ce57f193d11b7c3e06c8003642b2"
+    [arm64]="d098f3168ae4b3aa70b4ca78947329b953272b487727d1722cb3cb098a1a20ab"
+)
+COSIGN_BIN="$TMPDIR/cosign"
 
 curl -sSfL \
-    "https://github.com/trufflesecurity/trufflehog/releases/download/v${VERSION}/trufflehog_${VERSION}_linux_${ARCH}.tar.gz" \
-    | tar -xz -C "$TMPDIR"
+    "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${ARCH}" \
+    -o "$COSIGN_BIN"
 
+echo "${COSIGN_SHA256[$ARCH]}  $COSIGN_BIN" | sha256sum -c
+chmod +x "$COSIGN_BIN"
+
+# ── Download TruffleHog artifacts ────────────────────────────────────────────
+RELEASE_BASE="https://github.com/trufflesecurity/trufflehog/releases/download/v${VERSION}"
+TARBALL_NAME="trufflehog_${VERSION}_linux_${ARCH}.tar.gz"
+
+curl -sSfL "${RELEASE_BASE}/${TARBALL_NAME}"                          -o "$TMPDIR/trufflehog.tar.gz"
+curl -sSfL "${RELEASE_BASE}/trufflehog_${VERSION}_checksums.txt"      -o "$TMPDIR/checksums.txt"
+curl -sSfL "${RELEASE_BASE}/trufflehog_${VERSION}_checksums.txt.pem"  -o "$TMPDIR/checksums.txt.pem"
+curl -sSfL "${RELEASE_BASE}/trufflehog_${VERSION}_checksums.txt.sig"  -o "$TMPDIR/checksums.txt.sig"
+
+# ── Verify cosign signature on checksums file ─────────────────────────────────
+"$COSIGN_BIN" verify-blob \
+    --certificate         "$TMPDIR/checksums.txt.pem" \
+    --signature           "$TMPDIR/checksums.txt.sig" \
+    --certificate-identity-regexp "https://github.com/trufflesecurity/trufflehog/" \
+    --certificate-oidc-issuer     "https://token.actions.githubusercontent.com" \
+    "$TMPDIR/checksums.txt"
+
+# ── Verify tarball SHA256 against checksums ───────────────────────────────────
+(cd "$TMPDIR" && grep "${TARBALL_NAME}" checksums.txt | sha256sum -c)
+
+# ── Extract binary ────────────────────────────────────────────────────────────
+tar -xz -C "$TMPDIR" -f "$TMPDIR/trufflehog.tar.gz"
 TRUFFLEHOG="$TMPDIR/trufflehog"
 chmod +x "$TRUFFLEHOG"
 
