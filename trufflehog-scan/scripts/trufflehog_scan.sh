@@ -20,7 +20,7 @@ docker run --rm \
   "https://oauth2:$GITHUB_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
   --since-commit="$BASE" \
   --branch="$GITHUB_HEAD_REF" \
-  $ARGS > "$TMPFILE"
+  $ARGS | tee "$TMPFILE"
 
 python3 - "$TMPFILE" << 'PYEOF'
 import sys, json
