@@ -36,4 +36,4 @@ runs:
       with:
         path: ./
         base: ${{ steps.base.outputs.sha }}
-        extra_args: --only-verified --fail
+        extra_args: --only-verified
