@@ -7,9 +7,12 @@ if [[ -z "$BASE" ]]; then
     BASE="$(git rev-parse "origin/$REF")"
 fi
 
-ARGS="--only-verified --fail --no-update"
+ARGS="--only-verified --no-update --json"
 [[ -n "${INPUT_EXCLUDE_PATHS:-}" ]] && ARGS="$ARGS --exclude-paths=$INPUT_EXCLUDE_PATHS"
 [[ -n "${INPUT_INCLUDE_PATHS:-}" ]] && ARGS="$ARGS --include-paths=$INPUT_INCLUDE_PATHS"
+
+TMPFILE=$(mktemp)
+trap 'rm -f "$TMPFILE"' EXIT
 
 docker run --rm \
   ghcr.io/trufflesecurity/trufflehog:latest \
@@ -17,4 +20,36 @@ docker run --rm \
   "https://oauth2:$GITHUB_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
   --since-commit="$BASE" \
   --branch="$GITHUB_HEAD_REF" \
-  $ARGS
+  $ARGS > "$TMPFILE"
+
+python3 - "$TMPFILE" << 'PYEOF'
+import sys, json
+
+count = 0
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        git = d.get('SourceMetadata', {}).get('Data', {}).get('Git', {})
+        file_path = git.get('file', '')
+        line_num = git.get('line', 1)
+        detector = d.get('DetectorName', 'Unknown')
+        verified = 'verified' if d.get('Verified', False) else 'unverified'
+        msg = f"TruffleHog [{detector}]: {verified} secret detected"
+        if file_path:
+            print(f"::error file={file_path},line={line_num}::{msg}")
+        else:
+            print(f"::error::{msg}")
+        count += 1
+
+if count > 0:
+    print(f"TruffleHog found {count} secret(s).")
+    sys.exit(1)
+else:
+    print("No secrets detected.")
+PYEOF
