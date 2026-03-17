@@ -35,9 +35,10 @@ with open(sys.argv[1]) as f:
             d = json.loads(line)
         except json.JSONDecodeError:
             continue
-        git = d.get('SourceMetadata', {}).get('Data', {}).get('Git', {})
-        file_path = git.get('file', '')
-        line_num = git.get('line', 1)
+        src = d.get('SourceMetadata', {}).get('Data', {})
+        git = src.get('Git', src.get('git', {}))
+        file_path = git.get('file', git.get('File', ''))
+        line_num = git.get('line', git.get('Line', 1)) or 1
         detector = d.get('DetectorName', 'Unknown')
         verified = 'verified' if d.get('Verified', False) else 'unverified'
         msg = f"TruffleHog [{detector}]: {verified} secret detected"
