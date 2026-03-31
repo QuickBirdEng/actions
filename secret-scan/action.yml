@@ -1,0 +1,18 @@
+name: 'Secret Scan'
+description: 'Scans source files for secrets using max/secret-scan.'
+inputs:
+  include-path:
+    description: 'Path to include in the scan.'
+    required: false
+    default: ''
+  exclude-path:
+    description: 'Path to exclude from the scan.'
+    required: false
+    default: ''
+runs:
+  using: "composite"
+  steps:
+    - uses: max/secret-scan@master
+      with:
+        include_path: ${{ inputs.include-path }}
+        exclude_path: ${{ inputs.exclude-path }}

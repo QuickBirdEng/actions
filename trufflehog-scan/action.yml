@@ -1,0 +1,32 @@
+name: 'TruffleHog Scan'
+description: 'Scans for verified secrets using TruffleHog OSS.'
+inputs:
+  version:
+    description: 'TruffleHog version to download (e.g. "3.88.1"). Defaults to the latest release.'
+    required: false
+    default: ''
+  base:
+    description: 'Base branch to compare against. Defaults to the PR base or repository default branch.'
+    required: false
+    default: ''
+  exclude-paths:
+    description: 'Path to a file listing paths to exclude from the scan.'
+    required: false
+    default: ''
+  include-paths:
+    description: 'Path to a file listing paths to include in the scan.'
+    required: false
+    default: ''
+runs:
+  using: "composite"
+  steps:
+    - name: Run TruffleHog
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
+        INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
+        GITHUB_BASE_REF: ${{ github.base_ref }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/trufflehog_scan.sh"
