@@ -1,0 +1,34 @@
+name: 'Detect Invisible Unicode'
+description: 'Scans source files for invisible Unicode characters used in GlassWorm and Trojan Source supply chain attacks.'
+inputs:
+  search-directory:
+    description: 'Directory to scan recursively.'
+    required: false
+    default: '.'
+  exclude-dirs:
+    description: 'Comma-separated directory names to exclude from scanning.'
+    required: false
+    default: '.git,node_modules,.idea,build,dist'
+  exclude-patterns:
+    description: 'Comma-separated file glob patterns to exclude from scanning.'
+    required: false
+    default: '*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill'
+  fail-on-found:
+    description: 'Exit with code 1 when invisible Unicode characters are found.'
+    required: false
+    default: 'true'
+outputs:
+  findings:
+    description: 'Number of files containing invisible Unicode characters.'
+    value: ${{ steps.scan.outputs.findings }}
+runs:
+  using: "composite"
+  steps:
+    - id: scan
+      shell: bash
+      env:
+        INPUT_SEARCH_DIRECTORY: ${{ inputs.search-directory }}
+        INPUT_EXCLUDE_DIRS: ${{ inputs.exclude-dirs }}
+        INPUT_EXCLUDE_PATTERNS: ${{ inputs.exclude-patterns }}
+        INPUT_FAIL_ON_FOUND: ${{ inputs.fail-on-found }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/detect_invisible_unicode.sh"
