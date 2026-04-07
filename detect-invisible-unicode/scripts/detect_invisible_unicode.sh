@@ -5,6 +5,9 @@ set -euo pipefail
 
 trim() { echo "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
 
+# Normalize comma- or newline-separated input into a clean comma-separated string.
+normalize_csv() { echo "$1" | tr '\n' ',' | sed 's/,\+/,/g;s/^,//;s/,$//'; }
+
 is_true() {
     local val; val="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
     [[ "$val" == "true" || "$val" == "1" || "$val" == "yes" || "$val" == "y" ]]
@@ -13,9 +16,9 @@ is_true() {
 # ── configuration ─────────────────────────────────────────────────────────────
 
 SEARCH_DIR="${INPUT_SEARCH_DIRECTORY:-.}"
-EXCLUDE_DIRS_CSV="${INPUT_EXCLUDE_DIRS:-.git,node_modules,.idea,build,dist}"
-EXCLUDE_PATTERNS_CSV="${INPUT_EXCLUDE_PATTERNS:-*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill}"
-EXCLUDE_FILES_CSV="${INPUT_EXCLUDE_FILES:-}"
+EXCLUDE_DIRS_CSV="$(normalize_csv "${INPUT_EXCLUDE_DIRS:-.git,node_modules,.idea,build,dist}")"
+EXCLUDE_PATTERNS_CSV="$(normalize_csv "${INPUT_EXCLUDE_PATTERNS:-*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill}")"
+EXCLUDE_FILES_CSV="$(normalize_csv "${INPUT_EXCLUDE_FILES:-}")"
 FAIL_ON_FOUND="${INPUT_FAIL_ON_FOUND:-true}"
 
 if [[ ! -d "$SEARCH_DIR" ]]; then
