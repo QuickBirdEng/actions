@@ -57,21 +57,27 @@ CHECKS=(
     "PUA_SUPPLEMENTARY:\xf3[\xb0-\xbf][\x80-\xbf][\x80-\xbf]|\xf4[\x80-\x8f][\x80-\xbf][\x80-\xbf]"
 )
 
-# ── build grep exclude flags ───────────────────────────────────────────────────
+# ── build grep exclude flags and path-based exclusion lists ───────────────────
+# grep's --exclude-dir only matches directory names, not paths.
+# Entries containing '/' are treated as path prefixes and filtered post-scan.
 
 GREP_EXCLUDES=()
+EXCLUDE_DIR_PATHS=()  # path-prefix based exclusions (contain '/')
 IFS=',' read -ra _dirs <<< "$EXCLUDE_DIRS_CSV"
 for _dir in "${_dirs[@]}"; do
     _dir="$(trim "$_dir")"
-    [[ -n "$_dir" ]] && GREP_EXCLUDES+=("--exclude-dir=$_dir")
+    [[ -z "$_dir" ]] && continue
+    if [[ "$_dir" == */* ]]; then
+        EXCLUDE_DIR_PATHS+=("${_dir%/}")  # strip trailing slash
+    else
+        GREP_EXCLUDES+=("--exclude-dir=$_dir")
+    fi
 done
 IFS=',' read -ra _pats <<< "$EXCLUDE_PATTERNS_CSV"
 for _pat in "${_pats[@]}"; do
     _pat="$(trim "$_pat")"
     [[ -n "$_pat" ]] && GREP_EXCLUDES+=("--exclude=$_pat")
 done
-
-# ── scan ───────────────────────────────────────────────────────────────────────
 
 EXCLUDE_FILES=()
 if [[ -n "$EXCLUDE_FILES_CSV" ]]; then
@@ -106,6 +112,13 @@ for check in "${CHECKS[@]}"; do
                 skip=true; break
             fi
         done
+        if [[ "$skip" == false ]]; then
+            for _excl in "${EXCLUDE_DIR_PATHS[@]}"; do
+                if [[ "$rel_file" == "$_excl"/* || "$rel_file" == "$_excl" ]]; then
+                    skip=true; break
+                fi
+            done
+        fi
         [[ "$skip" == true ]] && continue
 
         first_line="$(LC_ALL=C grep -Pn --binary-files=without-match "$pattern" "$file" 2>/dev/null \
@@ -165,8 +178,8 @@ if [[ "$AFFECTED_FILE_COUNT" -gt 0 ]]; then
     echo "  exclude-files   Comma-separated relative file paths to skip entirely."
     echo "                  Example: 'path/to/file.ts,other/fixture.csv'"
     echo ""
-    echo "  exclude-dirs    Comma-separated directory names to skip."
-    echo "                  Example: 'test,fixtures,generated'"
+    echo "  exclude-dirs    Comma-separated directory names or paths to skip."
+    echo "                  Example: 'test,fixtures,web/apps/rest/src/module/cannavigia/test'"
     echo ""
     echo "  exclude-patterns  Comma-separated file glob patterns to skip."
     echo "                  Example: '*.csv,*.pb.dart'"
