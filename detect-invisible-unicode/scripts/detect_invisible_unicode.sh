@@ -15,6 +15,7 @@ is_true() {
 SEARCH_DIR="${INPUT_SEARCH_DIRECTORY:-.}"
 EXCLUDE_DIRS_CSV="${INPUT_EXCLUDE_DIRS:-.git,node_modules,.idea,build,dist}"
 EXCLUDE_PATTERNS_CSV="${INPUT_EXCLUDE_PATTERNS:-*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill}"
+EXCLUDE_FILES_CSV="${INPUT_EXCLUDE_FILES:-}"
 FAIL_ON_FOUND="${INPUT_FAIL_ON_FOUND:-true}"
 
 if [[ ! -d "$SEARCH_DIR" ]]; then
@@ -72,9 +73,19 @@ done
 
 # ── scan ───────────────────────────────────────────────────────────────────────
 
+EXCLUDE_FILES=()
+if [[ -n "$EXCLUDE_FILES_CSV" ]]; then
+    IFS=',' read -ra _files <<< "$EXCLUDE_FILES_CSV"
+    for _file in "${_files[@]}"; do
+        _file="$(trim "$_file")"
+        [[ -n "$_file" ]] && EXCLUDE_FILES+=("$_file")
+    done
+fi
+
 echo "Scanning: $(realpath "$SEARCH_DIR")"
 echo "Excluding dirs: $EXCLUDE_DIRS_CSV"
 echo "Excluding patterns: $EXCLUDE_PATTERNS_CSV"
+[[ ${#EXCLUDE_FILES[@]} -gt 0 ]] && echo "Excluding files: $EXCLUDE_FILES_CSV"
 echo ""
 
 declare -A FILE_CATEGORIES  # filepath -> "CAT1,CAT2,..."
@@ -87,13 +98,22 @@ for check in "${CHECKS[@]}"; do
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
 
+        rel_file="${file#"$SEARCH_DIR"/}"
+
+        skip=false
+        for _excl in "${EXCLUDE_FILES[@]}"; do
+            if [[ "$rel_file" == "$_excl" || "$file" == "$_excl" ]]; then
+                skip=true; break
+            fi
+        done
+        [[ "$skip" == true ]] && continue
+
         first_line="$(LC_ALL=C grep -Pn --binary-files=without-match "$pattern" "$file" 2>/dev/null \
             | head -1 | cut -d: -f1)"
         first_line="${first_line:-1}"
 
-        rel_file="${file#"$SEARCH_DIR"/}"
         link="${CATEGORY_LINKS[$category]:-}"
-        echo "::error file=${rel_file},line=${first_line}::Invisible Unicode [${category}] at line ${first_line} - ${link}"
+        echo "::error file=${rel_file},line=${first_line}::Invisible Unicode [${category}] at line ${first_line} - ${link} "
 
         if [[ -v FILE_CATEGORIES["$file"] ]]; then
             if [[ "${FILE_CATEGORIES[$file]}" != *"$category"* ]]; then
@@ -127,7 +147,7 @@ else
             line="${entry#*:}"
             link="${CATEGORY_LINKS[$cat]:-}"
             if [[ -n "$link" ]]; then
-                cats_with_links+="${cats_with_links:+, }${cat} line ${line} (${link})"
+                cats_with_links+="${cats_with_links:+, }${cat} line ${line} ( ${link} )"
             else
                 cats_with_links+="${cats_with_links:+, }${cat} line ${line}"
             fi
