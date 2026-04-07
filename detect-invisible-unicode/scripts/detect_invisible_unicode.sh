@@ -26,6 +26,17 @@ fi
 # Format: "CATEGORY_NAME:PCRE_PATTERN"
 # Patterns are UTF-8 byte sequences of the suspicious Unicode code points.
 
+declare -A CATEGORY_LINKS=(
+    [VARIATION_SELECTOR]="https://unicode.org/faq/vs.html"
+    [VARIATION_SELECTOR_SUPPLEMENT]="https://unicode.org/faq/vs.html"
+    [ZERO_WIDTH]="https://en.wikipedia.org/wiki/Zero-width_space"
+    [BIDI_CONTROL]="https://trojansource.codes/"
+    [BOM]="https://unicode.org/faq/utf_bom.html#bom1"
+    [TAGS_BLOCK]="https://en.wikipedia.org/wiki/Tags_(Unicode_block)"
+    [PUA_BMP]="https://unicode.org/faq/private_use.html"
+    [PUA_SUPPLEMENTARY]="https://unicode.org/faq/private_use.html"
+)
+
 CHECKS=(
     # GlassWorm: Variation Selectors (U+FE00-U+FE0F)
     "VARIATION_SELECTOR:\xef\xb8[\x80-\x8f]"
@@ -81,7 +92,8 @@ for check in "${CHECKS[@]}"; do
         first_line="${first_line:-1}"
 
         rel_file="${file#"$SEARCH_DIR"/}"
-        echo "::error file=${rel_file},line=${first_line}::Invisible Unicode [${category}] detected"
+        link="${CATEGORY_LINKS[$category]:-}"
+        echo "::error file=${rel_file},line=${first_line}::Invisible Unicode [${category}] detected - ${link}"
 
         if [[ -v FILE_CATEGORIES["$file"] ]]; then
             if [[ "${FILE_CATEGORIES[$file]}" != *"$category"* ]]; then
@@ -107,7 +119,18 @@ if [[ "$AFFECTED_FILE_COUNT" -eq 0 ]]; then
 else
     echo "Found invisible Unicode in ${AFFECTED_FILE_COUNT} file(s):"
     for file in "${!FILE_CATEGORIES[@]}"; do
-        echo "  ${file#"$SEARCH_DIR"/}  [${FILE_CATEGORIES[$file]}]"
+        cats="${FILE_CATEGORIES[$file]}"
+        cats_with_links=""
+        IFS=',' read -ra cat_list <<< "$cats"
+        for cat in "${cat_list[@]}"; do
+            link="${CATEGORY_LINKS[$cat]:-}"
+            if [[ -n "$link" ]]; then
+                cats_with_links+="${cats_with_links:+, }${cat} (${link})"
+            else
+                cats_with_links+="${cats_with_links:+, }${cat}"
+            fi
+        done
+        echo "  ${file#"$SEARCH_DIR"/}  [${cats_with_links}]"
     done
 fi
 
