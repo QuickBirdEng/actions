@@ -5,18 +5,26 @@ inputs:
     description: 'Directory to scan recursively.'
     required: false
     default: '.'
-  exclude-dirs:
-    description: 'Comma- or newline-separated directory names or paths to exclude from scanning.'
+  exclude:
+    description: 'Newline- or comma-separated glob patterns for files and directories to exclude.'
     required: false
-    default: '.git,node_modules,.idea,build,dist'
-  exclude-patterns:
-    description: 'Comma- or newline-separated file glob patterns to exclude from scanning.'
-    required: false
-    default: '*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill'
-  exclude-files:
-    description: 'Comma- or newline-separated relative file paths to exclude from scanning.'
-    required: false
-    default: ''
+    default: |
+      .git/**
+      node_modules/**
+      .idea/**
+      build/**
+      dist/**
+      *.png
+      *.jpg
+      *.jpeg
+      *.gif
+      *.ico
+      *.pdf
+      *.zip
+      *.tar
+      *.gz
+      *.bin
+      *.dill
   fail-on-found:
     description: 'Exit with code 1 when invisible Unicode characters are found.'
     required: false
@@ -32,8 +40,6 @@ runs:
       shell: bash
       env:
         INPUT_SEARCH_DIRECTORY: ${{ inputs.search-directory }}
-        INPUT_EXCLUDE_DIRS: ${{ inputs.exclude-dirs }}
-        INPUT_EXCLUDE_PATTERNS: ${{ inputs.exclude-patterns }}
-        INPUT_EXCLUDE_FILES: ${{ inputs.exclude-files }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
         INPUT_FAIL_ON_FOUND: ${{ inputs.fail-on-found }}
       run: bash "$GITHUB_ACTION_PATH/scripts/detect_invisible_unicode.sh"

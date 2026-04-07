@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+shopt -s globstar
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 trim() { echo "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -16,9 +18,7 @@ is_true() {
 # ── configuration ─────────────────────────────────────────────────────────────
 
 SEARCH_DIR="${INPUT_SEARCH_DIRECTORY:-.}"
-EXCLUDE_DIRS_CSV="$(normalize_csv "${INPUT_EXCLUDE_DIRS:-.git,node_modules,.idea,build,dist}")"
-EXCLUDE_PATTERNS_CSV="$(normalize_csv "${INPUT_EXCLUDE_PATTERNS:-*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill}")"
-EXCLUDE_FILES_CSV="$(normalize_csv "${INPUT_EXCLUDE_FILES:-}")"
+EXCLUDE_CSV="$(normalize_csv "${INPUT_EXCLUDE:-.git/**,node_modules/**,.idea/**,build/**,dist/**,*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill}")"
 FAIL_ON_FOUND="${INPUT_FAIL_ON_FOUND:-true}"
 
 if [[ ! -d "$SEARCH_DIR" ]]; then
@@ -60,44 +60,42 @@ CHECKS=(
     "PUA_SUPPLEMENTARY:\xf3[\xb0-\xbf][\x80-\xbf][\x80-\xbf]|\xf4[\x80-\x8f][\x80-\xbf][\x80-\xbf]"
 )
 
-# ── build grep exclude flags and path-based exclusion lists ───────────────────
-# grep's --exclude-dir only matches directory names, not paths.
-# Entries containing '/' are treated as path prefixes and filtered post-scan.
+# ── parse exclude globs ────────────────────────────────────────────────────────
+# Patterns without '/' are passed to grep as --exclude (basename match, fast).
+# Patterns like 'name/**' are passed to grep as --exclude-dir (fast).
+# All other path patterns are applied as a post-scan filter.
 
+EXCLUDE_GLOBS=()
 GREP_EXCLUDES=()
-EXCLUDE_DIR_PATHS=()  # path-prefix based exclusions (contain '/')
-IFS=',' read -ra _dirs <<< "$EXCLUDE_DIRS_CSV"
-for _dir in "${_dirs[@]}"; do
-    _dir="$(trim "$_dir")"
-    [[ -z "$_dir" ]] && continue
-    if [[ "$_dir" == */* ]]; then
-        EXCLUDE_DIR_PATHS+=("${_dir%/}")  # strip trailing slash
-    else
-        GREP_EXCLUDES+=("--exclude-dir=$_dir")
+
+IFS=',' read -ra _globs <<< "$EXCLUDE_CSV"
+for _glob in "${_globs[@]}"; do
+    _glob="$(trim "$_glob")"
+    [[ -z "$_glob" ]] && continue
+    EXCLUDE_GLOBS+=("$_glob")
+    if [[ "$_glob" != */* ]]; then
+        GREP_EXCLUDES+=("--exclude=$_glob")
+    elif [[ "$_glob" =~ ^([^/]+)/\*\*$ ]]; then
+        GREP_EXCLUDES+=("--exclude-dir=${BASH_REMATCH[1]}")
     fi
 done
-IFS=',' read -ra _pats <<< "$EXCLUDE_PATTERNS_CSV"
-for _pat in "${_pats[@]}"; do
-    _pat="$(trim "$_pat")"
-    [[ -n "$_pat" ]] && GREP_EXCLUDES+=("--exclude=$_pat")
-done
 
-EXCLUDE_FILES=()
-if [[ -n "$EXCLUDE_FILES_CSV" ]]; then
-    IFS=',' read -ra _files <<< "$EXCLUDE_FILES_CSV"
-    for _file in "${_files[@]}"; do
-        _file="$(trim "$_file")"
-        [[ -n "$_file" ]] && EXCLUDE_FILES+=("$_file")
+should_exclude() {
+    local rel_file="$1"
+    for pattern in "${EXCLUDE_GLOBS[@]}"; do
+        # shellcheck disable=SC2254
+        [[ "$rel_file" == $pattern ]] && return 0
     done
-fi
+    return 1
+}
+
+# ── scan ───────────────────────────────────────────────────────────────────────
 
 echo "Scanning: $(realpath "$SEARCH_DIR")"
-echo "Excluding dirs: $EXCLUDE_DIRS_CSV"
-echo "Excluding patterns: $EXCLUDE_PATTERNS_CSV"
-[[ ${#EXCLUDE_FILES[@]} -gt 0 ]] && echo "Excluding files: $EXCLUDE_FILES_CSV"
+echo "Excluding: $EXCLUDE_CSV"
 echo ""
 
-declare -A FILE_CATEGORIES  # filepath -> "CAT1,CAT2,..."
+declare -A FILE_CATEGORIES  # filepath -> "CAT:LINE:COL,..."
 AFFECTED_FILE_COUNT=0
 
 for check in "${CHECKS[@]}"; do
@@ -108,21 +106,7 @@ for check in "${CHECKS[@]}"; do
         [[ -z "$file" ]] && continue
 
         rel_file="${file#"$SEARCH_DIR"/}"
-
-        skip=false
-        for _excl in "${EXCLUDE_FILES[@]}"; do
-            if [[ "$rel_file" == "$_excl" || "$file" == "$_excl" ]]; then
-                skip=true; break
-            fi
-        done
-        if [[ "$skip" == false ]]; then
-            for _excl in "${EXCLUDE_DIR_PATHS[@]}"; do
-                if [[ "$rel_file" == "$_excl"/* || "$rel_file" == "$_excl" ]]; then
-                    skip=true; break
-                fi
-            done
-        fi
-        [[ "$skip" == true ]] && continue
+        should_exclude "$rel_file" && continue
 
         first_line="$(LC_ALL=C grep -Pn --binary-files=without-match "$pattern" "$file" 2>/dev/null \
             | head -1 | cut -d: -f1)"
@@ -183,16 +167,11 @@ echo "============================================================"
 
 if [[ "$AFFECTED_FILE_COUNT" -gt 0 ]]; then
     echo ""
-    echo "To suppress false positives, adjust the action inputs:"
+    echo "To suppress false positives, add glob patterns to the 'exclude' input:"
     echo ""
-    echo "  exclude-files   Comma-separated relative file paths to skip entirely."
-    echo "                  Example: 'path/to/file.ts,other/fixture.csv'"
-    echo ""
-    echo "  exclude-dirs    Comma-separated directory names or paths to skip."
-    echo "                  Example: 'test,fixtures,web/apps/rest/src/module/cannavigia/test'"
-    echo ""
-    echo "  exclude-patterns  Comma-separated file glob patterns to skip."
-    echo "                  Example: '*.csv,*.pb.dart'"
+    echo "  Specific file:  'path/to/file.ts'"
+    echo "  Directory:      'path/to/dir/**'"
+    echo "  File type:      '*.csv'"
 fi
 
 # ── github output ─────────────────────────────────────────────────────────────
