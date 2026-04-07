@@ -42,12 +42,12 @@ declare -A CATEGORY_LINKS=(
 )
 
 CHECKS=(
-    # GlassWorm: Variation Selectors (U+FE00-U+FE0F)
-    "VARIATION_SELECTOR:\xef\xb8[\x80-\x8f]"
+    # GlassWorm: Variation Selectors (U+FE00-U+FE0E); U+FE0F excluded (emoji presentation selector)
+    "VARIATION_SELECTOR:\xef\xb8[\x80-\x8e]"
     # GlassWorm: Variation Selectors Supplement (U+E0100-U+E01EF)
     "VARIATION_SELECTOR_SUPPLEMENT:\xf3\xa0[\x84-\x87][\x80-\xbf]"
-    # Zero-width formatting characters (U+200B-U+200D, U+2060, U+180E)
-    "ZERO_WIDTH:\xe2\x80[\x8b-\x8d]|\xe2\x81\xa0|\xe1\xa0\x8e"
+    # Zero-width formatting characters (U+200B-U+200C, U+2060, U+180E); U+200D excluded (emoji ZWJ)
+    "ZERO_WIDTH:\xe2\x80[\x8b-\x8c]|\xe2\x81\xa0|\xe1\xa0\x8e"
     # Trojan Source: bidirectional control characters (U+200E-U+200F, U+202A-U+202E, U+2066-U+2069, U+061C)
     "BIDI_CONTROL:\xe2\x80[\x8e-\x8f]|\xe2\x80[\xaa-\xae]|\xe2\x81[\xa6-\xa9]|\xd8\x9c"
     # BOM character (U+FEFF)
