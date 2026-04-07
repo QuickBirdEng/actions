@@ -158,6 +158,20 @@ fi
 
 echo "============================================================"
 
+if [[ "$AFFECTED_FILE_COUNT" -gt 0 ]]; then
+    echo ""
+    echo "To suppress false positives, adjust the action inputs:"
+    echo ""
+    echo "  exclude-files   Comma-separated relative file paths to skip entirely."
+    echo "                  Example: 'path/to/file.ts,other/fixture.csv'"
+    echo ""
+    echo "  exclude-dirs    Comma-separated directory names to skip."
+    echo "                  Example: 'test,fixtures,generated'"
+    echo ""
+    echo "  exclude-patterns  Comma-separated file glob patterns to skip."
+    echo "                  Example: '*.csv,*.pb.dart'"
+fi
+
 # ── github output ─────────────────────────────────────────────────────────────
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
