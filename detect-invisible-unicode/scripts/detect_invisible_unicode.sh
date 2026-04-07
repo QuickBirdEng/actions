@@ -93,14 +93,14 @@ for check in "${CHECKS[@]}"; do
 
         rel_file="${file#"$SEARCH_DIR"/}"
         link="${CATEGORY_LINKS[$category]:-}"
-        echo "::error file=${rel_file},line=${first_line}::Invisible Unicode [${category}] detected - ${link}"
+        echo "::error file=${rel_file},line=${first_line}::Invisible Unicode [${category}] at line ${first_line} - ${link}"
 
         if [[ -v FILE_CATEGORIES["$file"] ]]; then
             if [[ "${FILE_CATEGORIES[$file]}" != *"$category"* ]]; then
-                FILE_CATEGORIES["$file"]+=",${category}"
+                FILE_CATEGORIES["$file"]+=",${category}:${first_line}"
             fi
         else
-            FILE_CATEGORIES["$file"]="$category"
+            FILE_CATEGORIES["$file"]="${category}:${first_line}"
             (( AFFECTED_FILE_COUNT++ )) || true
         fi
     done < <(LC_ALL=C grep -rPl --binary-files=without-match \
@@ -122,12 +122,14 @@ else
         cats="${FILE_CATEGORIES[$file]}"
         cats_with_links=""
         IFS=',' read -ra cat_list <<< "$cats"
-        for cat in "${cat_list[@]}"; do
+        for entry in "${cat_list[@]}"; do
+            cat="${entry%%:*}"
+            line="${entry#*:}"
             link="${CATEGORY_LINKS[$cat]:-}"
             if [[ -n "$link" ]]; then
-                cats_with_links+="${cats_with_links:+, }${cat} (${link})"
+                cats_with_links+="${cats_with_links:+, }${cat} line ${line} (${link})"
             else
-                cats_with_links+="${cats_with_links:+, }${cat}"
+                cats_with_links+="${cats_with_links:+, }${cat} line ${line}"
             fi
         done
         echo "  ${file#"$SEARCH_DIR"/}  [${cats_with_links}]"
