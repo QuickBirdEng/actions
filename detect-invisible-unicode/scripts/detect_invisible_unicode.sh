@@ -18,7 +18,8 @@ is_true() {
 # ── configuration ─────────────────────────────────────────────────────────────
 
 SEARCH_DIR="${INPUT_SEARCH_DIRECTORY:-.}"
-EXCLUDE_CSV="$(normalize_csv "${INPUT_EXCLUDE:-.git/**,node_modules/**,.idea/**,build/**,dist/**,*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill}")"
+EXCLUDE_DEFAULTS=".git/**,node_modules/**,.idea/**,build/**,dist/**,*.png,*.jpg,*.jpeg,*.gif,*.ico,*.pdf,*.zip,*.tar,*.gz,*.bin,*.dill"
+EXCLUDE_CSV="$(normalize_csv "${EXCLUDE_DEFAULTS}${INPUT_EXCLUDE:+,${INPUT_EXCLUDE}}")"
 FAIL_ON_FOUND="${INPUT_FAIL_ON_FOUND:-true}"
 
 if [[ ! -d "$SEARCH_DIR" ]]; then
@@ -81,10 +82,22 @@ for _glob in "${_globs[@]}"; do
 done
 
 should_exclude() {
-    local rel_file="$1"
+    local rel_file="$1" basename pattern dir
+    basename="$(basename "$rel_file")"
     for pattern in "${EXCLUDE_GLOBS[@]}"; do
-        # shellcheck disable=SC2254
-        [[ "$rel_file" == $pattern ]] && return 0
+        if [[ "$pattern" == */** ]]; then
+            # 'path/**' — use string prefix match (reliable across bash versions)
+            dir="${pattern%/**}"
+            [[ "$rel_file" == "$dir" || "$rel_file" == "$dir/"* ]] && return 0
+        elif [[ "$pattern" != */* ]]; then
+            # 'name' or '*.ext' — match against basename only
+            # shellcheck disable=SC2254
+            [[ "$basename" == $pattern ]] && return 0
+        else
+            # 'some/path/file' — match against full relative path
+            # shellcheck disable=SC2254
+            [[ "$rel_file" == $pattern ]] && return 0
+        fi
     done
     return 1
 }

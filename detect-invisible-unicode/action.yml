@@ -6,25 +6,11 @@ inputs:
     required: false
     default: '.'
   exclude:
-    description: 'Newline- or comma-separated glob patterns for files and directories to exclude.'
+    description: |
+      Newline- or comma-separated glob patterns for additional files and directories to exclude.
+      The following are always excluded: .git/**, node_modules/**, .idea/**, build/**, dist/**, and common binary/image types.
     required: false
-    default: |
-      .git/**
-      node_modules/**
-      .idea/**
-      build/**
-      dist/**
-      *.png
-      *.jpg
-      *.jpeg
-      *.gif
-      *.ico
-      *.pdf
-      *.zip
-      *.tar
-      *.gz
-      *.bin
-      *.dill
+    default: ''
   fail-on-found:
     description: 'Exit with code 1 when invisible Unicode characters are found.'
     required: false
