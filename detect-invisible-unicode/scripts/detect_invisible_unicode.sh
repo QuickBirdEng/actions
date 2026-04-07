@@ -125,15 +125,20 @@ for check in "${CHECKS[@]}"; do
             | head -1 | cut -d: -f1)"
         first_line="${first_line:-1}"
 
+        line_content="$(sed -n "${first_line}p" "$file" 2>/dev/null || true)"
+        first_col="$(echo "$line_content" | LC_ALL=C grep -Pbo "$pattern" 2>/dev/null \
+            | head -1 | cut -d: -f1)"
+        first_col=$(( ${first_col:-0} + 1 ))  # convert to 1-based
+
         link="${CATEGORY_LINKS[$category]:-}"
-        echo "::error file=${rel_file},line=${first_line}::Invisible Unicode [${category}] at line ${first_line} - ${link} "
+        echo "::error file=${rel_file},line=${first_line},col=${first_col}::Invisible Unicode [${category}] at L${first_line}:${first_col} - ${link} "
 
         if [[ -v FILE_CATEGORIES["$file"] ]]; then
             if [[ "${FILE_CATEGORIES[$file]}" != *"$category"* ]]; then
-                FILE_CATEGORIES["$file"]+=",${category}:${first_line}"
+                FILE_CATEGORIES["$file"]+=",${category}:${first_line}:${first_col}"
             fi
         else
-            FILE_CATEGORIES["$file"]="${category}:${first_line}"
+            FILE_CATEGORIES["$file"]="${category}:${first_line}:${first_col}"
             (( AFFECTED_FILE_COUNT++ )) || true
         fi
     done < <(LC_ALL=C grep -rPl --binary-files=without-match \
@@ -157,12 +162,14 @@ else
         IFS=',' read -ra cat_list <<< "$cats"
         for entry in "${cat_list[@]}"; do
             cat="${entry%%:*}"
-            line="${entry#*:}"
+            rest="${entry#*:}"
+            line="${rest%%:*}"
+            col="${rest#*:}"
             link="${CATEGORY_LINKS[$cat]:-}"
             if [[ -n "$link" ]]; then
-                cats_with_links+="${cats_with_links:+, }${cat} line ${line} ( ${link} )"
+                cats_with_links+="${cats_with_links:+, }${cat} L${line}:${col} ( ${link} )"
             else
-                cats_with_links+="${cats_with_links:+, }${cat} line ${line}"
+                cats_with_links+="${cats_with_links:+, }${cat} L${line}:${col}"
             fi
         done
         echo "  ${file#"$SEARCH_DIR"/}  [${cats_with_links}]"
