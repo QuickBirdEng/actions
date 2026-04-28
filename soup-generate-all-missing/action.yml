@@ -44,7 +44,7 @@ runs:
         fi
     - name: Copy scripts
       shell: bash
-      run: git clone -b make-own-soups-process-better git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
+      run: git clone -b gradle-deps git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Generate Missing SOUPs
       env:
         EXCLUDED_REQUIREMENTS: ${{ inputs.excluded-requirements }}
