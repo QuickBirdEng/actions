@@ -75,4 +75,42 @@ runs:
 
         git push origin ${{ inputs.branch-name }}
         echo "PR_AUTHOR=$PR_AUTHOR" >> $GITHUB_ENV
-  
+    - name: Create Pull Request
+      if: steps.commit-changes.outputs.skip-remaining-steps == 'false'
+      shell: bash
+      run: |
+          RESPONSE=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls?head=QuickBirdEng:${{ inputs.branch-name }}&base=${{ inputs.base-branch }}")
+          EXISTING_PR=$(echo "$RESPONSE" | jq -r '.[0].number')
+          echo "Found PR: $EXISTING_PR"
+
+          if [ "$EXISTING_PR" != "null" ] && [ -n "$EXISTING_PR" ]; then
+              echo "PR already exists: #$EXISTING_PR"
+              echo "skip-remaining-steps=true" >> "$GITHUB_OUTPUT"
+              exit 0
+          fi
+
+          PR_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${{ inputs.gh-api-token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls \
+            -d "{
+              \"title\": \"Add Missing SOUPs\",
+              \"body\": \"Automated soup generation of missing soups\",
+              \"head\": \"${{ inputs.branch-name }}\",
+              \"base\": \"${{ inputs.base-branch }}\"
+            }")
+
+          PR_NUMBER=$(echo "$PR_RESPONSE" | jq -r '.number')
+          echo "Created PR #$PR_NUMBER"
+
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+
+          curl -s -X POST \
+            -H "Authorization: token ${{ inputs.gh-api-token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/issues/$PR_NUMBER/labels \
+            -d '{
+              "labels": ["soup"]
+            }'
+
+ 
