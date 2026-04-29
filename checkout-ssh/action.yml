@@ -17,6 +17,7 @@ runs:
       with:
         lfs: ${{ inputs.git-lfs }}
         submodules: ${{ inputs.git-submodules }}
+        ssh-key: ${{ inputs.git-submodules != 'false' && inputs.ssh-private-key || '' }}
     - uses: webfactory/ssh-agent@v0.6.0
       with:
         ssh-private-key: ${{ inputs.ssh-private-key }}
