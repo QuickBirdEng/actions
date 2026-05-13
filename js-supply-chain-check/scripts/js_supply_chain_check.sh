@@ -95,6 +95,11 @@ should_exclude() {
 # ── explanatory text (centralised so messages stay consistent) ───────────────
 
 GAJUS_URL="https://gajus.com/blog/3-pnpm-settings-to-protect-yourself-from-supply-chain-attacks"
+# QB-owned documentation explaining the policy these checks enforce. Settings
+# and inputs are defined in the workflow and the underlying action.
+QB_DOCS_URL="https://github.com/QuickBirdEng/workflows/blob/main/docs/qb-security/explanation.md"
+QB_WORKFLOW_URL="https://github.com/QuickBirdEng/workflows/blob/main/.github/workflows/qb-security.yml"
+QB_ACTION_URL="https://github.com/QuickBirdEng/actions/tree/main/js-supply-chain-check"
 
 WHY_MIN_RELEASE_AGE=$'WHY THIS MATTERS:\n  When an attacker compromises a maintainer account (the most common npm supply-chain\n  attack vector — e.g. eslint-config-prettier, ua-parser-js, event-stream), the\n  malicious release is publicly installable within seconds. Most compromised\n  versions are detected and yanked within 24-72 hours.\n  Quarantining new package versions for a week neutralises that window: by the\n  time a tainted version reaches your CI, it has either been pulled from the\n  registry or flagged by security researchers.'
 
@@ -104,7 +109,7 @@ WHY_ALLOW_BUILDS=$'WHY THIS MATTERS:\n  npm/pnpm/yarn run lifecycle scripts (pre
 
 FIX_MIN_RELEASE_AGE_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc at the project root:\n    minimum-release-age=10080\n    minimum-release-age-exclude=\n  OR add to pnpm-workspace.yaml:\n    minimumReleaseAge: 10080\n  See: https://pnpm.io/settings#minimumreleaseage'
 
-FIX_MIN_RELEASE_AGE_OTHER=$'HOW TO FIX — migrate to a package manager that enforces this natively:\n\n  OPTION A — yarn 4.14+ (least disruptive for yarn projects):\n    Yarn 4.10 introduced `npmMinimalAgeGate` (full support 4.12+);\n    Yarn 4.14 added `approvedGitRepositories` (the block-exotic-subdeps\n    equivalent). Both run at install time.\n\n      corepack enable\n      yarn set version 4.14.0\n\n    Then add to .yarnrc.yml:\n      npmMinimalAgeGate: 10080         # 7 days, minutes\n      approvedGitRepositories: []      # empty = block all git deps\n      enableScripts: false             # disable install scripts\n\n  OPTION B — pnpm 10+ (full pnpm parity):\n    pnpm 10 enforces all three settings natively.\n\n      npx @pnpm/exe@latest import      # imports yarn.lock → pnpm-lock.yaml\n\n    Set in package.json:\n      "packageManager": "pnpm@10.x.y"\n      "pnpm": { "onlyBuiltDependencies": [] }\n\n    Add .npmrc:\n      minimum-release-age=10080\n      block-exotic-subdeps=true\n\n    Update CI to `pnpm install --frozen-lockfile`.\n\n  OPTION C — CI-only band-aid (stopgap during migration):\n    Set js-enforce-release-age-via-registry: true on the workflow caller.\n    Scans every lockfile entry against the npm registry at PR time and\n    fails on too-recent versions. Guards merged code but does NOT protect\n    a developer who runs yarn install on a local branch before review.\n\n  OPTION D — drop the policy:\n    Set js-minimum-release-age-minutes: 0. Not recommended for production.'
+FIX_MIN_RELEASE_AGE_OTHER=$'HOW TO FIX — migrate to a package manager that enforces this natively:\n\n  OPTION A — yarn 4.14+ (least disruptive for yarn projects):\n    Yarn 4.10 introduced `npmMinimalAgeGate` (full support 4.12+);\n    Yarn 4.14 added `approvedGitRepositories` (the block-exotic-subdeps\n    equivalent). Both run at install time.\n\n      corepack enable\n      yarn set version 4.14.0\n\n    Then add to .yarnrc.yml:\n      npmMinimalAgeGate: 10080         # 7 days, minutes\n      approvedGitRepositories: []      # empty = block all git deps\n      enableScripts: false             # disable install scripts\n\n  OPTION B — pnpm 10+ (full pnpm parity):\n    pnpm 10 enforces all three settings natively.\n\n      npx @pnpm/exe@latest import      # imports yarn.lock → pnpm-lock.yaml\n\n    Set in package.json:\n      "packageManager": "pnpm@10.x.y"\n      "pnpm": { "onlyBuiltDependencies": [] }\n\n    Add .npmrc:\n      minimum-release-age=10080\n      block-exotic-subdeps=true\n\n    Update CI to `pnpm install --frozen-lockfile`.'
 
 FIX_BLOCK_EXOTIC_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc:\n    block-exotic-subdeps=true\n  OR add to pnpm-workspace.yaml:\n    blockExoticSubdeps: true\n  See: https://pnpm.io/settings#blockexoticsubdeps'
 
@@ -939,7 +944,7 @@ ${FIX_MIN_RELEASE_AGE_YARN_BERRY}" \
             if [[ "$flavour" == "yarn-classic" ]]; then
                 title="yarn 1.x cannot enforce minimumReleaseAge — migrate to yarn 4.14+ or pnpm 10+"
                 body="FOUND: ${project_label} uses yarn 1.x (classic). yarn 1.x has NO setting for minimum-release-age. Anyone who clones this repo and runs yarn install can pick up a freshly-published (and possibly compromised) version of any dep. The quarantine policy of ${MIN_RELEASE_AGE_MINUTES} min is unenforceable here."
-                fix_edit="migrate to yarn 4.14+ (npmMinimalAgeGate) OR pnpm 10+ (minimumReleaseAge) OR set js-minimum-release-age-minutes: 0"
+                fix_edit="migrate to yarn 4.14+ (npmMinimalAgeGate) OR pnpm 10+ (minimumReleaseAge)"
             else
                 title="yarn ${yarn_version:-<unknown>} is too old for npmMinimalAgeGate — need ≥ ${YARN_MIN_VERSION}"
                 body="FOUND: ${project_label} pins yarn@${yarn_version:-<unknown>} via packageManager. npmMinimalAgeGate was introduced in yarn 4.10 and approvedGitRepositories in 4.14. Below ${YARN_MIN_VERSION} the recommended settings are silently ignored, so the protection is NOT active at install time."
@@ -1067,7 +1072,7 @@ ${WHY_MIN_RELEASE_AGE}
 
 ${FIX_MIN_RELEASE_AGE_OTHER}" \
             "${project_label}/package.json" \
-            "migrate to yarn 4.14+ (npmMinimalAgeGate) OR pnpm 10+ (minimumReleaseAge) OR set js-minimum-release-age-minutes: 0"
+            "migrate to yarn 4.14+ (npmMinimalAgeGate) OR pnpm 10+ (minimumReleaseAge)"
     fi
 
     # 2. blockExoticSubdeps — lockfile scan
@@ -1281,10 +1286,10 @@ if (( ${#FIX_FILE_ORDER[@]} > 0 )); then
         ((fix_index++))
     done
     echo ""
-    echo "############################################################"
-    echo "# After making these changes and pushing, the check will   #"
-    echo "# re-run and clear.                                        #"
-    echo "############################################################"
+    echo "Policy and inputs are defined and documented here:"
+    echo "  ${QB_DOCS_URL}"
+    echo "  ${QB_WORKFLOW_URL}"
+    echo "  ${QB_ACTION_URL}"
 fi
 
 # ── final summary ────────────────────────────────────────────────────────────
