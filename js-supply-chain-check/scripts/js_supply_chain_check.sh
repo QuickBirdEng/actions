@@ -29,6 +29,14 @@ MIN_RELEASE_AGE_MINUTES="${INPUT_MINIMUM_RELEASE_AGE_MINUTES:-10080}"
 ALLOW_BUILDS_RAW="${INPUT_ALLOW_BUILDS:-}"
 REQUIRE_BLOCK_EXOTIC="${INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS:-true}"
 FAIL_ON_FOUND="${INPUT_FAIL_ON_FOUND:-true}"
+# Opt-in: actually enforce minimumReleaseAge for yarn/npm (and as a backstop
+# for pnpm) by hitting the npm registry to look up each lockfile entry's
+# publish date. Slow (~one HTTP req per resolved package), so default off.
+ENFORCE_RELEASE_AGE_VIA_REGISTRY="${INPUT_ENFORCE_RELEASE_AGE_VIA_REGISTRY:-false}"
+# Minimum pnpm version where the recommended settings actually exist.
+# minimumReleaseAge + blockExoticSubdeps require pnpm 10.0+; in older
+# versions the settings parse but have no effect.
+PNPM_MIN_VERSION="${INPUT_PNPM_MIN_VERSION:-10.0.0}"
 
 ALLOW_BUILDS_LIST="$(split_list "$ALLOW_BUILDS_RAW")"
 
@@ -106,44 +114,70 @@ FIX_ALLOW_BUILDS_YARN_BERRY=$'HOW TO FIX (yarn berry / 2+):\n  Add to .yarnrc.ym
 ERROR_COUNT=0
 WARNING_COUNT=0
 PROJECT_COUNT=0
-declare -a SUMMARY_ROWS  # human-readable summary lines
 
 # Per-project counters keyed by "<project>|<manager>".
 declare -A PROJECT_ERRORS
 declare -A PROJECT_WARNINGS
 
-# report_finding LEVEL PROJECT MANAGER FILE LINE TITLE BODY
+# Concrete edits required to clear the check, keyed by target file path.
+# Value is a newline-separated list of "edits" to apply to that file.
+declare -A FIXES_BY_FILE
+# Ordering preserved separately so the footer is stable across runs.
+declare -a FIX_FILE_ORDER
+
+# add_fix FILE EDIT_DESCRIPTION
+add_fix() {
+    local file="$1" edit="$2"
+    if [[ -v FIXES_BY_FILE["$file"] ]]; then
+        if [[ "${FIXES_BY_FILE[$file]}" != *"$edit"* ]]; then
+            FIXES_BY_FILE["$file"]+=$'\n'"$edit"
+        fi
+    else
+        FIXES_BY_FILE["$file"]="$edit"
+        FIX_FILE_ORDER+=("$file")
+    fi
+}
+
+# report_finding LEVEL PROJECT MANAGER FILE LINE TITLE BODY [FIX_TARGET] [FIX_EDIT]
 #   LEVEL    : error | warning | info
 #   PROJECT  : project dir (relative to SEARCH_DIR)
 #   MANAGER  : pnpm | yarn-classic | yarn-berry | npm
 #   FILE     : file path for annotation (relative to repo root)
 #   LINE     : line number, or empty for "1"
 #   TITLE    : short one-line title shown inline in PR annotation
-#   BODY     : multi-line block printed below — what+why+fix+ref
+#   BODY     : multi-line block printed inside the details group
+#   FIX_TARGET (optional) : file the fix applies to (aggregated in ACTION REQUIRED footer)
+#   FIX_EDIT   (optional) : short single-line description of the edit
 report_finding() {
     local level="$1" project="$2" manager="$3" file="$4" line="$5" title="$6" body="$7"
-    local annotation_kind annotation_line key
+    local fix_target="${8:-}" fix_edit="${9:-}"
+    local annotation_kind key
     line="${line:-1}"
     key="${project}|${manager}"
 
     case "$level" in
-        error)   annotation_kind="error"; (( ERROR_COUNT++ )) || true; PROJECT_ERRORS["$key"]=$(( ${PROJECT_ERRORS["$key"]:-0} + 1 )) ;;
+        error)   annotation_kind="error";   (( ERROR_COUNT++ )) || true;   PROJECT_ERRORS["$key"]=$(( ${PROJECT_ERRORS["$key"]:-0} + 1 )) ;;
         warning) annotation_kind="warning"; (( WARNING_COUNT++ )) || true; PROJECT_WARNINGS["$key"]=$(( ${PROJECT_WARNINGS["$key"]:-0} + 1 )) ;;
-        info)    annotation_kind="notice" ;;
-        *)       annotation_kind="notice" ;;
+        info|*)  annotation_kind="notice" ;;
     esac
 
-    # Inline GitHub annotation — short.
-    echo "::${annotation_kind} file=${file},line=${line},title=js-supply-chain: ${manager}::${title}"
+    # Inline GitHub annotation. Project path is in the message so the log line
+    # is self-identifying without expanding the details group.
+    echo "::${annotation_kind} file=${file},line=${line},title=js-supply-chain (${manager})::${project}: ${title}"
 
-    # Verbose log block — readable in the workflow log.
-    echo "::group::[${level^^}] ${project} (${manager}) — ${title}"
+    # Foldable details group. NO [WARNING]/[ERROR] prefix — GitHub auto-colours
+    # such prefixes and would render a duplicate "Warning:" line.
+    echo "::group::  ↳ details for ${project}: ${title}"
     echo "File:    ${file}:${line}"
     echo ""
     echo "${body}"
     echo ""
     echo "Reference: ${GAJUS_URL}"
     echo "::endgroup::"
+
+    if [[ -n "$fix_target" && -n "$fix_edit" ]]; then
+        add_fix "$fix_target" "$fix_edit"
+    fi
 }
 
 # ── parser helpers (best-effort, no jq dependency) ───────────────────────────
@@ -361,6 +395,251 @@ for path, meta in packages.items():
 PY
 }
 
+# ── version helpers ──────────────────────────────────────────────────────────
+
+# Compare two semver-ish strings. Echoes -1 / 0 / 1 like cmp.
+# Treats missing segments as 0; ignores pre-release tags.
+version_cmp() {
+    local a="$1" b="$2"
+    a="${a#v}"; b="${b#v}"
+    a="${a%%-*}"; b="${b%%-*}"
+    local IFS=.
+    local -a aa=($a) bb=($b)
+    local i
+    for ((i=0; i<3; i++)); do
+        local av="${aa[$i]:-0}" bv="${bb[$i]:-0}"
+        if (( av < bv )); then echo -1; return; fi
+        if (( av > bv )); then echo 1; return; fi
+    done
+    echo 0
+}
+
+# Detect the pnpm version a project intends to use. Order of precedence:
+#   1. packageManager field in package.json (e.g. "pnpm@10.4.0")
+#   2. .tool-versions (asdf)  e.g. "pnpm 10.4.0"
+#   3. .nvmrc / engines.pnpm in package.json
+# Echoes the version string, or empty if none found.
+detect_pnpm_version() {
+    local project_dir="$1"
+    local pkg_json="$project_dir/package.json"
+    if [[ -f "$pkg_json" && -n "$PYTHON_BIN" ]]; then
+        local v
+        v="$("$PYTHON_BIN" - "$pkg_json" <<'PY' 2>/dev/null || true
+import json, sys, re
+try:
+    with open(sys.argv[1]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+pm = data.get("packageManager", "")
+m = re.match(r'^pnpm@([0-9][^+\s]*)', pm or "")
+if m:
+    print(m.group(1)); sys.exit(0)
+engines = data.get("engines") or {}
+if isinstance(engines, dict):
+    e = engines.get("pnpm", "")
+    m = re.search(r'([0-9]+\.[0-9]+\.[0-9]+)', e or "")
+    if m: print(m.group(1)); sys.exit(0)
+PY
+)"
+        [[ -n "$v" ]] && { echo "$v"; return; }
+    fi
+    local tv="$project_dir/.tool-versions"
+    if [[ -f "$tv" ]]; then
+        local v
+        v="$(grep -E '^pnpm[[:space:]]+' "$tv" 2>/dev/null | head -1 | awk '{print $2}' || true)"
+        [[ -n "$v" ]] && { echo "$v"; return; }
+    fi
+}
+
+# Detect yarn version (for berry vs. classic, plus version-specific warnings).
+detect_yarn_version() {
+    local project_dir="$1"
+    local pkg_json="$project_dir/package.json"
+    if [[ -f "$pkg_json" && -n "$PYTHON_BIN" ]]; then
+        local v
+        v="$("$PYTHON_BIN" - "$pkg_json" <<'PY' 2>/dev/null || true
+import json, sys, re
+try:
+    with open(sys.argv[1]) as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+pm = data.get("packageManager", "")
+m = re.match(r'^yarn@([0-9][^+\s]*)', pm or "")
+if m:
+    print(m.group(1)); sys.exit(0)
+PY
+)"
+        [[ -n "$v" ]] && { echo "$v"; return; }
+    fi
+}
+
+# ── registry-scan enforcement (yarn/npm/pnpm — actually checks publish dates) ─
+
+# Stream lockfile entries as "<name>\t<version>" lines.
+# Works for pnpm-lock.yaml, yarn.lock, and package-lock.json.
+lockfile_to_pkgversions() {
+    local file="$1"
+    [[ -f "$file" && -n "$PYTHON_BIN" ]] || return 0
+    "$PYTHON_BIN" - "$file" <<'PY' 2>/dev/null || true
+import json, re, sys
+path = sys.argv[1]
+seen = set()
+def emit(name, version):
+    if not name or not version or '/' in version or version.startswith(('git', 'http', 'file:', 'link:', 'portal:')):
+        return
+    key = (name, version)
+    if key in seen: return
+    seen.add(key)
+    print(f"{name}\t{version}")
+
+if path.endswith("package-lock.json"):
+    try:
+        with open(path) as fh: data = json.load(fh)
+    except Exception:
+        sys.exit(0)
+    pkgs = data.get("packages") or {}
+    if pkgs:
+        for p, meta in pkgs.items():
+            if not p or not isinstance(meta, dict): continue
+            name = meta.get("name") or p.split("node_modules/")[-1]
+            emit(name, meta.get("version", ""))
+    else:
+        def walk(deps):
+            if not isinstance(deps, dict): return
+            for n, m in deps.items():
+                if isinstance(m, dict):
+                    emit(n, m.get("version", ""))
+                    walk(m.get("dependencies"))
+        walk(data.get("dependencies"))
+
+elif path.endswith("yarn.lock"):
+    # Classic format: each block starts with "<name>@<range>:" and contains a `version "x.y.z"` line.
+    name_re = re.compile(r'^([^@\s"][^@]*)@')
+    ver_re = re.compile(r'^\s*version\s+"([^"]+)"')
+    current_name = None
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith('#') or not line.strip():
+                current_name = None
+                continue
+            if not line.startswith(' '):
+                head = line.split(',')[0].strip().rstrip(':')
+                if head.startswith('"'): head = head[1:-1] if head.endswith('"') else head[1:]
+                m = name_re.match(head)
+                if m: current_name = m.group(1)
+                else: current_name = None
+            else:
+                m = ver_re.match(line)
+                if m and current_name:
+                    emit(current_name, m.group(1))
+                    current_name = None
+
+elif path.endswith("pnpm-lock.yaml"):
+    # pnpm v9+: entries look like "  /<name>@<ver>:" or "  <name>@<ver>:" under "packages:" section
+    entry_re = re.compile(r"^\s+/?(@?[^@/:\s]+(?:/[^@/:\s]+)?)@([^():\s]+)[:(]")
+    with open(path) as fh:
+        for line in fh:
+            m = entry_re.match(line)
+            if m:
+                emit(m.group(1), m.group(2))
+PY
+}
+
+# Look up publish dates for each "<name>\t<version>" line on stdin against the
+# npm registry, in parallel. Echoes "<too-recent-name>\t<version>\t<age_min>" for
+# any package version younger than MIN_RELEASE_AGE_MINUTES.
+fetch_too_recent() {
+    local min_minutes="$1"
+    [[ -z "$PYTHON_BIN" ]] && return 0
+    "$PYTHON_BIN" - "$min_minutes" <<'PY' 2>/dev/null || true
+import sys, json, time
+from concurrent.futures import ThreadPoolExecutor
+try:
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+except Exception:
+    sys.exit(0)
+
+min_minutes = int(sys.argv[1])
+threshold = time.time() - (min_minutes * 60)
+
+def lookup(pair):
+    name, version = pair
+    url = f"https://registry.npmjs.org/{name}"
+    try:
+        req = Request(url, headers={"Accept": "application/json", "User-Agent": "qb-supply-chain-check"})
+        with urlopen(req, timeout=10) as resp:
+            data = json.load(resp)
+    except (HTTPError, URLError, TimeoutError, Exception):
+        return None
+    times = data.get("time", {}) or {}
+    t = times.get(version)
+    if not t:
+        return None
+    # ISO 8601 → epoch
+    try:
+        # Python 3.7+: fromisoformat doesn't handle "Z" suffix
+        import datetime
+        published = datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+    if published > threshold:
+        age_min = int((time.time() - published) // 60)
+        return (name, version, age_min)
+    return None
+
+pairs = []
+for raw in sys.stdin:
+    raw = raw.rstrip("\n")
+    if "\t" not in raw: continue
+    name, version = raw.split("\t", 1)
+    pairs.append((name, version))
+
+if not pairs:
+    sys.exit(0)
+
+with ThreadPoolExecutor(max_workers=12) as pool:
+    for result in pool.map(lookup, pairs):
+        if result:
+            print(f"{result[0]}\t{result[1]}\t{result[2]}")
+PY
+}
+
+# Run the registry scan on a single lockfile and emit findings.
+registry_scan_lockfile() {
+    local project_label="$1" manager="$2" lockfile="$3" lockfile_rel="$4"
+    [[ -f "$lockfile" ]] || return 0
+    [[ -z "$PYTHON_BIN" ]] && return 0
+    local hits
+    hits="$(lockfile_to_pkgversions "$lockfile" | fetch_too_recent "$MIN_RELEASE_AGE_MINUTES")"
+    [[ -z "$hits" ]] && return 0
+    local count
+    count="$(echo "$hits" | wc -l | tr -d ' ')"
+    local sample
+    sample="$(echo "$hits" | head -10 | awk -F'\t' '{printf "    - %s@%s  (published %d min ago)\n", $1, $2, $3}')"
+    report_finding error "$project_label" "$manager" \
+        "$lockfile_rel" "1" \
+        "${count} dependency version(s) younger than minimum-release-age (${MIN_RELEASE_AGE_MINUTES} min)" \
+        "FOUND: A registry-scan of ${lockfile_rel} found ${count} package version(s) that were published less than ${MIN_RELEASE_AGE_MINUTES} minutes ago. Examples:
+${sample}
+
+${WHY_MIN_RELEASE_AGE}
+
+HOW TO FIX:
+  Either (a) pin these deps to older registry versions that are at least
+  ${MIN_RELEASE_AGE_MINUTES} min old, or (b) wait until they age past the
+  threshold and re-run the check, or (c) add an exemption by raising
+  js-minimum-release-age-minutes for this repo." \
+        "$lockfile_rel" \
+        "pin ${count} dependency version(s) to older releases (see details)"
+}
+
 # ── manager detection ────────────────────────────────────────────────────────
 
 detect_yarn_flavour() {
@@ -400,6 +679,33 @@ check_pnpm_project() {
     local pkg_json="$project_dir/package.json"
     local lockfile="$project_dir/pnpm-lock.yaml"
 
+    # 0. Version check — the recommended settings only take effect on pnpm ≥ 10.
+    local pnpm_version cmp_result
+    pnpm_version="$(detect_pnpm_version "$project_dir")"
+    if [[ -n "$pnpm_version" ]]; then
+        cmp_result="$(version_cmp "$pnpm_version" "$PNPM_MIN_VERSION")"
+        if [[ "$cmp_result" == "-1" ]]; then
+            report_finding error "$project_label" "pnpm" \
+                "${project_label}/package.json" "1" \
+                "pnpm ${pnpm_version} is too old — settings won't be enforced (need ≥ ${PNPM_MIN_VERSION})" \
+                "FOUND: ${project_label} pins pnpm@${pnpm_version} via package.json/packageManager (or .tool-versions). The recommended supply-chain settings — minimumReleaseAge, blockExoticSubdeps — were introduced in pnpm ${PNPM_MIN_VERSION}. Older pnpm versions silently ignore these keys, so even if .npmrc / pnpm-workspace.yaml looks correct the protection is NOT active at install time.
+
+WHY THIS MATTERS:
+  A misconfigured setting that is silently ignored is worse than a missing
+  one: PRs look green, audits look green, but the runtime install behaviour
+  hasn't changed. A version pin that contradicts the security policy makes
+  the whole policy a no-op.
+
+HOW TO FIX:
+  Bump pnpm in package.json:
+      \"packageManager\": \"pnpm@${PNPM_MIN_VERSION}\"
+  And in any .tool-versions / CI workflow that pins pnpm.
+  Then re-run pnpm install to refresh the lockfile under the new version." \
+                "${project_label}/package.json" \
+                "bump packageManager to pnpm@${PNPM_MIN_VERSION} or newer"
+        fi
+    fi
+
     # 1. minimumReleaseAge
     if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
         local age_npmrc age_yaml age_val=""
@@ -422,7 +728,9 @@ check_pnpm_project() {
 
 ${WHY_MIN_RELEASE_AGE}
 
-${FIX_MIN_RELEASE_AGE_PNPM}"
+${FIX_MIN_RELEASE_AGE_PNPM}" \
+                "${project_label}/.npmrc" \
+                "add line: minimum-release-age=${MIN_RELEASE_AGE_MINUTES}"
         elif [[ "$age_val" =~ ^[0-9]+$ ]] && (( age_val < MIN_RELEASE_AGE_MINUTES )); then
             local line file
             if [[ -n "$age_npmrc" ]]; then
@@ -437,7 +745,9 @@ ${FIX_MIN_RELEASE_AGE_PNPM}"
 
 ${WHY_MIN_RELEASE_AGE}
 
-${FIX_MIN_RELEASE_AGE_PNPM}"
+${FIX_MIN_RELEASE_AGE_PNPM}" \
+                "$file" \
+                "raise minimumReleaseAge to at least ${MIN_RELEASE_AGE_MINUTES}"
         fi
     fi
 
@@ -461,7 +771,9 @@ ${FIX_MIN_RELEASE_AGE_PNPM}"
 
 ${WHY_BLOCK_EXOTIC}
 
-${FIX_BLOCK_EXOTIC_PNPM}"
+${FIX_BLOCK_EXOTIC_PNPM}" \
+                "${project_label}/.npmrc" \
+                "add line: block-exotic-subdeps=true"
         elif ! is_true "$block_val"; then
             local line file
             if [[ -n "$block_npmrc" ]]; then
@@ -476,7 +788,9 @@ ${FIX_BLOCK_EXOTIC_PNPM}"
 
 ${WHY_BLOCK_EXOTIC}
 
-${FIX_BLOCK_EXOTIC_PNPM}"
+${FIX_BLOCK_EXOTIC_PNPM}" \
+                "$file" \
+                "change blockExoticSubdeps / block-exotic-subdeps to true"
         fi
 
         # Lockfile scan
@@ -493,7 +807,9 @@ ${FIX_BLOCK_EXOTIC_PNPM}"
 
 ${WHY_BLOCK_EXOTIC}
 
-${FIX_BLOCK_EXOTIC_LOCKFILE}"
+${FIX_BLOCK_EXOTIC_LOCKFILE}" \
+                "${project_label}/pnpm-lock.yaml" \
+                "remove or replace exotic dep at line ${lock_line}: ${lock_spec}"
         done < <(pnpm_lock_exotic "$lockfile")
     fi
 
@@ -510,7 +826,9 @@ ${FIX_BLOCK_EXOTIC_LOCKFILE}"
 
 ${WHY_ALLOW_BUILDS}
 
-${FIX_ALLOW_BUILDS_PNPM}"
+${FIX_ALLOW_BUILDS_PNPM}" \
+                "${project_label}/package.json" \
+                'add "pnpm": { "onlyBuiltDependencies": [] }'
             ;;
         __ALLOW_ANY__)
             report_finding error "$project_label" "pnpm" \
@@ -520,7 +838,9 @@ ${FIX_ALLOW_BUILDS_PNPM}"
 
 ${WHY_ALLOW_BUILDS}
 
-${FIX_ALLOW_BUILDS_PNPM}"
+${FIX_ALLOW_BUILDS_PNPM}" \
+                "${project_label}/package.json" \
+                'replace pnpm.onlyBuiltDependencies.allowAny with an explicit array of allowed packages'
             ;;
         __EMPTY__)
             : # compliant — explicit empty list
@@ -540,7 +860,9 @@ ${FIX_ALLOW_BUILDS_PNPM}
 
 If '${pkg}' is intentionally allowed, add it to the workflow input:
     js-allow-builds: |
-      ${pkg}"
+      ${pkg}" \
+                        "${project_label}/package.json" \
+                        "remove '${pkg}' from pnpm.onlyBuiltDependencies OR add '${pkg}' to the workflow's js-allow-builds input"
                 fi
             done < <(echo "$only_built" | tail -n +2)
             ;;
@@ -555,7 +877,7 @@ check_yarn_project() {
     local lockfile="$project_dir/yarn.lock"
 
     # 1. minimumReleaseAge — no native equivalent for yarn. Info only.
-    if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
+    if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]] && ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
         report_finding warning "$project_label" "$flavour" \
             "${project_label}/yarn.lock" "1" \
             "minimumReleaseAge not enforced by yarn" \
@@ -581,7 +903,9 @@ ${FIX_MIN_RELEASE_AGE_OTHER}"
 
 ${WHY_BLOCK_EXOTIC}
 
-${FIX_BLOCK_EXOTIC_LOCKFILE}"
+${FIX_BLOCK_EXOTIC_LOCKFILE}" \
+                "${project_label}/yarn.lock" \
+                "remove or replace exotic dep at line ${lock_line}: ${lock_spec}"
         done < <(yarn_lock_exotic "$lockfile")
     fi
 
@@ -603,7 +927,9 @@ ${FIX_BLOCK_EXOTIC_LOCKFILE}"
 
 ${WHY_ALLOW_BUILDS}
 
-${FIX_ALLOW_BUILDS_YARN_BERRY}"
+${FIX_ALLOW_BUILDS_YARN_BERRY}" \
+                "${project_label}/.yarnrc.yml" \
+                "add line: enableScripts: false"
         fi
     else
         local ignore_scripts file line
@@ -625,7 +951,9 @@ ${FIX_ALLOW_BUILDS_YARN_BERRY}"
 
 ${WHY_ALLOW_BUILDS}
 
-${FIX_ALLOW_BUILDS_YARN_CLASSIC}"
+${FIX_ALLOW_BUILDS_YARN_CLASSIC}" \
+                "${project_label}/.yarnrc" \
+                "add line: ignore-scripts true"
         fi
     fi
 }
@@ -637,7 +965,8 @@ check_npm_project() {
     local lockfile="$project_dir/package-lock.json"
 
     # 1. minimumReleaseAge — no native npm equivalent until very recent versions.
-    if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
+    #    Suppressed when the registry-scan path is enabled (handled per-lockfile below).
+    if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]] && ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
         local age_val
         age_val="$(npmrc_get "$npmrc" "minimum-release-age")"
         if [[ -z "$age_val" ]]; then
@@ -667,7 +996,9 @@ ${FIX_MIN_RELEASE_AGE_OTHER}"
 
 ${WHY_BLOCK_EXOTIC}
 
-${FIX_BLOCK_EXOTIC_LOCKFILE}"
+${FIX_BLOCK_EXOTIC_LOCKFILE}" \
+                "${project_label}/package-lock.json" \
+                "remove or replace exotic dep '${pkg}' (${spec})"
         done < <(npm_lock_exotic "$lockfile")
     fi
 
@@ -709,7 +1040,9 @@ ${FIX_ALLOW_BUILDS_NPM}
 
 Or, if these are legitimate, add them to the workflow input:
     js-allow-builds: |
-$(printf '      %s\n' "${unapproved[@]}")"
+$(printf '      %s\n' "${unapproved[@]}")" \
+                "${project_label}/.npmrc" \
+                "add line: ignore-scripts=true (or add these to workflow js-allow-builds: $(printf '%s, ' "${unapproved[@]}" | sed 's/, $//'))"
         else
             report_finding error "$project_label" "npm" \
                 "$file" "${line:-1}" \
@@ -718,7 +1051,9 @@ $(printf '      %s\n' "${unapproved[@]}")"
 
 ${WHY_ALLOW_BUILDS}
 
-${FIX_ALLOW_BUILDS_NPM}"
+${FIX_ALLOW_BUILDS_NPM}" \
+                "${project_label}/.npmrc" \
+                "add line: ignore-scripts=true"
         fi
     fi
 }
@@ -810,7 +1145,50 @@ for project_dir in "${!PROJECT_LOCKS[@]}"; do
         check_yarn_project "$project_dir" "$project_label" "$flavour"
     fi
     [[ "$managers" == *" npm "* ]] && check_npm_project "$project_dir" "$project_label"
+
+    # Registry-scan: explicitly enforce minimum-release-age by checking each
+    # lockfile entry's npm-registry publish date. Opt-in (default off) because
+    # it hits the network and is O(deps) requests.
+    if is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY" && [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
+        [[ "$managers" == *" pnpm "* ]] && registry_scan_lockfile \
+            "$project_label" "pnpm" "$project_dir/pnpm-lock.yaml" "${project_label}/pnpm-lock.yaml"
+        if [[ "$managers" == *" yarn "* ]]; then
+            local _flavour
+            _flavour="$(detect_yarn_flavour "$project_dir")"
+            registry_scan_lockfile "$project_label" "$_flavour" "$project_dir/yarn.lock" "${project_label}/yarn.lock"
+        fi
+        [[ "$managers" == *" npm "* ]] && registry_scan_lockfile \
+            "$project_label" "npm" "$project_dir/package-lock.json" "${project_label}/package-lock.json"
+    fi
 done
+
+# ── ACTION REQUIRED footer ──────────────────────────────────────────────────
+# Aggregates every concrete edit needed across all projects, grouped by file.
+# Printed OUTSIDE any ::group:: so a developer who jumps to the bottom of the
+# log sees exactly what to do without expanding individual findings.
+
+if (( ${#FIX_FILE_ORDER[@]} > 0 )); then
+    echo ""
+    echo "############################################################"
+    echo "# ACTION REQUIRED — apply these edits to clear the check   #"
+    echo "############################################################"
+    fix_index=1
+    for fix_file in "${FIX_FILE_ORDER[@]}"; do
+        echo ""
+        echo "[${fix_index}] ${fix_file}"
+        while IFS= read -r edit; do
+            [[ -z "$edit" ]] && continue
+            echo "      → ${edit}"
+        done <<< "${FIXES_BY_FILE[$fix_file]}"
+        ((fix_index++))
+    done
+    echo ""
+    echo "############################################################"
+    echo "# After making these changes and pushing, the check will   #"
+    echo "# re-run and clear. Reference:"
+    echo "#   ${GAJUS_URL}"
+    echo "############################################################"
+fi
 
 # ── final summary ────────────────────────────────────────────────────────────
 
@@ -825,7 +1203,6 @@ echo ""
 
 if (( PROJECT_COUNT > 0 )); then
     echo "Per-project breakdown:"
-    # Stable ordering for the breakdown.
     for key in $(printf '%s\n' "${!PROJECT_ERRORS[@]}" "${!PROJECT_WARNINGS[@]}" | sort -u); do
         e="${PROJECT_ERRORS[$key]:-0}"
         w="${PROJECT_WARNINGS[$key]:-0}"
@@ -843,8 +1220,6 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
 fi
 
 if (( ERROR_COUNT > 0 )) && is_true "$FAIL_ON_FOUND"; then
-    echo ""
-    echo "Reference: ${GAJUS_URL}"
     exit 1
 fi
 exit 0

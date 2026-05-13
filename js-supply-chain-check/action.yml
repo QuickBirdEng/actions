@@ -26,6 +26,22 @@ inputs:
     description: 'When true, every project must enable blockExoticSubdeps (pnpm) AND every lockfile is scanned for git/tarball/file deps (all managers).'
     required: false
     default: 'true'
+  enforce-release-age-via-registry:
+    description: |
+      When true, additionally enforces minimum-release-age for npm/yarn/pnpm by
+      querying the npm registry for each lockfile entry's publish date and
+      failing on any package version younger than the threshold. Adds network
+      calls (one per resolved dependency); default off because it can be slow.
+    required: false
+    default: 'false'
+  pnpm-min-version:
+    description: |
+      Minimum pnpm version where the recommended settings (minimumReleaseAge,
+      blockExoticSubdeps) actually take effect. Projects pinning an older
+      pnpm via package.json#packageManager get a top-level error explaining
+      that even correct .npmrc settings are silently ignored by old pnpm.
+    required: false
+    default: '10.0.0'
   fail-on-found:
     description: 'Exit with code 1 when any error-level finding is reported.'
     required: false
@@ -51,5 +67,7 @@ runs:
         INPUT_MINIMUM_RELEASE_AGE_MINUTES: ${{ inputs.minimum-release-age-minutes }}
         INPUT_ALLOW_BUILDS: ${{ inputs.allow-builds }}
         INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS: ${{ inputs.require-block-exotic-subdeps }}
+        INPUT_ENFORCE_RELEASE_AGE_VIA_REGISTRY: ${{ inputs.enforce-release-age-via-registry }}
+        INPUT_PNPM_MIN_VERSION: ${{ inputs.pnpm-min-version }}
         INPUT_FAIL_ON_FOUND: ${{ inputs.fail-on-found }}
       run: bash "$GITHUB_ACTION_PATH/scripts/js_supply_chain_check.sh"
