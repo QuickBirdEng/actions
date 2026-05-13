@@ -15,8 +15,12 @@ is_true() {
 }
 
 # Split comma/newline list into a sorted, deduped, newline-separated list.
+# Strips trailing yaml-style ` # comment` so workflow callers can annotate
+# each entry with a CVE / reviewer note in their security.yml.
 split_list() {
-    echo "$1" | tr ',\n' '\n\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+    echo "$1" | tr ',\n' '\n\n' \
+        | sed 's/[[:space:]]\+#.*$//' \
+        | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
         | grep -v '^$' | sort -u || true
 }
 
