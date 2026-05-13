@@ -41,6 +41,11 @@ ENFORCE_RELEASE_AGE_VIA_REGISTRY="${INPUT_ENFORCE_RELEASE_AGE_VIA_REGISTRY:-fals
 # minimumReleaseAge + blockExoticSubdeps require pnpm 10.0+; in older
 # versions the settings parse but have no effect.
 PNPM_MIN_VERSION="${INPUT_PNPM_MIN_VERSION:-10.0.0}"
+# Minimum yarn (berry) version with native enforcement of all three policies.
+# - npmMinimalAgeGate: introduced 4.10, full support 4.12+
+# - approvedGitRepositories (blocks exotic git subdeps): introduced 4.14
+# So 4.14+ is the first version that covers parity with pnpm 10.
+YARN_MIN_VERSION="${INPUT_YARN_MIN_VERSION:-4.14.0}"
 
 ALLOW_BUILDS_LIST="$(split_list "$ALLOW_BUILDS_RAW")"
 
@@ -99,7 +104,7 @@ WHY_ALLOW_BUILDS=$'WHY THIS MATTERS:\n  npm/pnpm/yarn run lifecycle scripts (pre
 
 FIX_MIN_RELEASE_AGE_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc at the project root:\n    minimum-release-age=10080\n    minimum-release-age-exclude=\n  OR add to pnpm-workspace.yaml:\n    minimumReleaseAge: 10080\n  See: https://pnpm.io/settings#minimumreleaseage'
 
-FIX_MIN_RELEASE_AGE_OTHER=$'HOW TO FIX — migrate to pnpm 10+ (recommended):\n  pnpm 10 is the only mainstream node package manager that enforces\n  minimum-release-age at install time. yarn (1.x and Berry) and npm have\n  NO equivalent — there is no .yarnrc / .npmrc setting that makes them\n  reject too-recent versions. Anything else is a band-aid.\n\n  Migration is one command in most cases:\n    npx @pnpm/exe@latest import\n  (Imports yarn.lock / package-lock.json into pnpm-lock.yaml.)\n  Then:\n    - Set "packageManager": "pnpm@10.x.y" in package.json\n    - Add .npmrc with:\n        minimum-release-age=10080\n        block-exotic-subdeps=true\n    - Update CI to use pnpm install --frozen-lockfile\n\nALTERNATIVE — CI-only band-aid:\n  Set js-enforce-release-age-via-registry: true on the workflow caller.\n  This scans every lockfile entry against the npm registry at PR time and\n  fails on too-recent versions. It guards merged code but does NOT protect\n  a developer who runs yarn install on a local branch before review.'
+FIX_MIN_RELEASE_AGE_OTHER=$'HOW TO FIX — migrate to a package manager that enforces this natively:\n\n  OPTION A — yarn 4.14+ (least disruptive for yarn projects):\n    Yarn 4.10 introduced `npmMinimalAgeGate` (full support 4.12+);\n    Yarn 4.14 added `approvedGitRepositories` (the block-exotic-subdeps\n    equivalent). Both run at install time.\n\n      corepack enable\n      yarn set version 4.14.0\n\n    Then add to .yarnrc.yml:\n      npmMinimalAgeGate: 10080         # 7 days, minutes\n      approvedGitRepositories: []      # empty = block all git deps\n      enableScripts: false             # disable install scripts\n\n  OPTION B — pnpm 10+ (full pnpm parity):\n    pnpm 10 enforces all three settings natively.\n\n      npx @pnpm/exe@latest import      # imports yarn.lock → pnpm-lock.yaml\n\n    Set in package.json:\n      "packageManager": "pnpm@10.x.y"\n      "pnpm": { "onlyBuiltDependencies": [] }\n\n    Add .npmrc:\n      minimum-release-age=10080\n      block-exotic-subdeps=true\n\n    Update CI to `pnpm install --frozen-lockfile`.\n\n  OPTION C — CI-only band-aid (stopgap during migration):\n    Set js-enforce-release-age-via-registry: true on the workflow caller.\n    Scans every lockfile entry against the npm registry at PR time and\n    fails on too-recent versions. Guards merged code but does NOT protect\n    a developer who runs yarn install on a local branch before review.\n\n  OPTION D — drop the policy:\n    Set js-minimum-release-age-minutes: 0. Not recommended for production.'
 
 FIX_BLOCK_EXOTIC_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc:\n    block-exotic-subdeps=true\n  OR add to pnpm-workspace.yaml:\n    blockExoticSubdeps: true\n  See: https://pnpm.io/settings#blockexoticsubdeps'
 
@@ -112,6 +117,10 @@ FIX_ALLOW_BUILDS_NPM=$'HOW TO FIX (npm):\n  Add to .npmrc at the project root:\n
 FIX_ALLOW_BUILDS_YARN_CLASSIC=$'HOW TO FIX (yarn 1.x classic):\n  Add to .yarnrc at the project root:\n    ignore-scripts true\n  Or run `yarn install --ignore-scripts` in CI.'
 
 FIX_ALLOW_BUILDS_YARN_BERRY=$'HOW TO FIX (yarn berry / 2+):\n  Add to .yarnrc.yml:\n    enableScripts: false\n  See: https://yarnpkg.com/configuration/yarnrc#enableScripts'
+
+FIX_MIN_RELEASE_AGE_YARN_BERRY=$'HOW TO FIX (yarn 4.10+, full support 4.12+):\n  Add to .yarnrc.yml:\n    npmMinimalAgeGate: 10080      # 7 days, in minutes\n    npmMinimumReleaseAgeExclude:  # optional whitelist for exemptions\n      []\n  See: https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate'
+
+FIX_BLOCK_EXOTIC_YARN_BERRY=$'HOW TO FIX (yarn 4.14+):\n  Add to .yarnrc.yml:\n    approvedGitRepositories: []\n  An empty list blocks ALL git/tarball deps. Whitelist specific hosts:\n    approvedGitRepositories:\n      - https://github.com/yourorg/*\n  See: https://yarnpkg.com/configuration/yarnrc#approvedGitRepositories'
 
 # ── finding tracker ──────────────────────────────────────────────────────────
 
@@ -454,8 +463,9 @@ PY
     if [[ -f "$tv" ]]; then
         local v
         v="$(grep -E '^pnpm[[:space:]]+' "$tv" 2>/dev/null | head -1 | awk '{print $2}' || true)"
-        [[ -n "$v" ]] && { echo "$v"; return; }
+        [[ -n "$v" ]] && { echo "$v"; return 0; }
     fi
+    return 0
 }
 
 # Detect yarn version (for berry vs. classic, plus version-specific warnings).
@@ -479,8 +489,9 @@ if m:
     print(m.group(1)); sys.exit(0)
 PY
 )"
-        [[ -n "$v" ]] && { echo "$v"; return; }
+        [[ -n "$v" ]] && { echo "$v"; return 0; }
     fi
+    return 0
 }
 
 # ── registry-scan enforcement (yarn/npm/pnpm — actually checks publish dates) ─
@@ -880,24 +891,96 @@ check_yarn_project() {
     local yarnrc_yml="$project_dir/.yarnrc.yml"
     local lockfile="$project_dir/yarn.lock"
 
-    # 1. minimumReleaseAge — yarn has no native install-time setting. Hard-fail
-    #    by default: migrate to pnpm 10+ for actual enforcement. Registry-scan
-    #    is an opt-in CI-time band-aid that doesn't cover dev machines.
-    if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]] && ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
-        report_finding error "$project_label" "$flavour" \
-            "${project_label}/package.json" "1" \
-            "${flavour} cannot enforce minimumReleaseAge — migrate to pnpm 10+" \
-            "FOUND: ${project_label} uses ${flavour}. There is NO yarn/npm setting that makes the package manager refuse install of too-recent dependency versions — not in .yarnrc, not in .yarnrc.yml. Anyone who clones this repo and runs yarn install can pick up a freshly-published (and possibly compromised) dependency version. The quarantine policy of ${MIN_RELEASE_AGE_MINUTES} min is unenforceable here.
+    # 0. Version probe — determines whether native enforcement is available.
+    local yarn_version yarn_supports_native=false
+    yarn_version="$(detect_yarn_version "$project_dir")"
+    if [[ "$flavour" == "yarn-berry" && -n "$yarn_version" ]]; then
+        if [[ "$(version_cmp "$yarn_version" "$YARN_MIN_VERSION")" != "-1" ]]; then
+            yarn_supports_native=true
+        fi
+    fi
+
+    # 1. minimumReleaseAge
+    if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
+        if "$yarn_supports_native"; then
+            # yarn-berry ≥ YARN_MIN_VERSION: check npmMinimalAgeGate natively.
+            local age_yaml
+            age_yaml="$(yaml_get_scalar "$yarnrc_yml" "npmMinimalAgeGate")"
+            age_yaml="${age_yaml%\"}"; age_yaml="${age_yaml#\"}"
+            if [[ -z "$age_yaml" ]]; then
+                report_finding error "$project_label" "$flavour" \
+                    "${project_label}/.yarnrc.yml" "1" \
+                    "Missing npmMinimalAgeGate (need ≥ ${MIN_RELEASE_AGE_MINUTES} min = $((MIN_RELEASE_AGE_MINUTES/1440)) days)" \
+                    "FOUND: ${project_label}/.yarnrc.yml does not set npmMinimalAgeGate. Without it, yarn will install too-recent versions at install time.
+
+${WHY_MIN_RELEASE_AGE}
+
+${FIX_MIN_RELEASE_AGE_YARN_BERRY}" \
+                    "${project_label}/.yarnrc.yml" \
+                    "add line: npmMinimalAgeGate: ${MIN_RELEASE_AGE_MINUTES}"
+            elif [[ "$age_yaml" =~ ^[0-9]+$ ]] && (( age_yaml < MIN_RELEASE_AGE_MINUTES )); then
+                local line
+                line="$(yaml_line "$yarnrc_yml" "npmMinimalAgeGate")"
+                report_finding error "$project_label" "$flavour" \
+                    "${project_label}/.yarnrc.yml" "${line:-1}" \
+                    "npmMinimalAgeGate=${age_yaml} is below required ${MIN_RELEASE_AGE_MINUTES} min" \
+                    "FOUND: ${project_label}/.yarnrc.yml sets npmMinimalAgeGate to ${age_yaml} minutes. Required minimum is ${MIN_RELEASE_AGE_MINUTES}.
+
+${WHY_MIN_RELEASE_AGE}
+
+${FIX_MIN_RELEASE_AGE_YARN_BERRY}" \
+                    "${project_label}/.yarnrc.yml" \
+                    "raise npmMinimalAgeGate to at least ${MIN_RELEASE_AGE_MINUTES}"
+            fi
+        elif ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
+            # yarn-classic OR yarn-berry < YARN_MIN_VERSION → hard-fail with
+            # migration options (yarn 4.14+ or pnpm 10+).
+            local title body fix_edit
+            if [[ "$flavour" == "yarn-classic" ]]; then
+                title="yarn 1.x cannot enforce minimumReleaseAge — migrate to yarn 4.14+ or pnpm 10+"
+                body="FOUND: ${project_label} uses yarn 1.x (classic). yarn 1.x has NO setting for minimum-release-age. Anyone who clones this repo and runs yarn install can pick up a freshly-published (and possibly compromised) version of any dep. The quarantine policy of ${MIN_RELEASE_AGE_MINUTES} min is unenforceable here."
+                fix_edit="migrate to yarn 4.14+ (npmMinimalAgeGate) OR pnpm 10+ (minimumReleaseAge) OR set js-minimum-release-age-minutes: 0"
+            else
+                title="yarn ${yarn_version:-<unknown>} is too old for npmMinimalAgeGate — need ≥ ${YARN_MIN_VERSION}"
+                body="FOUND: ${project_label} pins yarn@${yarn_version:-<unknown>} via packageManager. npmMinimalAgeGate was introduced in yarn 4.10 and approvedGitRepositories in 4.14. Below ${YARN_MIN_VERSION} the recommended settings are silently ignored, so the protection is NOT active at install time."
+                fix_edit="bump packageManager to yarn@${YARN_MIN_VERSION} or newer (corepack enable && yarn set version ${YARN_MIN_VERSION})"
+            fi
+            report_finding error "$project_label" "$flavour" \
+                "${project_label}/package.json" "1" \
+                "$title" \
+                "${body}
 
 ${WHY_MIN_RELEASE_AGE}
 
 ${FIX_MIN_RELEASE_AGE_OTHER}" \
-            "${project_label}/package.json" \
-            "migrate to pnpm 10+ (only way to enforce minimumReleaseAge at install time) OR set js-minimum-release-age-minutes: 0 to disable the policy"
+                "${project_label}/package.json" \
+                "$fix_edit"
+        fi
     fi
 
-    # 2. blockExoticSubdeps — lockfile scan
+    # 2. blockExoticSubdeps — yarn-berry ≥ 4.14 has approvedGitRepositories natively;
+    #    otherwise rely on the lockfile scan below.
     if is_true "$REQUIRE_BLOCK_EXOTIC"; then
+        if "$yarn_supports_native"; then
+            # Setting is present if approvedGitRepositories appears in .yarnrc.yml
+            # (any value — empty list blocks all; whitelist blocks anything not listed).
+            local approved_line
+            approved_line="$(yaml_line "$yarnrc_yml" "approvedGitRepositories")"
+            if [[ -z "$approved_line" ]]; then
+                report_finding warning "$project_label" "$flavour" \
+                    "${project_label}/.yarnrc.yml" "1" \
+                    "approvedGitRepositories not set (yarn 4.14+ block-exotic-subdeps equivalent)" \
+                    "FOUND: ${project_label}/.yarnrc.yml does not declare approvedGitRepositories. Without it, yarn will allow git/tarball deps from any source. (Warning only — additional errors are emitted per match if exotic resolutions exist in yarn.lock.)
+
+${WHY_BLOCK_EXOTIC}
+
+${FIX_BLOCK_EXOTIC_YARN_BERRY}" \
+                    "${project_label}/.yarnrc.yml" \
+                    "add: approvedGitRepositories: []  (empty list = block all)"
+            fi
+        fi
+
+        # Lockfile scan — applies to every yarn project regardless of version.
         while IFS= read -r match; do
             [[ -z "$match" ]] && continue
             local lock_line lock_spec
@@ -917,7 +1000,7 @@ ${FIX_BLOCK_EXOTIC_LOCKFILE}" \
         done < <(yarn_lock_exotic "$lockfile")
     fi
 
-    # 3. allowBuilds — require ignore-scripts / enableScripts:false unless whitelist is empty AND no scripts in lockfile
+    # 3. allowBuilds — enableScripts: false (berry) or ignore-scripts true (classic).
     if [[ "$flavour" == "yarn-berry" ]]; then
         local enable_scripts
         enable_scripts="$(yaml_get_scalar "$yarnrc_yml" "enableScripts")"
@@ -977,14 +1060,14 @@ check_npm_project() {
     if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]] && ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
         report_finding error "$project_label" "npm" \
             "${project_label}/package.json" "1" \
-            "npm cannot enforce minimumReleaseAge — migrate to pnpm 10+" \
-            "FOUND: ${project_label} uses npm. There is NO npm setting that refuses install of too-recent dependency versions. Anyone who clones this repo and runs npm install can pick up a freshly-published (and possibly compromised) dependency version. The quarantine policy of ${MIN_RELEASE_AGE_MINUTES} min is unenforceable here.
+            "npm cannot enforce minimumReleaseAge — migrate to yarn 4.14+ or pnpm 10+" \
+            "FOUND: ${project_label} uses npm. npm < 11.10 has no setting that refuses install of too-recent dependency versions. Anyone who clones this repo and runs npm install can pick up a freshly-published (and possibly compromised) dependency version. The quarantine policy of ${MIN_RELEASE_AGE_MINUTES} min is unenforceable here.
 
 ${WHY_MIN_RELEASE_AGE}
 
 ${FIX_MIN_RELEASE_AGE_OTHER}" \
             "${project_label}/package.json" \
-            "migrate to pnpm 10+ (only way to enforce minimumReleaseAge at install time) OR set js-minimum-release-age-minutes: 0 to disable the policy"
+            "migrate to yarn 4.14+ (npmMinimalAgeGate) OR pnpm 10+ (minimumReleaseAge) OR set js-minimum-release-age-minutes: 0"
     fi
 
     # 2. blockExoticSubdeps — lockfile scan
@@ -1076,6 +1159,7 @@ echo "allow-builds:                     $(echo "$ALLOW_BUILDS_LIST" | paste -sd 
 echo "require-block-exotic-subdeps:     $REQUIRE_BLOCK_EXOTIC"
 echo "enforce-release-age-via-registry: $ENFORCE_RELEASE_AGE_VIA_REGISTRY"
 echo "pnpm-min-version:                 $PNPM_MIN_VERSION"
+echo "yarn-min-version:                 $YARN_MIN_VERSION"
 echo "fail-on-found:                    $FAIL_ON_FOUND"
 if is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY" && [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
     echo ""

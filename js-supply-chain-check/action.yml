@@ -45,6 +45,15 @@ inputs:
       that even correct .npmrc settings are silently ignored by old pnpm.
     required: false
     default: '10.0.0'
+  yarn-min-version:
+    description: |
+      Minimum yarn (berry) version where native install-time enforcement of
+      all three policies is available: npmMinimalAgeGate (yarn 4.10+, full
+      support 4.12+) and approvedGitRepositories (yarn 4.14+). Projects on
+      yarn 1.x or yarn-berry below this version hard-fail with a migration
+      prompt (yarn 4.14+ OR pnpm 10+).
+    required: false
+    default: '4.14.0'
   fail-on-found:
     description: 'Exit with code 1 when any error-level finding is reported.'
     required: false
@@ -72,5 +81,6 @@ runs:
         INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS: ${{ inputs.require-block-exotic-subdeps }}
         INPUT_ENFORCE_RELEASE_AGE_VIA_REGISTRY: ${{ inputs.enforce-release-age-via-registry }}
         INPUT_PNPM_MIN_VERSION: ${{ inputs.pnpm-min-version }}
+        INPUT_YARN_MIN_VERSION: ${{ inputs.yarn-min-version }}
         INPUT_FAIL_ON_FOUND: ${{ inputs.fail-on-found }}
       run: bash "$GITHUB_ACTION_PATH/scripts/js_supply_chain_check.sh"
