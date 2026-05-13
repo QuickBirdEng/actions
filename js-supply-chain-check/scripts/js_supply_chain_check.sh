@@ -1199,8 +1199,7 @@ if (( ${#FIX_FILE_ORDER[@]} > 0 )); then
     echo ""
     echo "############################################################"
     echo "# After making these changes and pushing, the check will   #"
-    echo "# re-run and clear. Reference:"
-    echo "#   ${GAJUS_URL}"
+    echo "# re-run and clear.                                        #"
     echo "############################################################"
 fi
 
