@@ -126,7 +126,7 @@ FIX_ALLOW_BUILDS_YARN_CLASSIC=$'HOW TO FIX (yarn 1.x classic):\n  Add to .yarnrc
 
 FIX_ALLOW_BUILDS_YARN_BERRY=$'HOW TO FIX (yarn berry / 2+):\n  Add to .yarnrc.yml:\n    enableScripts: false\n  See: https://yarnpkg.com/configuration/yarnrc#enableScripts'
 
-FIX_MIN_RELEASE_AGE_YARN_BERRY=$'HOW TO FIX (yarn 4.10+, full support 4.12+):\n  Add to .yarnrc.yml:\n    npmMinimalAgeGate: 10080      # 7 days, in minutes\n    npmMinimumReleaseAgeExclude:  # optional whitelist for exemptions\n      []\n  See: https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate'
+FIX_MIN_RELEASE_AGE_YARN_BERRY=$'HOW TO FIX (yarn 4.10+, full support 4.12+):\n  Add to .yarnrc.yml:\n    npmMinimalAgeGate: 10080      # 7 days, in minutes\n    npmPreapprovedPackages:  # optional whitelist for exemptions\n      []\n  See: https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate'
 
 FIX_BLOCK_EXOTIC_YARN_BERRY=$'HOW TO FIX (yarn 4.14+):\n  Add to .yarnrc.yml:\n    approvedGitRepositories: []\n  An empty list blocks ALL git/tarball deps. Whitelist specific hosts:\n    approvedGitRepositories:\n      - https://github.com/yourorg/*\n  See: https://yarnpkg.com/configuration/yarnrc#approvedGitRepositories'
 
@@ -434,7 +434,7 @@ import sys, yaml
 try:
     with open(sys.argv[1]) as fh:
         data = yaml.safe_load(fh) or {}
-    val = data.get("npmMinimumReleaseAgeExclude") if isinstance(data, dict) else None
+    val = data.get("npmPreapprovedPackages") if isinstance(data, dict) else None
     if isinstance(val, list):
         for item in val:
             if isinstance(item, str):
@@ -444,8 +444,8 @@ except Exception:
 PY
     else
         awk '
-            /^npmMinimumReleaseAgeExclude:[[:space:]]*\[?[[:space:]]*$/ { in_list=1; next }
-            /^npmMinimumReleaseAgeExclude:[[:space:]]*\[/ { line=$0; sub(/^[^\[]*\[/, "", line); sub(/\].*$/, "", line); gsub(/[, "]+/, "\n", line); print line; next }
+            /^npmPreapprovedPackages:[[:space:]]*\[?[[:space:]]*$/ { in_list=1; next }
+            /^npmPreapprovedPackages:[[:space:]]*\[/ { line=$0; sub(/^[^\[]*\[/, "", line); sub(/\].*$/, "", line); gsub(/[, "]+/, "\n", line); print line; next }
             in_list && /^[[:space:]]+-[[:space:]]*/ { sub(/^[[:space:]]+-[[:space:]]*/, ""); gsub(/["'\'']+/, ""); sub(/[[:space:]]*$/, ""); if (length > 0) print; next }
             in_list && /^[^[:space:]]/ { in_list=0 }
         ' "$yarnrc_yml" 2>/dev/null | grep -v '^$' || true

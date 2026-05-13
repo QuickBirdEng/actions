@@ -40,7 +40,7 @@ inputs:
       the minimum-release-age policy (e.g. for an urgent security patch on a
       package version that is newer than the quarantine threshold). The action
       verifies that each project's own native exclude list (pnpm
-      `minimum-release-age-exclude` / yarn `npmMinimumReleaseAgeExclude`) is a
+      `minimum-release-age-exclude` / yarn `npmPreapprovedPackages`) is a
       SUBSET of this allowlist — projects can't unilaterally exempt packages
       that the workflow caller hasn't authorised.
       Empty (default) means no exemptions allowed.
