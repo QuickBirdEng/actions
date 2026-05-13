@@ -1,0 +1,55 @@
+name: 'JS Supply-Chain Check'
+description: 'Audits npm/yarn/pnpm projects for the three supply-chain hardenings: minimum release age, blocked exotic subdeps, and install-script allowlist.'
+inputs:
+  search-directory:
+    description: 'Directory to scan recursively for JS projects (lockfiles).'
+    required: false
+    default: '.'
+  exclude:
+    description: |
+      Newline- or comma-separated glob patterns for additional files and directories to exclude.
+      The following are always excluded: .git/**, node_modules/**, .idea/**, build/**, dist/**.
+    required: false
+    default: ''
+  minimum-release-age-minutes:
+    description: 'Required quarantine period in minutes for newly published package versions (pnpm `minimumReleaseAge`). Default 10080 (7 days). Set to 0 to disable the check.'
+    required: false
+    default: '10080'
+  allow-builds:
+    description: |
+      Newline- or comma-separated list of package names allowed to run install/lifecycle scripts.
+      Empty (default) means NO package may run install scripts; the check requires `ignore-scripts=true`
+      (npm/yarn classic) / `enableScripts: false` (yarn berry) / empty `pnpm.onlyBuiltDependencies` (pnpm).
+    required: false
+    default: ''
+  require-block-exotic-subdeps:
+    description: 'When true, every project must enable blockExoticSubdeps (pnpm) AND every lockfile is scanned for git/tarball/file deps (all managers).'
+    required: false
+    default: 'true'
+  fail-on-found:
+    description: 'Exit with code 1 when any error-level finding is reported.'
+    required: false
+    default: 'true'
+outputs:
+  findings:
+    description: 'Number of error-level findings across all scanned projects.'
+    value: ${{ steps.scan.outputs.findings }}
+  warnings:
+    description: 'Number of warning-level findings across all scanned projects.'
+    value: ${{ steps.scan.outputs.warnings }}
+  projects-scanned:
+    description: 'Number of JS projects (lockfiles) discovered and scanned.'
+    value: ${{ steps.scan.outputs.projects-scanned }}
+runs:
+  using: "composite"
+  steps:
+    - id: scan
+      shell: bash
+      env:
+        INPUT_SEARCH_DIRECTORY: ${{ inputs.search-directory }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_MINIMUM_RELEASE_AGE_MINUTES: ${{ inputs.minimum-release-age-minutes }}
+        INPUT_ALLOW_BUILDS: ${{ inputs.allow-builds }}
+        INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS: ${{ inputs.require-block-exotic-subdeps }}
+        INPUT_FAIL_ON_FOUND: ${{ inputs.fail-on-found }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/js_supply_chain_check.sh"
