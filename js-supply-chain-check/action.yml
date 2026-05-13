@@ -28,10 +28,13 @@ inputs:
     default: 'true'
   enforce-release-age-via-registry:
     description: |
-      When true, additionally enforces minimum-release-age for npm/yarn/pnpm by
-      querying the npm registry for each lockfile entry's publish date and
-      failing on any package version younger than the threshold. Adds network
-      calls (one per resolved dependency); default off because it can be slow.
+      Opt-in CI-time band-aid. When true, looks up each lockfile entry's
+      publish date against the npm registry and fails on too-recent versions.
+      Default false because this gates PRs but does NOT protect a developer
+      who runs yarn/npm install on a local branch before review. For real
+      install-time enforcement, migrate the project to pnpm 10+ where
+      minimum-release-age is honored natively. When false, yarn/npm projects
+      with minimum-release-age set will hard-fail with a migration prompt.
     required: false
     default: 'false'
   pnpm-min-version:

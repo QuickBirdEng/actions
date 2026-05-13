@@ -29,9 +29,13 @@ MIN_RELEASE_AGE_MINUTES="${INPUT_MINIMUM_RELEASE_AGE_MINUTES:-10080}"
 ALLOW_BUILDS_RAW="${INPUT_ALLOW_BUILDS:-}"
 REQUIRE_BLOCK_EXOTIC="${INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS:-true}"
 FAIL_ON_FOUND="${INPUT_FAIL_ON_FOUND:-true}"
-# Opt-in: actually enforce minimumReleaseAge for yarn/npm (and as a backstop
-# for pnpm) by hitting the npm registry to look up each lockfile entry's
-# publish date. Slow (~one HTTP req per resolved package), so default off.
+# Opt-in escape hatch: when true, look up each lockfile entry's publish date
+# against the npm registry. This is a PR-time-only band-aid (it doesn't
+# protect a developer's machine that runs yarn install before opening a PR);
+# the canonical fix is to migrate to pnpm 10+ where minimum-release-age is
+# enforced natively at install time. Default off — yarn/npm projects with
+# minimum-release-age set will hard-fail with a migration prompt unless this
+# opt-in is enabled.
 ENFORCE_RELEASE_AGE_VIA_REGISTRY="${INPUT_ENFORCE_RELEASE_AGE_VIA_REGISTRY:-false}"
 # Minimum pnpm version where the recommended settings actually exist.
 # minimumReleaseAge + blockExoticSubdeps require pnpm 10.0+; in older
@@ -95,7 +99,7 @@ WHY_ALLOW_BUILDS=$'WHY THIS MATTERS:\n  npm/pnpm/yarn run lifecycle scripts (pre
 
 FIX_MIN_RELEASE_AGE_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc at the project root:\n    minimum-release-age=10080\n    minimum-release-age-exclude=\n  OR add to pnpm-workspace.yaml:\n    minimumReleaseAge: 10080\n  See: https://pnpm.io/settings#minimumreleaseage'
 
-FIX_MIN_RELEASE_AGE_OTHER=$'HOW TO FIX (npm/yarn):\n  npm and yarn do not have a native quarantine setting equivalent to pnpm\'s\n  minimumReleaseAge. Options:\n    1. Migrate to pnpm (recommended; one-command lockfile import).\n    2. Use the `npq` wrapper for installs: https://github.com/lirantal/npq\n    3. Rely on socket.dev or Snyk CI scanning instead, and treat this finding\n       as informational. Document the decision in the repo README.'
+FIX_MIN_RELEASE_AGE_OTHER=$'HOW TO FIX — migrate to pnpm 10+ (recommended):\n  pnpm 10 is the only mainstream node package manager that enforces\n  minimum-release-age at install time. yarn (1.x and Berry) and npm have\n  NO equivalent — there is no .yarnrc / .npmrc setting that makes them\n  reject too-recent versions. Anything else is a band-aid.\n\n  Migration is one command in most cases:\n    npx @pnpm/exe@latest import\n  (Imports yarn.lock / package-lock.json into pnpm-lock.yaml.)\n  Then:\n    - Set "packageManager": "pnpm@10.x.y" in package.json\n    - Add .npmrc with:\n        minimum-release-age=10080\n        block-exotic-subdeps=true\n    - Update CI to use pnpm install --frozen-lockfile\n\nALTERNATIVE — CI-only band-aid:\n  Set js-enforce-release-age-via-registry: true on the workflow caller.\n  This scans every lockfile entry against the npm registry at PR time and\n  fails on too-recent versions. It guards merged code but does NOT protect\n  a developer who runs yarn install on a local branch before review.'
 
 FIX_BLOCK_EXOTIC_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc:\n    block-exotic-subdeps=true\n  OR add to pnpm-workspace.yaml:\n    blockExoticSubdeps: true\n  See: https://pnpm.io/settings#blockexoticsubdeps'
 
@@ -121,9 +125,9 @@ declare -A PROJECT_WARNINGS
 
 # Concrete edits required to clear the check, keyed by target file path.
 # Value is a newline-separated list of "edits" to apply to that file.
-declare -A FIXES_BY_FILE
+declare -A FIXES_BY_FILE=()
 # Ordering preserved separately so the footer is stable across runs.
-declare -a FIX_FILE_ORDER
+declare -a FIX_FILE_ORDER=()
 
 # add_fix FILE EDIT_DESCRIPTION
 add_fix() {
@@ -876,16 +880,20 @@ check_yarn_project() {
     local yarnrc_yml="$project_dir/.yarnrc.yml"
     local lockfile="$project_dir/yarn.lock"
 
-    # 1. minimumReleaseAge — no native equivalent for yarn. Info only.
+    # 1. minimumReleaseAge — yarn has no native install-time setting. Hard-fail
+    #    by default: migrate to pnpm 10+ for actual enforcement. Registry-scan
+    #    is an opt-in CI-time band-aid that doesn't cover dev machines.
     if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]] && ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
-        report_finding warning "$project_label" "$flavour" \
-            "${project_label}/yarn.lock" "1" \
-            "minimumReleaseAge not enforced by yarn" \
-            "FOUND: ${project_label} uses ${flavour}, which has no native minimum-release-age setting. This check can only inform — it does not block.
+        report_finding error "$project_label" "$flavour" \
+            "${project_label}/package.json" "1" \
+            "${flavour} cannot enforce minimumReleaseAge — migrate to pnpm 10+" \
+            "FOUND: ${project_label} uses ${flavour}. There is NO yarn/npm setting that makes the package manager refuse install of too-recent dependency versions — not in .yarnrc, not in .yarnrc.yml. Anyone who clones this repo and runs yarn install can pick up a freshly-published (and possibly compromised) dependency version. The quarantine policy of ${MIN_RELEASE_AGE_MINUTES} min is unenforceable here.
 
 ${WHY_MIN_RELEASE_AGE}
 
-${FIX_MIN_RELEASE_AGE_OTHER}"
+${FIX_MIN_RELEASE_AGE_OTHER}" \
+            "${project_label}/package.json" \
+            "migrate to pnpm 10+ (only way to enforce minimumReleaseAge at install time) OR set js-minimum-release-age-minutes: 0 to disable the policy"
     fi
 
     # 2. blockExoticSubdeps — lockfile scan
@@ -964,21 +972,19 @@ check_npm_project() {
     local npmrc="$project_dir/.npmrc"
     local lockfile="$project_dir/package-lock.json"
 
-    # 1. minimumReleaseAge — no native npm equivalent until very recent versions.
-    #    Suppressed when the registry-scan path is enabled (handled per-lockfile below).
+    # 1. minimumReleaseAge — npm has no widely-supported install-time setting.
+    #    Hard-fail by default: migrate to pnpm 10+ for actual enforcement.
     if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]] && ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
-        local age_val
-        age_val="$(npmrc_get "$npmrc" "minimum-release-age")"
-        if [[ -z "$age_val" ]]; then
-            report_finding warning "$project_label" "npm" \
-                "${project_label}/.npmrc" "1" \
-                "minimumReleaseAge not enforced by npm" \
-                "FOUND: ${project_label} uses npm. npm has no widely-supported minimum-release-age setting (the option is recent and version-dependent). This check can only inform.
+        report_finding error "$project_label" "npm" \
+            "${project_label}/package.json" "1" \
+            "npm cannot enforce minimumReleaseAge — migrate to pnpm 10+" \
+            "FOUND: ${project_label} uses npm. There is NO npm setting that refuses install of too-recent dependency versions. Anyone who clones this repo and runs npm install can pick up a freshly-published (and possibly compromised) dependency version. The quarantine policy of ${MIN_RELEASE_AGE_MINUTES} min is unenforceable here.
 
 ${WHY_MIN_RELEASE_AGE}
 
-${FIX_MIN_RELEASE_AGE_OTHER}"
-        fi
+${FIX_MIN_RELEASE_AGE_OTHER}" \
+            "${project_label}/package.json" \
+            "migrate to pnpm 10+ (only way to enforce minimumReleaseAge at install time) OR set js-minimum-release-age-minutes: 0 to disable the policy"
     fi
 
     # 2. blockExoticSubdeps — lockfile scan
@@ -1063,12 +1069,20 @@ ${FIX_ALLOW_BUILDS_NPM}" \
 echo "============================================================"
 echo "JS Supply-Chain Check"
 echo "============================================================"
-echo "Search dir:                  $(realpath "$SEARCH_DIR")"
-echo "Excluding:                   $EXCLUDE_CSV"
-echo "minimum-release-age-minutes: $MIN_RELEASE_AGE_MINUTES"
-echo "allow-builds:                $(echo "$ALLOW_BUILDS_LIST" | paste -sd ',' - || echo '<empty>')"
-echo "require-block-exotic-subdeps: $REQUIRE_BLOCK_EXOTIC"
-echo "fail-on-found:               $FAIL_ON_FOUND"
+echo "Search dir:                       $(realpath "$SEARCH_DIR")"
+echo "Excluding:                        $EXCLUDE_CSV"
+echo "minimum-release-age-minutes:      $MIN_RELEASE_AGE_MINUTES"
+echo "allow-builds:                     $(echo "$ALLOW_BUILDS_LIST" | paste -sd ',' - || echo '<empty>')"
+echo "require-block-exotic-subdeps:     $REQUIRE_BLOCK_EXOTIC"
+echo "enforce-release-age-via-registry: $ENFORCE_RELEASE_AGE_VIA_REGISTRY"
+echo "pnpm-min-version:                 $PNPM_MIN_VERSION"
+echo "fail-on-found:                    $FAIL_ON_FOUND"
+if is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY" && [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
+    echo ""
+    echo "Registry-scan enforcement is ON: every lockfile entry will be looked up"
+    echo "against registry.npmjs.org and the PR will fail on any package version"
+    echo "younger than ${MIN_RELEASE_AGE_MINUTES} minutes ($((MIN_RELEASE_AGE_MINUTES/1440)) days)."
+fi
 if [[ -z "$PYTHON_BIN" ]]; then
     echo "::warning::python3 not available — package.json/package-lock.json parsing will be skipped."
 elif ! $HAS_PYYAML; then
