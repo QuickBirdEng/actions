@@ -27,7 +27,9 @@ EXCLUDE_DEFAULTS=".git/**,node_modules/**,.idea/**,build/**,dist/**"
 EXCLUDE_CSV="$(normalize_csv "${EXCLUDE_DEFAULTS}${INPUT_EXCLUDE:+,${INPUT_EXCLUDE}}")"
 MIN_RELEASE_AGE_MINUTES="${INPUT_MINIMUM_RELEASE_AGE_MINUTES:-10080}"
 ALLOW_BUILDS_RAW="${INPUT_ALLOW_BUILDS:-}"
+CHECK_INSTALL_SCRIPTS="${INPUT_CHECK_INSTALL_SCRIPTS:-true}"
 REQUIRE_BLOCK_EXOTIC="${INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS:-true}"
+MIN_RELEASE_AGE_EXCLUDE_RAW="${INPUT_MINIMUM_RELEASE_AGE_EXCLUDE:-}"
 FAIL_ON_FOUND="${INPUT_FAIL_ON_FOUND:-true}"
 # Opt-in escape hatch: when true, look up each lockfile entry's publish date
 # against the npm registry. This is a PR-time-only band-aid (it doesn't
@@ -48,6 +50,7 @@ PNPM_MIN_VERSION="${INPUT_PNPM_MIN_VERSION:-10.0.0}"
 YARN_MIN_VERSION="${INPUT_YARN_MIN_VERSION:-4.14.0}"
 
 ALLOW_BUILDS_LIST="$(split_list "$ALLOW_BUILDS_RAW")"
+MIN_RELEASE_AGE_EXCLUDE_LIST="$(split_list "$MIN_RELEASE_AGE_EXCLUDE_RAW")"
 
 if [[ ! -d "$SEARCH_DIR" ]]; then
     echo "ERROR: search-directory does not exist: $SEARCH_DIR" >&2
@@ -391,6 +394,97 @@ else:
 PY
 }
 
+# Read the project-side minimum-release-age exclude list.
+# Echoes one package name per line; empty if no exclude list configured.
+pnpm_get_release_age_exclude() {
+    local project_dir="$1"
+    local npmrc="$project_dir/.npmrc"
+    local workspace_yaml="$project_dir/pnpm-workspace.yaml"
+    if [[ -f "$npmrc" ]]; then
+        local val
+        val="$(npmrc_get "$npmrc" "minimum-release-age-exclude")"
+        if [[ -n "$val" ]]; then
+            echo "$val" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' || true
+        fi
+    fi
+    if [[ -f "$workspace_yaml" && -n "$PYTHON_BIN" ]] && "$PYTHON_BIN" -c 'import yaml' 2>/dev/null; then
+        "$PYTHON_BIN" - "$workspace_yaml" <<'PY' 2>/dev/null || true
+import sys, yaml
+try:
+    with open(sys.argv[1]) as fh:
+        data = yaml.safe_load(fh) or {}
+    val = data.get("minimumReleaseAgeExclude") if isinstance(data, dict) else None
+    if isinstance(val, list):
+        for item in val:
+            if isinstance(item, str):
+                print(item)
+except Exception:
+    pass
+PY
+    fi
+}
+
+yarn_berry_get_release_age_exclude() {
+    local project_dir="$1"
+    local yarnrc_yml="$project_dir/.yarnrc.yml"
+    [[ -f "$yarnrc_yml" ]] || return 0
+    if [[ -n "$PYTHON_BIN" ]] && "$PYTHON_BIN" -c 'import yaml' 2>/dev/null; then
+        "$PYTHON_BIN" - "$yarnrc_yml" <<'PY' 2>/dev/null || true
+import sys, yaml
+try:
+    with open(sys.argv[1]) as fh:
+        data = yaml.safe_load(fh) or {}
+    val = data.get("npmMinimumReleaseAgeExclude") if isinstance(data, dict) else None
+    if isinstance(val, list):
+        for item in val:
+            if isinstance(item, str):
+                print(item)
+except Exception:
+    pass
+PY
+    else
+        awk '
+            /^npmMinimumReleaseAgeExclude:[[:space:]]*\[?[[:space:]]*$/ { in_list=1; next }
+            /^npmMinimumReleaseAgeExclude:[[:space:]]*\[/ { line=$0; sub(/^[^\[]*\[/, "", line); sub(/\].*$/, "", line); gsub(/[, "]+/, "\n", line); print line; next }
+            in_list && /^[[:space:]]+-[[:space:]]*/ { sub(/^[[:space:]]+-[[:space:]]*/, ""); gsub(/["'\'']+/, ""); sub(/[[:space:]]*$/, ""); if (length > 0) print; next }
+            in_list && /^[^[:space:]]/ { in_list=0 }
+        ' "$yarnrc_yml" 2>/dev/null | grep -v '^$' || true
+    fi
+}
+
+# verify_exclude_subset PROJECT MANAGER FILE NEWLINE_SEPARATED_PROJECT_EXCLUDES
+# Emits a finding for every project-side exclude entry NOT present in the
+# workflow-level allow-list (MIN_RELEASE_AGE_EXCLUDE_LIST).
+verify_exclude_subset() {
+    local project_label="$1" manager="$2" file="$3" project_excludes="$4"
+    [[ -z "$project_excludes" ]] && return 0
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        if ! grep -qxF "$pkg" <<< "$MIN_RELEASE_AGE_EXCLUDE_LIST"; then
+            local allowed
+            allowed="$(echo "$MIN_RELEASE_AGE_EXCLUDE_LIST" | paste -sd ',' - || echo '')"
+            [[ -z "$allowed" ]] && allowed="<empty>"
+            report_finding error "$project_label" "$manager" \
+                "$file" "1" \
+                "Unauthorised minimumReleaseAge exemption: '${pkg}'" \
+                "FOUND: ${project_label} exempts '${pkg}' from minimum-release-age in its native config, but the workflow caller has not authorised that exemption.
+
+  Workflow allow-list (js-minimum-release-age-exclude): ${allowed}
+
+${WHY_MIN_RELEASE_AGE}
+
+HOW TO FIX (pick ONE):
+  - If the exemption is correct (urgent security patch reviewed by the
+    team), add '${pkg}' to the workflow caller's js-minimum-release-age-exclude
+    input in security.yml. This change goes through normal PR review.
+  - Otherwise, remove '${pkg}' from the project's native exclude list and
+    let the quarantine apply." \
+                "<workflow-caller>/security.yml" \
+                "add '${pkg}' to js-minimum-release-age-exclude (requires reviewer sign-off) OR remove from project's exclude list"
+        fi
+    done <<< "$project_excludes"
+}
+
 # Find packages in a lockfile with install scripts (best-effort).
 # package-lock.json v2/v3 stores `hasInstallScript: true` on entries that have one.
 npm_lock_install_scripts() {
@@ -636,8 +730,16 @@ registry_scan_lockfile() {
     local project_label="$1" manager="$2" lockfile="$3" lockfile_rel="$4"
     [[ -f "$lockfile" ]] || return 0
     [[ -z "$PYTHON_BIN" ]] && return 0
-    local hits
-    hits="$(lockfile_to_pkgversions "$lockfile" | fetch_too_recent "$MIN_RELEASE_AGE_MINUTES")"
+    local hits pairs filter
+    pairs="$(lockfile_to_pkgversions "$lockfile")"
+    # Exempt the workflow-authorised package names before hitting the registry.
+    if [[ -n "$MIN_RELEASE_AGE_EXCLUDE_LIST" ]]; then
+        while IFS= read -r exempt; do
+            [[ -z "$exempt" ]] && continue
+            pairs="$(echo "$pairs" | grep -vE "^${exempt}"$'\t' || true)"
+        done <<< "$MIN_RELEASE_AGE_EXCLUDE_LIST"
+    fi
+    hits="$(echo "$pairs" | fetch_too_recent "$MIN_RELEASE_AGE_MINUTES")"
     [[ -z "$hits" ]] && return 0
     local count
     count="$(echo "$hits" | wc -l | tr -d ' ')"
@@ -726,8 +828,12 @@ HOW TO FIX:
         fi
     fi
 
-    # 1. minimumReleaseAge
+    # 1. minimumReleaseAge — also verify the project's exempt list is a subset.
     if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
+        local proj_excludes
+        proj_excludes="$(pnpm_get_release_age_exclude "$project_dir")"
+        verify_exclude_subset "$project_label" "pnpm" "${project_label}/.npmrc" "$proj_excludes"
+
         local age_npmrc age_yaml age_val=""
         age_npmrc="$(npmrc_get "$npmrc" "minimum-release-age")"
         age_yaml="$(yaml_get_scalar "$workspace_yaml" "minimumReleaseAge")"
@@ -833,7 +939,11 @@ ${FIX_BLOCK_EXOTIC_LOCKFILE}" \
         done < <(pnpm_lock_exotic "$lockfile")
     fi
 
-    # 3. allowBuilds (pnpm.onlyBuiltDependencies)
+    # 3. allowBuilds (pnpm.onlyBuiltDependencies). Skip entirely when the
+    #    install-scripts sub-check is disabled at the workflow level.
+    if ! is_true "$CHECK_INSTALL_SCRIPTS"; then
+        return 0
+    fi
     local only_built status
     only_built="$(pkg_json_get_only_built "$pkg_json")"
     status="$(echo "$only_built" | head -1)"
@@ -908,6 +1018,11 @@ check_yarn_project() {
     # 1. minimumReleaseAge
     if [[ "$MIN_RELEASE_AGE_MINUTES" != "0" ]]; then
         if "$yarn_supports_native"; then
+            # Verify the project's exempt list is a subset of the workflow's.
+            local proj_excludes
+            proj_excludes="$(yarn_berry_get_release_age_exclude "$project_dir")"
+            verify_exclude_subset "$project_label" "$flavour" "${project_label}/.yarnrc.yml" "$proj_excludes"
+
             # yarn-berry ≥ YARN_MIN_VERSION: check npmMinimalAgeGate natively.
             local age_yaml
             age_yaml="$(yaml_get_scalar "$yarnrc_yml" "npmMinimalAgeGate")"
@@ -1006,6 +1121,9 @@ ${FIX_BLOCK_EXOTIC_LOCKFILE}" \
     fi
 
     # 3. allowBuilds — enableScripts: false (berry) or ignore-scripts true (classic).
+    if ! is_true "$CHECK_INSTALL_SCRIPTS"; then
+        return 0
+    fi
     if [[ "$flavour" == "yarn-berry" ]]; then
         local enable_scripts
         enable_scripts="$(yaml_get_scalar "$yarnrc_yml" "enableScripts")"
@@ -1097,6 +1215,9 @@ ${FIX_BLOCK_EXOTIC_LOCKFILE}" \
     fi
 
     # 3. allowBuilds — require ignore-scripts=true in .npmrc, unless allow-builds covers every hasInstallScript entry
+    if ! is_true "$CHECK_INSTALL_SCRIPTS"; then
+        return 0
+    fi
     local ignore_scripts
     ignore_scripts="$(npmrc_get "$npmrc" "ignore-scripts")"
     if is_true "$ignore_scripts"; then
@@ -1160,7 +1281,9 @@ echo "============================================================"
 echo "Search dir:                       $(realpath "$SEARCH_DIR")"
 echo "Excluding:                        $EXCLUDE_CSV"
 echo "minimum-release-age-minutes:      $MIN_RELEASE_AGE_MINUTES"
+echo "minimum-release-age-exclude:      $(echo "$MIN_RELEASE_AGE_EXCLUDE_LIST" | paste -sd ',' - || echo '<empty>')"
 echo "allow-builds:                     $(echo "$ALLOW_BUILDS_LIST" | paste -sd ',' - || echo '<empty>')"
+echo "check-install-scripts:            $CHECK_INSTALL_SCRIPTS"
 echo "require-block-exotic-subdeps:     $REQUIRE_BLOCK_EXOTIC"
 echo "enforce-release-age-via-registry: $ENFORCE_RELEASE_AGE_VIA_REGISTRY"
 echo "pnpm-min-version:                 $PNPM_MIN_VERSION"

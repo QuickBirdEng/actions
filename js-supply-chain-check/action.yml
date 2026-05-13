@@ -22,10 +22,30 @@ inputs:
       (npm/yarn classic) / `enableScripts: false` (yarn berry) / empty `pnpm.onlyBuiltDependencies` (pnpm).
     required: false
     default: ''
-  require-block-exotic-subdeps:
-    description: 'When true, every project must enable blockExoticSubdeps (pnpm) AND every lockfile is scanned for git/tarball/file deps (all managers).'
+  check-install-scripts:
+    description: |
+      When false, the install-scripts (allowBuilds) sub-check is skipped entirely.
+      Use this to disable just that one check while leaving minimum-release-age
+      and blockExoticSubdeps in force. (To re-enable install scripts for specific
+      packages instead of disabling the check, prefer the `allow-builds` input.)
     required: false
     default: 'true'
+  require-block-exotic-subdeps:
+    description: 'When true, every project must enable blockExoticSubdeps (pnpm) AND every lockfile is scanned for git/tarball/file deps (all managers). Set to false to skip this sub-check entirely.'
+    required: false
+    default: 'true'
+  minimum-release-age-exclude:
+    description: |
+      Newline- or comma-separated list of package names that are allowed to bypass
+      the minimum-release-age policy (e.g. for an urgent security patch on a
+      package version that is newer than the quarantine threshold). The action
+      verifies that each project's own native exclude list (pnpm
+      `minimum-release-age-exclude` / yarn `npmMinimumReleaseAgeExclude`) is a
+      SUBSET of this allowlist — projects can't unilaterally exempt packages
+      that the workflow caller hasn't authorised.
+      Empty (default) means no exemptions allowed.
+    required: false
+    default: ''
   enforce-release-age-via-registry:
     description: |
       Opt-in CI-time band-aid. When true, looks up each lockfile entry's
@@ -78,7 +98,9 @@ runs:
         INPUT_EXCLUDE: ${{ inputs.exclude }}
         INPUT_MINIMUM_RELEASE_AGE_MINUTES: ${{ inputs.minimum-release-age-minutes }}
         INPUT_ALLOW_BUILDS: ${{ inputs.allow-builds }}
+        INPUT_CHECK_INSTALL_SCRIPTS: ${{ inputs.check-install-scripts }}
         INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS: ${{ inputs.require-block-exotic-subdeps }}
+        INPUT_MINIMUM_RELEASE_AGE_EXCLUDE: ${{ inputs.minimum-release-age-exclude }}
         INPUT_ENFORCE_RELEASE_AGE_VIA_REGISTRY: ${{ inputs.enforce-release-age-via-registry }}
         INPUT_PNPM_MIN_VERSION: ${{ inputs.pnpm-min-version }}
         INPUT_YARN_MIN_VERSION: ${{ inputs.yarn-min-version }}
