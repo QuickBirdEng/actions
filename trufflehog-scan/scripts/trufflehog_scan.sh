@@ -72,12 +72,32 @@ ARGS="--only-verified --no-update --json"
 
 # ── Run scan ──────────────────────────────────────────────────────────────────
 OUTFILE="$TMPDIR/findings.json"
+ERRFILE="$TMPDIR/scan.err"
 
+# GIT_LFS_SKIP_SMUDGE: trufflehog re-clones the repo into a temp dir and
+# inherits the workspace's LFS config. With a broken/missing LFS pointer
+# (e.g. dangling LFS object) the clone's checkout step fails and the scan
+# never runs. LFS blobs are binary — irrelevant for secret-scanning text
+# history — so skip smudge unconditionally.
+set +e
+GIT_LFS_SKIP_SMUDGE=1 \
 "$TRUFFLEHOG" git \
     "file://$GITHUB_WORKSPACE" \
     --since-commit="$BASE" \
     --branch="$HEAD_SHA" \
-    $ARGS > "$OUTFILE" || true
+    $ARGS > "$OUTFILE" 2> "$ERRFILE"
+SCAN_EXIT=$?
+set -e
+
+# If trufflehog itself errored, surface that loudly rather than reporting a
+# false "no secrets detected". A failed scan is NOT a passing scan.
+if [[ $SCAN_EXIT -ne 0 ]]; then
+    echo "::error::TruffleHog scan failed with exit code $SCAN_EXIT — see stderr below. This is NOT a passing scan."
+    echo "----- TruffleHog stderr -----"
+    cat "$ERRFILE"
+    echo "----- end -----"
+    exit "$SCAN_EXIT"
+fi
 
 # ── Emit annotations ──────────────────────────────────────────────────────────
 python3 - "$OUTFILE" << 'PYEOF'
