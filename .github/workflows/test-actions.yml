@@ -1,0 +1,16 @@
+name: Test actions
+
+on:
+  pull_request:
+  push:
+    paths:
+      - "js-supply-chain-check/**"
+      - "test-repo/**"
+
+jobs:
+  test-js-supply-chain:
+    runs-on: [default-k8s-runner]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bats-core/bats-action@2
+      - run: bats js-supply-chain-check/tests/

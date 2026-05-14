@@ -1268,6 +1268,8 @@ elif ! $HAS_PYYAML; then
 fi
 echo ""
 
+[[ "${_JS_SC_TESTING:-}" == "1" ]] && return 0
+
 # Discover lockfiles. -not -path "*/node_modules/*" is a fast pruning shortcut;
 # should_exclude() does the authoritative filtering below.
 LOCKFILES=()
