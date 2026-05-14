@@ -2,10 +2,23 @@
 set -euo pipefail
 
 # ── Resolve base commit ──────────────────────────────────────────────────────
+# Order of precedence:
+#   1. INPUT_BASE if provided and non-zero (workflow caller passed it).
+#   2. origin/$GITHUB_BASE_REF if set (typical pull_request event).
+#   3. HEAD~1 if it exists (push event with at least one parent).
+#   4. Empty — scan full history (first commit on a brand-new branch).
+ZERO_SHA="0000000000000000000000000000000000000000"
 BASE="${INPUT_BASE:-}"
-if [[ -z "$BASE" ]]; then
-    REF="${GITHUB_BASE_REF:-$DEFAULT_BRANCH}"
-    BASE="$(git rev-parse "origin/$REF")"
+if [[ -z "$BASE" || "$BASE" == "$ZERO_SHA" ]]; then
+    if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+        BASE="$(git rev-parse "origin/$GITHUB_BASE_REF")"
+    elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+        BASE="$(git rev-parse HEAD~1)"
+        echo "::notice::No explicit base supplied; scanning since HEAD~1 ($BASE)."
+    else
+        BASE=""
+        echo "::notice::No parent commit reachable; scanning full git history."
+    fi
 fi
 
 HEAD_SHA="$(git rev-parse HEAD)"
@@ -79,11 +92,14 @@ ERRFILE="$TMPDIR/scan.err"
 # (e.g. dangling LFS object) the clone's checkout step fails and the scan
 # never runs. LFS blobs are binary — irrelevant for secret-scanning text
 # history — so skip smudge unconditionally.
+SINCE_ARGS=""
+[[ -n "$BASE" ]] && SINCE_ARGS="--since-commit=$BASE"
+
 set +e
 GIT_LFS_SKIP_SMUDGE=1 \
 "$TRUFFLEHOG" git \
     "file://$GITHUB_WORKSPACE" \
-    --since-commit="$BASE" \
+    $SINCE_ARGS \
     --branch="$HEAD_SHA" \
     $ARGS > "$OUTFILE" 2> "$ERRFILE"
 SCAN_EXIT=$?
