@@ -14,6 +14,18 @@ is_true() {
     [[ "$val" == "true" || "$val" == "1" || "$val" == "yes" || "$val" == "y" ]]
 }
 
+# Convert a duration string to minutes.
+# Accepts: Nd (days), Nh (hours), Nm or plain N (minutes, default unit).
+# Echoes integer minutes, or empty string if the format is unrecognised.
+parse_duration_minutes() {
+    local val="${1:-}"
+    if   [[ "$val" =~ ^([0-9]+)[dD]$ ]]; then echo $(( ${BASH_REMATCH[1]} * 1440 ))
+    elif [[ "$val" =~ ^([0-9]+)[hH]$ ]]; then echo $(( ${BASH_REMATCH[1]} * 60 ))
+    elif [[ "$val" =~ ^([0-9]+)[mM]?$ ]]; then echo "${BASH_REMATCH[1]}"
+    else echo ""
+    fi
+}
+
 # Split comma/newline list into a sorted, deduped, newline-separated list.
 # Strips trailing yaml-style ` # comment` so workflow callers can annotate
 # each entry with a CVE / reviewer note in their security.yml.
@@ -829,23 +841,38 @@ ${WHY_MIN_RELEASE_AGE}
 ${FIX_MIN_RELEASE_AGE_PNPM}" \
                 "${project_label}/.npmrc" \
                 "add line: minimum-release-age=${MIN_RELEASE_AGE_MINUTES}"
-        elif [[ "$age_val" =~ ^[0-9]+$ ]] && (( age_val < MIN_RELEASE_AGE_MINUTES )); then
+        else
+            local age_minutes
+            age_minutes="$(parse_duration_minutes "$age_val")"
             local line file
             if [[ -n "$age_npmrc" ]]; then
                 line="$(npmrc_line "$npmrc" "minimum-release-age")"; file="${project_label}/.npmrc"
             else
                 line="$(yaml_line "$workspace_yaml" "minimumReleaseAge")"; file="${project_label}/pnpm-workspace.yaml"
             fi
-            report_finding error "$project_label" "pnpm" \
-                "$file" "${line:-1}" \
-                "minimumReleaseAge=${age_val} is below required ${MIN_RELEASE_AGE_MINUTES} min" \
-                "FOUND: ${file} sets minimumReleaseAge to ${age_val} minutes. Required minimum is ${MIN_RELEASE_AGE_MINUTES} minutes ($((MIN_RELEASE_AGE_MINUTES/1440)) days).
+            if [[ -z "$age_minutes" ]]; then
+                report_finding warning "$project_label" "pnpm" \
+                    "$file" "${line:-1}" \
+                    "minimumReleaseAge='${age_val}' — unrecognised format, cannot validate threshold" \
+                    "FOUND: ${file} sets minimumReleaseAge to '${age_val}'. Expected a plain integer (minutes) or a duration string (e.g. 7d, 24h). Cannot verify the configured value meets the required ${MIN_RELEASE_AGE_MINUTES} min ($((MIN_RELEASE_AGE_MINUTES/1440)) days) threshold.
+
+${FIX_MIN_RELEASE_AGE_PNPM}" \
+                    "$file" \
+                    "use a recognisable duration: minimum-release-age=${MIN_RELEASE_AGE_MINUTES} (or 7d)"
+            elif (( age_minutes < MIN_RELEASE_AGE_MINUTES )); then
+                local display="${age_val}"
+                [[ "$age_val" != "$age_minutes" ]] && display="${age_val} (${age_minutes} min)"
+                report_finding error "$project_label" "pnpm" \
+                    "$file" "${line:-1}" \
+                    "minimumReleaseAge=${display} is below required ${MIN_RELEASE_AGE_MINUTES} min" \
+                    "FOUND: ${file} sets minimumReleaseAge to ${display}. Required minimum is ${MIN_RELEASE_AGE_MINUTES} minutes ($((MIN_RELEASE_AGE_MINUTES/1440)) days).
 
 ${WHY_MIN_RELEASE_AGE}
 
 ${FIX_MIN_RELEASE_AGE_PNPM}" \
-                "$file" \
-                "raise minimumReleaseAge to at least ${MIN_RELEASE_AGE_MINUTES}"
+                    "$file" \
+                    "raise minimumReleaseAge to at least ${MIN_RELEASE_AGE_MINUTES}"
+            fi
         fi
     fi
 
@@ -1005,19 +1032,34 @@ ${WHY_MIN_RELEASE_AGE}
 ${FIX_MIN_RELEASE_AGE_YARN_BERRY}" \
                     "${project_label}/.yarnrc.yml" \
                     "add line: npmMinimalAgeGate: ${MIN_RELEASE_AGE_MINUTES}"
-            elif [[ "$age_yaml" =~ ^[0-9]+$ ]] && (( age_yaml < MIN_RELEASE_AGE_MINUTES )); then
+            else
+                local age_minutes
+                age_minutes="$(parse_duration_minutes "$age_yaml")"
                 local line
                 line="$(yaml_line "$yarnrc_yml" "npmMinimalAgeGate")"
-                report_finding error "$project_label" "$flavour" \
-                    "${project_label}/.yarnrc.yml" "${line:-1}" \
-                    "npmMinimalAgeGate=${age_yaml} is below required ${MIN_RELEASE_AGE_MINUTES} min" \
-                    "FOUND: ${project_label}/.yarnrc.yml sets npmMinimalAgeGate to ${age_yaml} minutes. Required minimum is ${MIN_RELEASE_AGE_MINUTES}.
+                if [[ -z "$age_minutes" ]]; then
+                    report_finding warning "$project_label" "$flavour" \
+                        "${project_label}/.yarnrc.yml" "${line:-1}" \
+                        "npmMinimalAgeGate='${age_yaml}' — unrecognised format, cannot validate threshold" \
+                        "FOUND: ${project_label}/.yarnrc.yml sets npmMinimalAgeGate to '${age_yaml}'. Expected a plain integer (minutes) or a duration string (e.g. 7d, 24h, 10080). Cannot verify the configured value meets the required ${MIN_RELEASE_AGE_MINUTES} min ($((MIN_RELEASE_AGE_MINUTES/1440)) days) threshold.
+
+${FIX_MIN_RELEASE_AGE_YARN_BERRY}" \
+                        "${project_label}/.yarnrc.yml" \
+                        "use a recognisable duration: npmMinimalAgeGate: ${MIN_RELEASE_AGE_MINUTES} (or 7d)"
+                elif (( age_minutes < MIN_RELEASE_AGE_MINUTES )); then
+                    local display="${age_yaml}"
+                    [[ "$age_yaml" != "$age_minutes" ]] && display="${age_yaml} (${age_minutes} min)"
+                    report_finding error "$project_label" "$flavour" \
+                        "${project_label}/.yarnrc.yml" "${line:-1}" \
+                        "npmMinimalAgeGate=${display} is below required ${MIN_RELEASE_AGE_MINUTES} min" \
+                        "FOUND: ${project_label}/.yarnrc.yml sets npmMinimalAgeGate to ${display}. Required minimum is ${MIN_RELEASE_AGE_MINUTES} minutes ($((MIN_RELEASE_AGE_MINUTES/1440)) days).
 
 ${WHY_MIN_RELEASE_AGE}
 
 ${FIX_MIN_RELEASE_AGE_YARN_BERRY}" \
-                    "${project_label}/.yarnrc.yml" \
-                    "raise npmMinimalAgeGate to at least ${MIN_RELEASE_AGE_MINUTES}"
+                        "${project_label}/.yarnrc.yml" \
+                        "raise npmMinimalAgeGate to at least ${MIN_RELEASE_AGE_MINUTES}"
+                fi
             fi
         elif ! is_true "$ENFORCE_RELEASE_AGE_VIA_REGISTRY"; then
             # yarn-classic OR yarn-berry < YARN_MIN_VERSION → hard-fail with

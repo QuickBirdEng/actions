@@ -131,6 +131,43 @@ setup() {
     [ "$result" = "0" ]
 }
 
+# ── parse_duration_minutes ────────────────────────────────────────────────────
+
+@test "parse_duration_minutes: plain integer treated as minutes" {
+    result="$(parse_duration_minutes "10080")"
+    [ "$result" = "10080" ]
+}
+
+@test "parse_duration_minutes: Nd converts days to minutes" {
+    result="$(parse_duration_minutes "7d")"
+    [ "$result" = "10080" ]
+}
+
+@test "parse_duration_minutes: 1d = 1440 minutes" {
+    result="$(parse_duration_minutes "1d")"
+    [ "$result" = "1440" ]
+}
+
+@test "parse_duration_minutes: Nh converts hours to minutes" {
+    result="$(parse_duration_minutes "24h")"
+    [ "$result" = "1440" ]
+}
+
+@test "parse_duration_minutes: Nm suffix treated as minutes" {
+    result="$(parse_duration_minutes "60m")"
+    [ "$result" = "60" ]
+}
+
+@test "parse_duration_minutes: unrecognised format returns empty string" {
+    result="$(parse_duration_minutes "1w")"
+    [ -z "$result" ]
+}
+
+@test "parse_duration_minutes: empty input returns empty string" {
+    result="$(parse_duration_minutes "")"
+    [ -z "$result" ]
+}
+
 # ── normalize_csv ─────────────────────────────────────────────────────────────
 
 @test "normalize_csv: collapses multiple commas" {

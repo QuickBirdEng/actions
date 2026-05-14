@@ -52,6 +52,23 @@ load "setup.bash"
     [[ "$output" == *"::error"* ]]
 }
 
+# ── pnpm-age-too-low ─────────────────────────────────────────────────────────
+
+@test "pnpm-age-too-low: exits 1 when minimumReleaseAge is set but below threshold" {
+    run_script "pnpm-age-too-low"
+    [ "$status" -eq 1 ]
+}
+
+@test "pnpm-age-too-low: emits ::error naming the actual value and required value" {
+    run_script "pnpm-age-too-low"
+    [[ "$output" == *"minimumReleaseAge=60 is below required 10080"* ]]
+}
+
+@test "pnpm-age-too-low: reports 1 error in summary" {
+    run_script "pnpm-age-too-low"
+    [[ "$output" == *"Errors:           1"* ]]
+}
+
 # ── pnpm-old-version ──────────────────────────────────────────────────────────
 
 @test "pnpm-old-version: exits 1" {
