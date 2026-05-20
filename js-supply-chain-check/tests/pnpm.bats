@@ -37,8 +37,7 @@ load "setup.bash"
 
 @test "pnpm-missing-age: emits ::warning for missing blockExoticSubdeps" {
     run_script "pnpm-missing-age"
-    [[ "$output" == *"blockExoticSubdeps"* ]]
-    [[ "$output" == *"::warning"* ]]
+    echo "$output" | grep -q '::warning.*blockExoticSubdeps'
 }
 
 @test "pnpm-missing-age: reports 2 errors in summary" {
@@ -61,7 +60,7 @@ load "setup.bash"
 
 @test "pnpm-age-too-low: emits ::error naming the actual value and required value" {
     run_script "pnpm-age-too-low"
-    [[ "$output" == *"minimumReleaseAge=60 is below required 10080"* ]]
+    [[ "$output" == *"minimumReleaseAge=60 is below required 4320"* ]]
 }
 
 @test "pnpm-age-too-low: reports 1 error in summary" {

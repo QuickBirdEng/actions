@@ -30,7 +30,7 @@ load "setup.bash"
 
 @test "yarn-berry-age-too-low: emits ::error naming the actual value and required value" {
     run_script "yarn-berry-age-too-low"
-    [[ "$output" == *"npmMinimalAgeGate=60 is below required 10080"* ]]
+    [[ "$output" == *"npmMinimalAgeGate=60 is below required 4320"* ]]
 }
 
 @test "yarn-berry-age-too-low: reports 1 error in summary" {
@@ -47,10 +47,10 @@ load "setup.bash"
 
 @test "yarn-berry-age-duration: emits ::error with raw value and converted minutes" {
     run_script "yarn-berry-age-duration"
-    [[ "$output" == *"npmMinimalAgeGate=1d (1440 min) is below required 10080"* ]]
+    [[ "$output" == *"npmMinimalAgeGate=1d (1440 min) is below required 4320"* ]]
 }
 
-# ── yarn-berry-414-duration-ok (7d = 10080 min passes threshold) ──────────────
+# ── yarn-berry-414-duration-ok (7d = 10080 min, above 3d = 4320 min threshold) ──
 
 @test "yarn-berry-414-duration-ok: exits 0 when npmMinimalAgeGate is set as 7d" {
     run_script "yarn-berry-414-duration-ok"

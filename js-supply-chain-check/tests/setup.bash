@@ -7,6 +7,7 @@ run_script() {
     run env \
         INPUT_SEARCH_DIRECTORY="${FIXTURES}/${fixture}" \
         INPUT_FAIL_ON_FOUND="${FAIL_ON_FOUND:-true}" \
+        INPUT_MINIMUM_RELEASE_AGE_MINUTES="${INPUT_MINIMUM_RELEASE_AGE_MINUTES:-4320}" \
         "${@}" \
         bash "$SCRIPT"
 }
