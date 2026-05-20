@@ -12,9 +12,8 @@ inputs:
     required: false
     default: ''
   minimum-release-age-minutes:
-    description: 'Required quarantine period in minutes for newly published package versions (pnpm `minimumReleaseAge`). Default 10080 (7 days). Set to 0 to disable the check.'
-    required: false
-    default: '10080'
+    description: 'Required quarantine period in minutes for newly published package versions (pnpm `minimumReleaseAge`). Set to 0 to disable the check.'
+    required: true
   allow-builds:
     description: |
       Newline- or comma-separated list of package names allowed to run install/lifecycle scripts.

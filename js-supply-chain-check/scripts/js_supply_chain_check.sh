@@ -41,7 +41,7 @@ split_list() {
 SEARCH_DIR="${INPUT_SEARCH_DIRECTORY:-.}"
 EXCLUDE_DEFAULTS=".git/**,node_modules/**,.idea/**,build/**,dist/**"
 EXCLUDE_CSV="$(normalize_csv "${EXCLUDE_DEFAULTS}${INPUT_EXCLUDE:+,${INPUT_EXCLUDE}}")"
-MIN_RELEASE_AGE_MINUTES="${INPUT_MINIMUM_RELEASE_AGE_MINUTES:-10080}"
+MIN_RELEASE_AGE_MINUTES="${INPUT_MINIMUM_RELEASE_AGE_MINUTES}"
 ALLOW_BUILDS_RAW="${INPUT_ALLOW_BUILDS:-}"
 CHECK_INSTALL_SCRIPTS="${INPUT_CHECK_INSTALL_SCRIPTS:-true}"
 REQUIRE_BLOCK_EXOTIC="${INPUT_REQUIRE_BLOCK_EXOTIC_SUBDEPS:-true}"
@@ -124,9 +124,11 @@ WHY_BLOCK_EXOTIC=$'WHY THIS MATTERS:\n  An "exotic" dependency is anything resol
 
 WHY_ALLOW_BUILDS=$'WHY THIS MATTERS:\n  npm/pnpm/yarn run lifecycle scripts (preinstall, install, postinstall) of\n  dependencies by default. A compromised package can execute arbitrary code on\n  every developer machine and every CI runner that does `npm install` — before\n  any of your code runs, before any test gate. The 2024 ua-parser-js, 2018\n  event-stream, and 2025 nx attacks all relied on this.\n  Disable install scripts by default; explicitly whitelist the small set of\n  packages (e.g. esbuild, sharp, node-sass) that legitimately need to build\n  native binaries.'
 
-FIX_MIN_RELEASE_AGE_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc at the project root:\n    minimum-release-age=10080\n    minimum-release-age-exclude=\n  OR add to pnpm-workspace.yaml:\n    minimumReleaseAge: 10080\n  See: https://pnpm.io/settings#minimumreleaseage'
+printf -v FIX_MIN_RELEASE_AGE_PNPM 'HOW TO FIX (pnpm):\n  Add to .npmrc at the project root:\n    minimum-release-age=%d\n    minimum-release-age-exclude=\n  OR add to pnpm-workspace.yaml:\n    minimumReleaseAge: %d\n  See: https://pnpm.io/settings#minimumreleaseage' \
+    "${MIN_RELEASE_AGE_MINUTES}" "${MIN_RELEASE_AGE_MINUTES}"
 
-FIX_MIN_RELEASE_AGE_OTHER=$'HOW TO FIX — migrate to a package manager that enforces this natively:\n\n  OPTION A — yarn 4.14+ (least disruptive for yarn projects):\n    Yarn 4.10 introduced `npmMinimalAgeGate` (full support 4.12+);\n    Yarn 4.14 added `approvedGitRepositories` (the block-exotic-subdeps\n    equivalent). Both run at install time.\n\n      corepack enable\n      yarn set version 4.14.0\n\n    Then add to .yarnrc.yml:\n      npmMinimalAgeGate: 10080         # 7 days, minutes\n      approvedGitRepositories: []      # empty = block all git deps\n      enableScripts: false             # disable install scripts\n\n  OPTION B — pnpm 10+ (full pnpm parity):\n    pnpm 10 enforces all three settings natively.\n\n      npx @pnpm/exe@latest import      # imports yarn.lock → pnpm-lock.yaml\n\n    Set in package.json:\n      "packageManager": "pnpm@10.x.y"\n      "pnpm": { "onlyBuiltDependencies": [] }\n\n    Add .npmrc:\n      minimum-release-age=10080\n      block-exotic-subdeps=true\n\n    Update CI to `pnpm install --frozen-lockfile`.'
+printf -v FIX_MIN_RELEASE_AGE_OTHER 'HOW TO FIX — migrate to a package manager that enforces this natively:\n\n  OPTION A — yarn 4.14+ (least disruptive for yarn projects):\n    Yarn 4.10 introduced `npmMinimalAgeGate` (full support 4.12+);\n    Yarn 4.14 added `approvedGitRepositories` (the block-exotic-subdeps\n    equivalent). Both run at install time.\n\n      corepack enable\n      yarn set version 4.14.0\n\n    Then add to .yarnrc.yml:\n      npmMinimalAgeGate: %d         # %d days, minutes\n      approvedGitRepositories: []      # empty = block all git deps\n      enableScripts: false             # disable install scripts\n\n  OPTION B — pnpm 10+ (full pnpm parity):\n    pnpm 10 enforces all three settings natively.\n\n      npx @pnpm/exe@latest import      # imports yarn.lock → pnpm-lock.yaml\n\n    Set in package.json:\n      "packageManager": "pnpm@10.x.y"\n      "pnpm": { "onlyBuiltDependencies": [] }\n\n    Add .npmrc:\n      minimum-release-age=%d\n      block-exotic-subdeps=true\n\n    Update CI to `pnpm install --frozen-lockfile`.' \
+    "${MIN_RELEASE_AGE_MINUTES}" "$((MIN_RELEASE_AGE_MINUTES/1440))" "${MIN_RELEASE_AGE_MINUTES}"
 
 FIX_BLOCK_EXOTIC_PNPM=$'HOW TO FIX (pnpm):\n  Add to .npmrc:\n    block-exotic-subdeps=true\n  OR add to pnpm-workspace.yaml:\n    blockExoticSubdeps: true\n  See: https://pnpm.io/settings#blockexoticsubdeps'
 
@@ -140,7 +142,8 @@ FIX_ALLOW_BUILDS_YARN_CLASSIC=$'HOW TO FIX (yarn 1.x classic):\n  Add to .yarnrc
 
 FIX_ALLOW_BUILDS_YARN_BERRY=$'HOW TO FIX (yarn berry / 2+):\n  Add to .yarnrc.yml:\n    enableScripts: false\n  See: https://yarnpkg.com/configuration/yarnrc#enableScripts'
 
-FIX_MIN_RELEASE_AGE_YARN_BERRY=$'HOW TO FIX (yarn 4.10+, full support 4.12+):\n  Add to .yarnrc.yml:\n    npmMinimalAgeGate: 10080      # 7 days, in minutes\n    npmPreapprovedPackages:  # optional whitelist for exemptions\n      []\n  See: https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate'
+printf -v FIX_MIN_RELEASE_AGE_YARN_BERRY 'HOW TO FIX (yarn 4.10+, full support 4.12+):\n  Add to .yarnrc.yml:\n    npmMinimalAgeGate: %d      # %d days, in minutes\n    npmPreapprovedPackages:  # optional whitelist for exemptions\n      []\n  See: https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate' \
+    "${MIN_RELEASE_AGE_MINUTES}" "$((MIN_RELEASE_AGE_MINUTES/1440))"
 
 FIX_BLOCK_EXOTIC_YARN_BERRY=$'HOW TO FIX (yarn 4.14+):\n  Add to .yarnrc.yml:\n    approvedGitRepositories: []\n  An empty list blocks ALL git/tarball deps. Whitelist specific hosts:\n    approvedGitRepositories:\n      - https://github.com/yourorg/*\n  See: https://yarnpkg.com/configuration/yarnrc#approvedGitRepositories'
 
@@ -348,8 +351,12 @@ pnpm_lock_exotic() {
 yarn_lock_exotic() {
     local file="$1"
     [[ -f "$file" ]] || return 0
-    grep -nE '^[[:space:]]*resolved[[:space:]]+"(git\+|git://|ssh://|github:|file:|link:|portal:|npm:)' "$file" 2>/dev/null \
-        | head -50 || true
+    {
+        # classic lockfile: resolved "git+..."
+        grep -nE '^[[:space:]]*resolved[[:space:]]+"(git\+|git://|ssh://|github:|file:|link:|portal:|npm:)' "$file" 2>/dev/null
+        # berry lockfile: resolution: "pkg@git+..."
+        grep -nE '^[[:space:]]*resolution:[[:space:]]+"[^"]*@(git\+|git://|ssh://|github:|file:|link:|portal:)' "$file" 2>/dev/null
+    } | head -50 || true
 }
 
 # Find exotic resolutions in package-lock.json. Streams a Python parser.
