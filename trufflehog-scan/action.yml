@@ -17,6 +17,14 @@ inputs:
     description: 'Path to a file listing paths to include in the scan.'
     required: false
     default: ''
+  annotations:
+    description: 'Emit GitHub annotations for each finding. Set to "false" to suppress annotations and handle them yourself.'
+    required: false
+    default: 'true'
+  output-file:
+    description: 'Path to write raw TruffleHog JSON findings. If set, the findings file is copied here before cleanup so callers can post-process results.'
+    required: false
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -27,4 +35,6 @@ runs:
         INPUT_BASE: ${{ inputs.base }}
         INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
         INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
+        INPUT_ANNOTATIONS: ${{ inputs.annotations }}
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
       run: bash "$GITHUB_ACTION_PATH/scripts/trufflehog_scan.sh"
