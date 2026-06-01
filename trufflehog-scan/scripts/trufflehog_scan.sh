@@ -100,7 +100,13 @@ if [[ $SCAN_EXIT -ne 0 ]]; then
     exit "$SCAN_EXIT"
 fi
 
+# ── Copy findings to caller-specified output file (before cleanup) ────────────
+if [[ -n "${INPUT_OUTPUT_FILE:-}" ]]; then
+    cp "$OUTFILE" "$INPUT_OUTPUT_FILE"
+fi
+
 # ── Emit annotations ──────────────────────────────────────────────────────────
+if [[ "${INPUT_ANNOTATIONS:-true}" == "true" ]]; then
 python3 - "$OUTFILE" << 'PYEOF'
 import sys, json
 
@@ -142,3 +148,13 @@ if count > 0:
 else:
     print("No secrets detected.")
 PYEOF
+else
+    # annotations disabled — still exit non-zero if findings exist
+    if [[ -s "$OUTFILE" ]]; then
+        COUNT=$(grep -c . "$OUTFILE" || true)
+        echo "TruffleHog found $COUNT secret(s). Annotations suppressed (annotations=false)."
+        exit 1
+    else
+        echo "No secrets detected."
+    fi
+fi
