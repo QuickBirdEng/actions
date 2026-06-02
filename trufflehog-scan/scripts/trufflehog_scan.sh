@@ -14,8 +14,23 @@ trap 'rm -rf "$TMPDIR"' EXIT
 # ── Resolve TruffleHog version ───────────────────────────────────────────────
 VERSION="${INPUT_VERSION:-}"
 if [[ -z "$VERSION" ]]; then
-    VERSION=$(curl -sSf "https://api.github.com/repos/trufflesecurity/trufflehog/releases/latest" \
-        | python3 -c "import sys, json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))")
+    MIN_AGE_DAYS="${INPUT_MIN_AGE_DAYS:-3}"
+    VERSION=$(curl -sSf "https://api.github.com/repos/trufflesecurity/trufflehog/releases?per_page=30" \
+        | python3 -c "
+import sys, json
+from datetime import datetime, timezone, timedelta
+min_age = int('${MIN_AGE_DAYS}')
+cutoff = datetime.now(timezone.utc) - timedelta(days=min_age)
+for r in json.load(sys.stdin):
+    if r.get('draft') or r.get('prerelease'):
+        continue
+    published = datetime.fromisoformat(r['published_at'].replace('Z', '+00:00'))
+    if published <= cutoff:
+        print(r['tag_name'].lstrip('v'))
+        sys.exit(0)
+print(f'No TruffleHog release is at least {min_age} day(s) old.', file=sys.stderr)
+sys.exit(1)
+")
 fi
 
 ARCH=$(uname -m)
