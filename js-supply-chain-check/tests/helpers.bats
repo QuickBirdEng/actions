@@ -5,6 +5,7 @@ load "setup.bash"
 setup() {
     _JS_SC_TESTING=1 \
     INPUT_SEARCH_DIRECTORY="${FIXTURES}/pnpm-ok" \
+    INPUT_MINIMUM_RELEASE_AGE_MINUTES="4320" \
         source "$SCRIPT"
     set +e +u +o pipefail
 }
