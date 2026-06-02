@@ -2,9 +2,13 @@ name: 'TruffleHog Scan'
 description: 'Scans for verified secrets using TruffleHog OSS.'
 inputs:
   version:
-    description: 'TruffleHog version to download (e.g. "3.88.1"). Defaults to the latest release.'
+    description: 'TruffleHog version to download (e.g. "3.88.1"). Defaults to the newest release that is at least minimum-age-days old.'
     required: false
     default: ''
+  minimum-age-days:
+    description: 'Minimum age in days a release must be before it is auto-selected. Ignored when version is explicitly set. Default: 3.'
+    required: false
+    default: '3'
   base:
     description: 'Base commit SHA or ref to scan from. Leave empty to scan the full git history.'
     required: false
@@ -32,6 +36,7 @@ runs:
       shell: bash
       env:
         INPUT_VERSION: ${{ inputs.version }}
+        INPUT_MIN_AGE_DAYS: ${{ inputs.minimum-age-days }}
         INPUT_BASE: ${{ inputs.base }}
         INPUT_EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
         INPUT_INCLUDE_PATHS: ${{ inputs.include-paths }}
