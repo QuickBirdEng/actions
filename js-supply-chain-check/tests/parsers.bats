@@ -261,6 +261,22 @@ EOF
     [ -z "$result" ]
 }
 
+@test "yarn_lock_exotic: detects git+ resolution in berry lockfile" {
+    cat > "$D/yarn.lock" <<'EOF'
+__metadata:
+  version: 8
+
+"shady-fork@git+https://github.com/attacker/repo.git":
+  version: 0.0.0
+  resolution: "shady-fork@git+https://github.com/attacker/repo.git#commit=abc123"
+  languageName: node
+  linkType: hard
+EOF
+    result="$(yarn_lock_exotic "$D/yarn.lock")"
+    [ -n "$result" ]
+    [[ "$result" == *"git+"* ]]
+}
+
 @test "yarn_lock_exotic: returns empty for missing file" {
     result="$(yarn_lock_exotic "$D/nonexistent.lock")"
     [ -z "$result" ]
@@ -284,6 +300,17 @@ EOF
 @test "pnpm_get_release_age_exclude: returns empty when .npmrc does not exist" {
     result="$(pnpm_get_release_age_exclude "$D")"
     [ -z "$result" ]
+}
+
+@test "pnpm_get_release_age_exclude: reads minimumReleaseAgeExclude from pnpm-workspace.yaml" {
+    cat > "$D/pnpm-workspace.yaml" <<'EOF'
+minimumReleaseAgeExclude:
+  - lodash
+  - express
+EOF
+    result="$(pnpm_get_release_age_exclude "$D")"
+    [[ "$result" == *"lodash"* ]]
+    [[ "$result" == *"express"* ]]
 }
 
 # ── yarn_berry_get_release_age_exclude ────────────────────────────────────────
@@ -340,6 +367,12 @@ EOF
 @test "detect_pnpm_version: packageManager takes precedence over .tool-versions" {
     printf '{"packageManager":"pnpm@10.4.0"}\n' > "$D/package.json"
     printf 'pnpm 8.0.0\n' > "$D/.tool-versions"
+    result="$(detect_pnpm_version "$D")"
+    [ "$result" = "10.4.0" ]
+}
+
+@test "detect_pnpm_version: reads version from engines.pnpm field" {
+    printf '{"engines":{"pnpm":">=10.4.0"}}\n' > "$D/package.json"
     result="$(detect_pnpm_version "$D")"
     [ "$result" = "10.4.0" ]
 }
