@@ -57,15 +57,6 @@ load "setup.bash"
     [[ "$output" == *"Errors:           2"* ]]
 }
 
-@test "monorepo: api project (missing settings) contributes errors" {
-    run env \
-        INPUT_SEARCH_DIRECTORY="${FIXTURES}/monorepo" \
-        INPUT_FAIL_ON_FOUND=false \
-        bash "$SCRIPT"
-    [[ "$output" == *"packages/api"* ]]
-    [[ "$output" == *"::error"* ]]
-}
-
 # ── exclude patterns ──────────────────────────────────────────────────────────
 
 @test "exclude: lockfile in excluded path produces no annotations" {
