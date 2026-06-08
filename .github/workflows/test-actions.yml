@@ -6,6 +6,7 @@ on:
     paths:
       - "js-supply-chain-check/**"
       - "test-repo/**"
+      - "trufflehog-merge-excludes/**"
 
 jobs:
   test-js-supply-chain:
@@ -14,3 +15,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: bats-core/bats-action@2
       - run: bats js-supply-chain-check/tests/
+
+  test-trufflehog-merge-excludes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mikefarah/yq@v4.53.2
+      - uses: bats-core/bats-action@2
+      - run: bats trufflehog-merge-excludes/tests/

@@ -1,0 +1,3 @@
+paths: []
+acknowledged_findings:
+  - { commit: "abc123", path: some/file.ts }

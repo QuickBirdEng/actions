@@ -1,0 +1,27 @@
+name: 'TruffleHog Merge Excludes'
+description: 'Merges caller-provided and consumer-side TruffleHog exclude-paths into a single file. Reads .qb/security/trufflehog-ignores.yaml from the checked-out repo.'
+inputs:
+  base-exclude-paths:
+    description: 'Path to an existing exclude-paths file to merge with consumer paths. Optional.'
+    required: false
+    default: ''
+  consumer-file:
+    description: 'Path to the consumer TruffleHog ignore YAML file.'
+    required: false
+    default: '.qb/security/trufflehog-ignores.yaml'
+outputs:
+  file:
+    description: 'Path to the merged exclude-paths file, or empty string if no patterns found.'
+    value: ${{ steps.merge.outputs.file }}
+runs:
+  using: 'composite'
+  steps:
+    - uses: mikefarah/yq@v4.53.2
+
+    - name: Merge exclude paths
+      id: merge
+      shell: bash
+      env:
+        INPUT_BASE_EXCLUDE_PATHS: ${{ inputs.base-exclude-paths }}
+        INPUT_CONSUMER_FILE: ${{ inputs.consumer-file }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/merge_excludes.sh"
