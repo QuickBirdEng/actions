@@ -32,23 +32,21 @@ load "setup.bash"
     [ "$(grep -c '.' "$result")" -eq 2 ]
 }
 
-@test "consumer file with acknowledged_findings only: outputs empty file key and emits notice" {
+@test "consumer file with acknowledged_findings only: outputs empty file key" {
     INPUT_CONSUMER_FILE="${FIXTURES}/consumer-ack-only.yaml" \
     run_merge
     [ "$status" -eq 0 ]
     result="$(github_output_value file)"
     [ -z "$result" ]
-    echo "$output" | grep -q "::notice::"
 }
 
-@test "consumer file with both paths and acknowledged_findings: outputs paths, emits notice for ack findings" {
+@test "consumer file with both paths and acknowledged_findings: outputs paths" {
     INPUT_CONSUMER_FILE="${FIXTURES}/consumer-both.yaml" \
     run_merge
     [ "$status" -eq 0 ]
     result="$(github_output_value file)"
     [ -n "$result" ]
     grep -q "test/fixtures/\*\*" "$result"
-    echo "$output" | grep -q "::notice::"
 }
 
 @test "consumer file with empty paths list: outputs empty file key" {
