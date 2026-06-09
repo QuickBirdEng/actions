@@ -7,6 +7,7 @@ on:
       - "js-supply-chain-check/**"
       - "test-repo/**"
       - "trufflehog-merge-excludes/**"
+      - "trufflehog-filter-findings/**"
 
 jobs:
   test-js-supply-chain:
@@ -23,3 +24,13 @@ jobs:
       - uses: mikefarah/yq@v4.53.2
       - uses: bats-core/bats-action@2
       - run: bats trufflehog-merge-excludes/tests/
+
+  test-trufflehog-filter-findings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: pip install pytest pyyaml
+      - run: pytest trufflehog-filter-findings/tests/

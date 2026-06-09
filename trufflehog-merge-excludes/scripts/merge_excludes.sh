@@ -8,10 +8,6 @@ MERGED="${RUNNER_TEMP:-/tmp}/trufflehog-excludes-merged.txt"
 CONSUMER_PATHS=""
 if [ -f "$CONSUMER_FILE" ]; then
   CONSUMER_PATHS=$(yq '.paths[]' "$CONSUMER_FILE" 2>/dev/null || true)
-  ACK_COUNT=$(yq '.acknowledged_findings | length' "$CONSUMER_FILE" 2>/dev/null || echo "0")
-  if [ "${ACK_COUNT:-0}" != "0" ]; then
-    echo "::notice::acknowledged_findings in $CONSUMER_FILE are only applied in the nightly org-wide scan, not in PR scans"
-  fi
 fi
 
 if [ -n "$BASE_FILE" ] && [ -n "$CONSUMER_PATHS" ]; then
