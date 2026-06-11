@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+
+# This script needs bash >= 4.3 (declare -A) plus Linux-only tooling
+# (sha256sum, linux cosign/trufflehog binaries) and is only supported on
+# Linux runners. macOS ships bash 3.2 — fail fast with an actionable message.
+if [ "${BASH_VERSINFO[0]}" -lt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 3 ]; }; then
+    echo "::error::trufflehog-scan only supports Linux runners with bash >= 4.3 (this runner: $(uname -s), bash ${BASH_VERSION}). Route this job to a Linux runner label instead of bare 'self-hosted'."
+    exit 1
+fi
+
 set -euo pipefail
 
 # ── Resolve base commit ──────────────────────────────────────────────────────
