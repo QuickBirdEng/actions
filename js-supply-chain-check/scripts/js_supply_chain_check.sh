@@ -590,6 +590,27 @@ PY
     return 0
 }
 
+# Determine which yarn actually produced a yarn.lock, from the lockfile format
+# itself (ground truth, unlike packageManager / .yarnrc.yml which are only
+# declarations). Classic (yarn 1.x) lockfiles carry the literal
+# "# yarn lockfile v1" banner and have no __metadata block; berry (2+)
+# lockfiles open with a top-level "__metadata:" mapping. Echoes
+# "classic", "berry", or "" (missing / empty / unrecognised).
+detect_yarn_lockfile_kind() {
+    local file="$1" header
+    [[ -f "$file" ]] || return 0
+    # Both markers always live in the first handful of lines — bound the read so
+    # this stays cheap on large (100k+ line) lockfiles.
+    header="$(head -n 20 "$file" 2>/dev/null || true)"
+    if grep -qE '^# yarn lockfile v1' <<< "$header"; then
+        echo "classic"; return 0
+    fi
+    if grep -qE '^__metadata:' <<< "$header"; then
+        echo "berry"; return 0
+    fi
+    return 0
+}
+
 # ── registry-scan enforcement (yarn/npm/pnpm — actually checks publish dates) ─
 
 # Stream lockfile entries as "<name>\t<version>" lines.
@@ -1028,6 +1049,39 @@ check_yarn_project() {
         if [[ "$(version_cmp "$yarn_version" "$YARN_MIN_VERSION")" != "-1" ]]; then
             yarn_supports_native=true
         fi
+    fi
+
+    # 0b. Declared-vs-actual cross-check. Everything above (flavour, version,
+    #     yarn_supports_native) is derived from declarations: .yarnrc.yml's
+    #     presence and packageManager's value. Neither proves what `yarn install`
+    #     actually ran. The committed yarn.lock is the ground truth — a classic
+    #     (v1) lockfile means yarn 1.x produced the tree, and yarn 1.x reads
+    #     .yarnrc (not .yarnrc.yml), so npmMinimalAgeGate / approvedGitRepositories
+    #     / enableScripts were ALL silently ignored at install time, no matter how
+    #     correct the berry config looks. When the declaration claims a compliant
+    #     berry yarn (yarn_supports_native) but the lockfile says classic, the
+    #     whole config is a no-op: hard-fail with a specific, non-misleading error
+    #     and stop — the other sub-checks would only validate ignored settings.
+    if [[ "$yarn_supports_native" == "true" && "$(detect_yarn_lockfile_kind "$lockfile")" == "classic" ]]; then
+        report_finding error "$project_label" "$flavour" \
+            "${project_label}/yarn.lock" "2" \
+            "Declares yarn@${yarn_version} (berry) but yarn.lock is a classic v1 lockfile — install-time enforcement is NOT active" \
+            "FOUND: ${project_label}/package.json declares packageManager yarn@${yarn_version} and .yarnrc.yml carries the berry supply-chain settings, but ${project_label}/yarn.lock is a classic (yarn 1.x) lockfile ('# yarn lockfile v1'). yarn 1.x reads .yarnrc, NOT .yarnrc.yml, so npmMinimalAgeGate, approvedGitRepositories and enableScripts are silently ignored — none of the three policies are enforced when someone runs 'yarn install'. The committed lockfile is the ground truth for what actually ran, so the green-looking .yarnrc.yml is a no-op here.
+
+This almost always means corepack was not enabled (a global yarn 1.x shim shadowed the pinned version) the last time the lockfile was regenerated.
+
+${WHY_MIN_RELEASE_AGE}
+
+HOW TO FIX:
+  Regenerate the lockfile with the pinned berry yarn so its format matches the
+  declaration:
+      corepack enable
+      yarn install
+  Commit the resulting lockfile and confirm its header reads '__metadata:' /
+  'version: <n>' — NOT '# yarn lockfile v1'." \
+            "${project_label}/yarn.lock" \
+            "regenerate yarn.lock with the pinned yarn@${yarn_version} (corepack enable && yarn install) — current lockfile is classic v1"
+        return 0
     fi
 
     # 1. minimumReleaseAge
