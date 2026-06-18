@@ -119,3 +119,24 @@ load "setup.bash"
     [ "$status" -eq 1 ]
     [[ "$output" == *"yarn 1.x cannot enforce minimumReleaseAge"* ]]
 }
+
+# ── yarn-berry-declared-classic-lock ─────────────────────────────────────────
+# Declares yarn@4.17.0 + a fully-configured .yarnrc.yml, but commits a classic
+# (v1) yarn.lock — i.e. yarn 1.x actually produced the tree and silently ignored
+# every berry setting. The declaration would otherwise make the check pass.
+
+@test "yarn-berry-declared-classic-lock: exits 1 despite berry declaration" {
+    run_script "yarn-berry-declared-classic-lock"
+    [ "$status" -eq 1 ]
+}
+
+@test "yarn-berry-declared-classic-lock: emits ::error flagging the declared-vs-actual mismatch" {
+    run_script "yarn-berry-declared-classic-lock"
+    [[ "$output" == *"yarn.lock is a classic v1 lockfile"* ]]
+}
+
+@test "yarn-berry-declared-classic-lock: reports exactly 1 error and no false 'too old' message" {
+    run_script "yarn-berry-declared-classic-lock"
+    [[ "$output" == *"Errors:           1"* ]]
+    [[ "$output" != *"too old"* ]]
+}
