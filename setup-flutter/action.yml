@@ -56,7 +56,12 @@ runs:
       shell: bash -l {0}
       if: ${{ inputs.setup-gems == 'true' }}
       working-directory: ${{ inputs.working-directory }}
-      run: pod repo update && cd ios && pod install
+      run: |
+        if [ -f ios/Podfile ]; then
+          pod repo update && cd ios && pod install
+        else
+          echo "No ios/Podfile found (likely using Swift Package Manager); skipping pod install."
+        fi
     - name: Flutter version
       shell: bash
       run: flutter --version
