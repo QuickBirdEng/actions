@@ -20,7 +20,7 @@ runs:
   steps:
     - name: Copy scripts
       shell: bash
-      run: git clone git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
+      run: git clone --branch v1.0.0 git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
     - name: Validate SOUPs and optionally Generate PDFs
       shell: bash
       run: bash validate-soups-and-optionally-generate-pdfs.sh "${{ github.ref_type == 'tag' || inputs.generate-pdfs }}"
