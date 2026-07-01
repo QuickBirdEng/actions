@@ -45,12 +45,6 @@ runs:
       with:
         name: ${{ steps.name-generator.outputs.artifact-name }}
         artifact-path: ${{ inputs.artifact-path }}
-    - name: Upload Artifact to QB Spaces
-      uses: QuickBirdEng/actions/upload-artifact-qb@main
-      with:
-        access-key: ${{ inputs.access-key }}
-        secret-key: ${{ inputs.secret-key }}
-        artifact: ${{ steps.compress.outputs.artifact-path }}
     - name: Add Artifacts to Release Assets (Only for tags)
       if: ${{ github.ref_type == 'tag' }}
       uses: svenstaro/upload-release-action@v2
@@ -59,3 +53,9 @@ runs:
         file: ${{ steps.compress.outputs.artifact-path }}
         asset_name: ${{ steps.name-generator.outputs.artifact-name }}.tar.gz
         tag: ${{ github.ref }}
+    - name: Upload Artifact to QB Spaces
+      uses: QuickBirdEng/actions/upload-artifact-qb@main
+      with:
+        access-key: ${{ inputs.access-key }}
+        secret-key: ${{ inputs.secret-key }}
+        artifact: ${{ steps.compress.outputs.artifact-path }}
