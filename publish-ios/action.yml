@@ -38,9 +38,6 @@ inputs:
   build-number:
     description: 'Build Number'
     type: string
-  slack-slug:
-    description: 'The part of slack hook url after services/'
-    required: true
   release-notes:
     description: 'Release Notes. Only used for flutter applications'
     type: string
@@ -102,7 +99,6 @@ runs:
         apple-auth-key-content: ${{ inputs.apple-auth-key-content }}
         apple-auth-key-encoding: ${{ inputs.apple-auth-key-encoding }}
         build-number: ${{ inputs.build-number }}
-        slack-slug: ${{ inputs.slack-slug }}
         release-notes: ${{ inputs.release-notes }}
         submit-for-review: ${{ inputs.submit-for-review }}
     - uses: QuickBirdEng/actions/setup-flutter@main
