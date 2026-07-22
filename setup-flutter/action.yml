@@ -60,7 +60,8 @@ runs:
         if [ -f ios/Podfile ]; then
           pod repo update && cd ios && pod install
         else
-          echo "No ios/Podfile found (likely using Swift Package Manager); skipping pod install."
+          echo "No ios/Podfile found; enabling Swift Package Manager."
+          flutter config --enable-swift-package-manager
         fi
     - name: Flutter version
       shell: bash
