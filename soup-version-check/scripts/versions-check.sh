@@ -113,6 +113,4 @@ verify_versions "$NODE_DEPENDENCIES_OUTPUT" "node" || true
 verify_versions "$DART_DEPENDENCIES_OUTPUT" "dart" || true
 
 echo "Ecosystem,Name,Version,Status,Age,Last Versions,Version Recency" > $OUTPUT_FILE
-# Drop packages we could not resolve any version for (Status == "ERROR: ...",
-# e.g. private/local packages not on the public registry).
-grep -v ',ERROR:' $OUTPUT_FILE_TMP | sort -t',' -k4,4 -k1,1 -k2,2 >> $OUTPUT_FILE
+sort -t',' -k4,4 -k1,1 -k2,2 $OUTPUT_FILE_TMP >> $OUTPUT_FILE
