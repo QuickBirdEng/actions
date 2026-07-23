@@ -84,8 +84,13 @@ else
     ALL_VERSIONS_RAW=$(echo "$JSON" | jq -r '[.time | keys[] | select(. != "created" and . != "modified")] | .[]' 2>/dev/null)
 fi
 
-# Extract unique major.minor families, sort by major then minor numerically, take last 2
-FAMILIES=$(echo "$ALL_VERSIONS_RAW" | grep -oE '^[0-9]+\.[0-9]+' | sort -t. -k1,1n -k2,2n -u | tail -n 2 | sort -t. -k1,1n -k2,2n -r | tr '\n' ' ' | xargs)
+FAMILIES=$(echo "$ALL_VERSIONS_RAW" | grep -v -e '-' | grep -oE '^[0-9]+\.[0-9]+' | sort -t. -k1,1n -k2,2n -u | tail -n 2 | sort -t. -k1,1n -k2,2n -r | tr '\n' ' ' | xargs)
+
+# Fallback: if the package publishes ONLY pre-releases (no stable version exists),
+# use the unfiltered list so the family column is not left empty.
+if [ -z "$FAMILIES" ]; then
+    FAMILIES=$(echo "$ALL_VERSIONS_RAW" | grep -oE '^[0-9]+\.[0-9]+' | sort -t. -k1,1n -k2,2n -u | tail -n 2 | sort -t. -k1,1n -k2,2n -r | tr '\n' ' ' | xargs)
+fi
 
 FAMILIES_STR=$(echo "$FAMILIES" | tr ' ' '|')
 if echo " $FAMILIES " | grep -qw "$CURRENT_FAMILY"; then
