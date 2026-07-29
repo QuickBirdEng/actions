@@ -1,0 +1,171 @@
+name: 'Store debug symbols'
+description: 'Collect debug symbols (dSYMs, ProGuard mapping, Dart symbols) into one archive and upload it to QB Spaces, so a separate job can push them to Sentry'
+inputs:
+  platform:
+    description: 'Label of the build these symbols belong to (e.g. ios, android-apk, android-aab). Becomes the folder name the Sentry job restores them into.'
+    required: true
+  dsyms-path:
+    description: 'The path to the dSYMs folder'
+    required: false
+    default: ''
+  proguard-mapping-file-path:
+    description: 'The path to the proguard mapping file'
+    required: false
+    default: ''
+  dart-symbols-file-path:
+    description: 'The path to the dart symbols folder'
+    required: false
+    default: ''
+  dart-obfuscation-map-file-path:
+    description: 'The path to the dart obfuscation map JSON file'
+    required: false
+    default: ''
+  release:
+    description: 'Sentry release name (e.g. 1.0.0+12345). Stored with the symbols and used by the Sentry job to create and finalize the release.'
+    required: false
+    default: ''
+  build-number:
+    description: 'Build number of this build. Groups the symbols of all platforms of one build together, so the Sentry job can pick them up again. Falls back to the workflow run id.'
+    required: false
+    default: ''
+  access-key:
+    description: 'Digital Ocean Access Key'
+    required: true
+  secret-key:
+    description: 'Digital Ocean Secret Key'
+    required: true
+  space-name:
+    description: 'Name of the DO Space to store the symbols in'
+    required: false
+    default: 'quickbird-artifacts'
+  space-region:
+    description: 'Region of the DO Space'
+    required: false
+    default: 'fra1'
+outputs:
+  stored:
+    description: 'Whether an archive was uploaded'
+    value: ${{ steps.collect.outputs.stored }}
+  key-prefix:
+    description: 'The prefix in the Space the archive was uploaded to'
+    value: ${{ steps.collect.outputs.key-prefix }}
+  archive:
+    description: 'The local path of the archive that was uploaded'
+    value: ${{ steps.collect.outputs.archive }}
+runs:
+  using: "composite"
+  steps:
+    - name: Collect debug symbols
+      id: collect
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        DSYMS_PATH: ${{ inputs.dsyms-path }}
+        PROGUARD_MAPPING_FILE_PATH: ${{ inputs.proguard-mapping-file-path }}
+        DART_SYMBOLS_FILE_PATH: ${{ inputs.dart-symbols-file-path }}
+        DART_OBFUSCATION_MAP_FILE_PATH: ${{ inputs.dart-obfuscation-map-file-path }}
+        RELEASE: ${{ inputs.release }}
+        BUILD_NUMBER: ${{ inputs.build-number }}
+      run: |
+        set -euo pipefail
+
+        if [[ ! "$PLATFORM" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::Invalid platform label '$PLATFORM' (allowed: letters, digits, '.', '_', '-')"
+          exit 1
+        fi
+
+        build_id="${BUILD_NUMBER:-$GITHUB_RUN_ID}"
+        if [[ ! "$build_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::Invalid build number '$build_id' (allowed: letters, digits, '.', '_', '-')"
+          exit 1
+        fi
+
+        staging="$RUNNER_TEMP/qb-debug-symbols-staging/$PLATFORM"
+        rm -rf "$staging"
+        mkdir -p "$staging"
+
+        requested=0
+        collected=0
+
+        stage_dir() {
+          local source="$1" target="$2" label="$3"
+          requested=$((requested + 1))
+          if [[ -d "$source" ]] && [[ -n "$(ls -A "$source")" ]]; then
+            mkdir -p "$staging/$target"
+            cp -R "$source"/. "$staging/$target"/
+            collected=$((collected + 1))
+            echo "Collected $label from $source"
+          else
+            echo "::warning::No $label found at '$source' - skipping"
+          fi
+        }
+
+        stage_file() {
+          local source="$1" target="$2" label="$3"
+          requested=$((requested + 1))
+          if [[ -f "$source" ]]; then
+            mkdir -p "$staging/$(dirname "$target")"
+            cp "$source" "$staging/$target"
+            collected=$((collected + 1))
+            echo "Collected $label from $source"
+          else
+            echo "::warning::No $label found at '$source' - skipping"
+          fi
+        }
+
+        if [[ -n "$DSYMS_PATH" ]]; then
+          stage_dir "$DSYMS_PATH" "dsyms" "iOS dSYMs"
+        fi
+        if [[ -n "$DART_SYMBOLS_FILE_PATH" ]]; then
+          stage_dir "$DART_SYMBOLS_FILE_PATH" "dart-symbols" "Dart symbols"
+        fi
+        if [[ -n "$DART_OBFUSCATION_MAP_FILE_PATH" ]]; then
+          stage_file "$DART_OBFUSCATION_MAP_FILE_PATH" "dart-symbols/obfuscation.map.json" "Dart obfuscation map"
+        fi
+        if [[ -n "$PROGUARD_MAPPING_FILE_PATH" ]]; then
+          stage_file "$PROGUARD_MAPPING_FILE_PATH" "proguard/mapping.txt" "ProGuard mapping"
+        fi
+
+        if [[ "$collected" -eq 0 ]]; then
+          echo "stored=false" >> "$GITHUB_OUTPUT"
+          if [[ "$requested" -gt 0 ]]; then
+            echo "::error::None of the $requested requested debug symbol paths exist - nothing to store for '$PLATFORM'"
+            exit 1
+          fi
+          echo "::warning::No debug symbol paths given for '$PLATFORM' - nothing to store"
+          exit 0
+        fi
+
+        {
+          echo "platform=$PLATFORM"
+          echo "release=$RELEASE"
+          echo "build_number=$build_id"
+          echo "run_id=$GITHUB_RUN_ID"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+          echo "sha=$GITHUB_SHA"
+          echo "ref=$GITHUB_REF"
+        } > "$staging/metadata.env"
+
+        archive_dir="$RUNNER_TEMP/qb-debug-symbols"
+        mkdir -p "$archive_dir"
+        archive="$archive_dir/debug-symbols-$PLATFORM.tar.gz"
+        rm -f "$archive"
+        tar -C "$staging" -czf "$archive" .
+
+        echo "stored=true" >> "$GITHUB_OUTPUT"
+        echo "archive=$archive" >> "$GITHUB_OUTPUT"
+        echo "key-prefix=${GITHUB_REPOSITORY##*/}/debug-symbols/$build_id" >> "$GITHUB_OUTPUT"
+
+        echo "Archive: $(du -h "$archive" | cut -f1) at $archive"
+        tar -tzf "$archive"
+    - name: Upload debug symbols to QB Spaces
+      if: ${{ steps.collect.outputs.stored == 'true' }}
+      uses: BetaHuhn/do-spaces-action@latest
+      with:
+        access_key: ${{ inputs.access-key }}
+        secret_key: ${{ inputs.secret-key }}
+        space_name: ${{ inputs.space-name }}
+        space_region: ${{ inputs.space-region }}
+        source: ${{ steps.collect.outputs.archive }}
+        out_dir: ${{ steps.collect.outputs.key-prefix }}
+        permission: private

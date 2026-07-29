@@ -1,0 +1,125 @@
+name: 'Restore debug symbols'
+description: 'Download the debug symbols that store-debug-symbols put into QB Spaces for this workflow run and extract them for the Sentry upload'
+inputs:
+  access-key:
+    description: 'Digital Ocean Access Key'
+    required: true
+  secret-key:
+    description: 'Digital Ocean Secret Key'
+    required: true
+  space-name:
+    description: 'Name of the DO Space the symbols were stored in'
+    required: false
+    default: 'quickbird-artifacts'
+  space-region:
+    description: 'Region of the DO Space'
+    required: false
+    default: 'fra1'
+  build-number:
+    description: 'Build number the symbols were stored for. Must be the same one the build jobs passed to store-debug-symbols. Falls back to the workflow run id.'
+    required: false
+    default: ''
+  destination:
+    description: 'Directory to extract the symbols into'
+    required: false
+    default: 'debug-symbols'
+  fail-if-empty:
+    description: 'Fail if no symbols were found for the run'
+    required: false
+    default: 'true'
+outputs:
+  found:
+    description: 'Whether any symbols were restored'
+    value: ${{ steps.extract.outputs.found }}
+  symbols-dir:
+    description: 'Directory the symbols were extracted into (one folder per platform)'
+    value: ${{ steps.extract.outputs.symbols-dir }}
+  platforms:
+    description: 'Space separated list of the platforms that were restored'
+    value: ${{ steps.extract.outputs.platforms }}
+  release:
+    description: 'The Sentry release name that was stored with the symbols (empty if none)'
+    value: ${{ steps.extract.outputs.release }}
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+    - name: Download debug symbols from QB Spaces
+      shell: bash
+      env:
+        SPACES_ACCESS_KEY: ${{ inputs.access-key }}
+        SPACES_SECRET_KEY: ${{ inputs.secret-key }}
+        SPACES_NAME: ${{ inputs.space-name }}
+        SPACES_REGION: ${{ inputs.space-region }}
+        BUILD_NUMBER: ${{ inputs.build-number }}
+      run: |
+        set -euo pipefail
+
+        build_id="${BUILD_NUMBER:-$GITHUB_RUN_ID}"
+        if [[ ! "$build_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::Invalid build number '$build_id' (allowed: letters, digits, '.', '_', '-')"
+          exit 1
+        fi
+
+        export SPACES_KEY_PREFIX="${GITHUB_REPOSITORY##*/}/debug-symbols/$build_id/"
+        export DESTINATION="$RUNNER_TEMP/qb-debug-symbols-download"
+        rm -rf "$DESTINATION"
+        mkdir -p "$DESTINATION"
+        echo "Looking for debug symbols under '$SPACES_KEY_PREFIX'"
+        node "$GITHUB_ACTION_PATH/s3-download.mjs"
+    - name: Extract debug symbols
+      id: extract
+      shell: bash
+      env:
+        DESTINATION: ${{ inputs.destination }}
+        FAIL_IF_EMPTY: ${{ inputs.fail-if-empty }}
+      run: |
+        set -euo pipefail
+
+        download_dir="$RUNNER_TEMP/qb-debug-symbols-download"
+        symbols_dir="$DESTINATION"
+        rm -rf "$symbols_dir"
+        mkdir -p "$symbols_dir"
+
+        platforms=""
+        release=""
+
+        for archive in "$download_dir"/debug-symbols-*.tar.gz; do
+          [[ -f "$archive" ]] || continue
+
+          name="$(basename "$archive" .tar.gz)"
+          platform="${name#debug-symbols-}"
+          target="$symbols_dir/$platform"
+
+          mkdir -p "$target"
+          tar -xzf "$archive" -C "$target"
+          platforms="${platforms:+$platforms }$platform"
+          echo "Restored '$platform' from $(basename "$archive")"
+
+          if [[ -z "$release" && -f "$target/metadata.env" ]]; then
+            release="$(sed -n 's/^release=//p' "$target/metadata.env" | head -1)"
+          fi
+        done
+
+        if [[ -z "$platforms" ]]; then
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "platforms=" >> "$GITHUB_OUTPUT"
+          echo "release=" >> "$GITHUB_OUTPUT"
+          echo "symbols-dir=$symbols_dir" >> "$GITHUB_OUTPUT"
+          if [[ "$FAIL_IF_EMPTY" == "true" ]]; then
+            echo "::error::No debug symbols were stored for this run - check the 'Store debug symbols for Sentry' step of the build jobs"
+            exit 1
+          fi
+          echo "::warning::No debug symbols were stored for this run"
+          exit 0
+        fi
+
+        echo "found=true" >> "$GITHUB_OUTPUT"
+        echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
+        echo "release=$release" >> "$GITHUB_OUTPUT"
+        echo "symbols-dir=$symbols_dir" >> "$GITHUB_OUTPUT"
+
+        echo "Restored platforms: $platforms"
+        echo "Sentry release: ${release:-<none>}"
