@@ -1,5 +1,5 @@
 name: 'Restore debug symbols'
-description: 'Download the debug symbols that store-debug-symbols put into QB Spaces for this workflow run and extract them for the Sentry upload'
+description: 'Download the debug symbols that store-debug-symbols put into QB Spaces for a build and extract them for the Sentry upload'
 inputs:
   access-key:
     description: 'Digital Ocean Access Key'
@@ -19,12 +19,16 @@ inputs:
     description: 'Build number the symbols were stored for. Must be the same one the build jobs passed to store-debug-symbols. Falls back to the workflow run id.'
     required: false
     default: ''
+  platforms:
+    description: 'Space separated platform labels to look for. Platforms without stored symbols are skipped.'
+    required: false
+    default: 'ios android-apk android-aab'
   destination:
     description: 'Directory to extract the symbols into'
     required: false
     default: 'debug-symbols'
   fail-if-empty:
-    description: 'Fail if no symbols were found for the run'
+    description: 'Fail if no symbols were found for the build'
     required: false
     default: 'true'
 outputs:
@@ -43,9 +47,6 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 20
     - name: Download debug symbols from QB Spaces
       shell: bash
       env:
@@ -54,6 +55,7 @@ runs:
         SPACES_NAME: ${{ inputs.space-name }}
         SPACES_REGION: ${{ inputs.space-region }}
         BUILD_NUMBER: ${{ inputs.build-number }}
+        PLATFORMS: ${{ inputs.platforms }}
       run: |
         set -euo pipefail
 
@@ -63,12 +65,53 @@ runs:
           exit 1
         fi
 
-        export SPACES_KEY_PREFIX="${GITHUB_REPOSITORY##*/}/debug-symbols/$build_id/"
-        export DESTINATION="$RUNNER_TEMP/qb-debug-symbols-download"
-        rm -rf "$DESTINATION"
-        mkdir -p "$DESTINATION"
-        echo "Looking for debug symbols under '$SPACES_KEY_PREFIX'"
-        node "$GITHUB_ACTION_PATH/s3-download.mjs"
+        if ! curl --help all 2>/dev/null | grep -q -- '--aws-sigv4'; then
+          echo "::error::curl on this runner cannot sign S3 requests (needs curl 7.75+), found: $(curl --version | head -1)"
+          exit 1
+        fi
+
+        # Keep the credentials out of the process arguments.
+        credentials="$RUNNER_TEMP/qb-spaces-curl.conf"
+        (umask 077 && printf 'user = "%s:%s"\n' "$SPACES_ACCESS_KEY" "$SPACES_SECRET_KEY" > "$credentials")
+        trap 'rm -f "$credentials"' EXIT
+
+        download_dir="$RUNNER_TEMP/qb-debug-symbols-download"
+        rm -rf "$download_dir"
+        mkdir -p "$download_dir"
+
+        endpoint="${SPACES_ENDPOINT:-https://$SPACES_NAME.$SPACES_REGION.digitaloceanspaces.com}"
+        prefix="${GITHUB_REPOSITORY##*/}/debug-symbols/$build_id"
+        downloaded=0
+
+        echo "Looking for debug symbols under '$prefix/'"
+
+        for platform in $PLATFORMS; do
+          archive="debug-symbols-$platform.tar.gz"
+          target="$download_dir/$archive"
+
+          status="$(curl --silent --show-error --config "$credentials" \
+            --aws-sigv4 "aws:amz:$SPACES_REGION:s3" \
+            --output "$target" --write-out '%{http_code}' \
+            "$endpoint/$prefix/$archive")"
+
+          case "$status" in
+            200)
+              downloaded=$((downloaded + 1))
+              echo "Downloaded $archive"
+              ;;
+            404)
+              rm -f "$target"
+              echo "No symbols stored for '$platform'"
+              ;;
+            *)
+              echo "::error::Downloading '$archive' failed with HTTP $status"
+              cat "$target" || true
+              exit 1
+              ;;
+          esac
+        done
+
+        echo "Downloaded $downloaded archive(s)"
     - name: Extract debug symbols
       id: extract
       shell: bash
@@ -109,10 +152,10 @@ runs:
           echo "release=" >> "$GITHUB_OUTPUT"
           echo "symbols-dir=$symbols_dir" >> "$GITHUB_OUTPUT"
           if [[ "$FAIL_IF_EMPTY" == "true" ]]; then
-            echo "::error::No debug symbols were stored for this run - check the 'Store debug symbols for Sentry' step of the build jobs"
+            echo "::error::No debug symbols were stored for this build - check the 'Store debug symbols for Sentry' step of the build jobs"
             exit 1
           fi
-          echo "::warning::No debug symbols were stored for this run"
+          echo "::warning::No debug symbols were stored for this build"
           exit 0
         fi
 
