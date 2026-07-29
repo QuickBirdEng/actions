@@ -70,7 +70,6 @@ runs:
           exit 1
         fi
 
-        # Keep the credentials out of the process arguments.
         credentials="$RUNNER_TEMP/qb-spaces-curl.conf"
         (umask 077 && printf 'user = "%s:%s"\n' "$SPACES_ACCESS_KEY" "$SPACES_SECRET_KEY" > "$credentials")
         trap 'rm -f "$credentials"' EXIT
