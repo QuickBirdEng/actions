@@ -10,6 +10,8 @@ mkdir -p "$symbols_dir"
 platforms=""
 release=""
 
+# ── extract one folder per platform ───────────────────────────────────────────
+
 for archive in "$download_dir"/debug-symbols-*.tar.gz; do
     [[ -f "$archive" ]] || continue
 
@@ -26,6 +28,8 @@ for archive in "$download_dir"/debug-symbols-*.tar.gz; do
         release="$(sed -n 's/^release=//p' "$target/metadata.env" | head -1)"
     fi
 done
+
+# ── nothing restored ──────────────────────────────────────────────────────────
 
 if [[ -z "$platforms" ]]; then
     {

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── input validation ──────────────────────────────────────────────────────────
+
 platform="${INPUT_PLATFORM:-}"
 build_number="${INPUT_BUILD_NUMBER:-$GITHUB_RUN_ID}"
 
@@ -14,6 +16,8 @@ if [[ ! "$build_number" =~ ^[A-Za-z0-9._-]+$ ]]; then
     exit 1
 fi
 
+# ── staging area ──────────────────────────────────────────────────────────────
+
 staging="${RUNNER_TEMP}/qb-debug-symbols-staging/${platform}"
 rm -rf "$staging"
 mkdir -p "$staging"
@@ -21,6 +25,10 @@ mkdir -p "$staging"
 requested=0
 collected=0
 
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+# Both helpers count what was asked for and what was actually there, so a build
+# that stored nothing can be told apart from one that was asked for nothing.
 stage_dir() {
     local source="$1" target="$2" label="$3"
     requested=$((requested + 1))
@@ -46,6 +54,8 @@ stage_file() {
         echo "::warning::No $label found at '$source' - skipping"
     fi
 }
+
+# ── collect ───────────────────────────────────────────────────────────────────
 
 if [[ -n "${INPUT_DSYMS_PATH:-}" ]]; then
     stage_dir "$INPUT_DSYMS_PATH" "dsyms" "iOS dSYMs"
@@ -73,6 +83,8 @@ if [[ "$collected" -eq 0 ]]; then
     exit 0
 fi
 
+# ── metadata travelling with the archive ──────────────────────────────────────
+
 {
     echo "platform=$platform"
     echo "release=${INPUT_RELEASE:-}"
@@ -82,6 +94,8 @@ fi
     echo "sha=${GITHUB_SHA}"
     echo "ref=${GITHUB_REF}"
 } > "$staging/metadata.env"
+
+# ── archive ───────────────────────────────────────────────────────────────────
 
 archive_dir="${RUNNER_TEMP}/qb-debug-symbols"
 mkdir -p "$archive_dir"
