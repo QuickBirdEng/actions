@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── input validation ──────────────────────────────────────────────────────────
+
+# The destination is wiped before extracting, so refuse an empty value instead
+# of relying on rm and mkdir to fail on it. A declared default only applies when
+# a caller omits the input, not when it passes an expression that renders empty.
+if [[ -z "${INPUT_DESTINATION:-}" ]]; then
+    echo "::error::destination must not be empty"
+    exit 1
+fi
+
 download_dir="${RUNNER_TEMP}/qb-debug-symbols-download"
 symbols_dir="${INPUT_DESTINATION}"
 

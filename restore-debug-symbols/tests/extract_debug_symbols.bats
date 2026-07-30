@@ -62,6 +62,17 @@ stage_downloaded() {
     [ ! -f "${WORKSPACE}/debug-symbols/stale.txt" ]
 }
 
+@test "an empty destination is rejected before anything is deleted" {
+    stage_downloaded "ios"
+    INPUT_DESTINATION="" \
+    run_extract
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"::error::destination must not be empty"* ]]
+    # the working directory must be untouched
+    [ -d "${WORKSPACE}" ]
+    [ -f "${DOWNLOAD_DIR}/debug-symbols-ios.tar.gz" ]
+}
+
 @test "fails when nothing was downloaded" {
     run_extract
     [ "$status" -eq 1 ]

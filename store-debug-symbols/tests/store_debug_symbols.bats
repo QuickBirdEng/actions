@@ -74,6 +74,14 @@ setup() {
     [[ "$output" == *"::error::Invalid build number"* ]]
 }
 
+@test "an empty platform label is rejected" {
+    INPUT_PLATFORM="" \
+    INPUT_DSYMS_PATH="build/ios/archive/Runner.xcarchive/dSYMs" \
+    run_store
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"::error::Invalid platform label"* ]]
+}
+
 @test "an invalid platform label is rejected" {
     INPUT_PLATFORM="../evil" \
     INPUT_DSYMS_PATH="build/ios/archive/Runner.xcarchive/dSYMs" \

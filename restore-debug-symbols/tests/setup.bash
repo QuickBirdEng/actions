@@ -66,7 +66,7 @@ run_download() {
         INPUT_SPACE_NAME="quickbird-artifacts" \
         INPUT_SPACE_REGION="fra1" \
         INPUT_BUILD_NUMBER="${INPUT_BUILD_NUMBER-$BUILD_NUMBER}" \
-        INPUT_PLATFORMS="${INPUT_PLATFORMS:-ios android-apk android-aab}" \
+        INPUT_PLATFORMS="${INPUT_PLATFORMS-ios android-apk android-aab}" \
         bash "$DOWNLOAD_SCRIPT"
 }
 
@@ -79,8 +79,8 @@ run_extract() {
     run env \
         RUNNER_TEMP="${BATS_TEST_TMPDIR}/temp" \
         GITHUB_OUTPUT="${GITHUB_OUTPUT_FILE}" \
-        INPUT_DESTINATION="${INPUT_DESTINATION:-debug-symbols}" \
-        INPUT_FAIL_IF_EMPTY="${INPUT_FAIL_IF_EMPTY:-true}" \
+        INPUT_DESTINATION="${INPUT_DESTINATION-debug-symbols}" \
+        INPUT_FAIL_IF_EMPTY="${INPUT_FAIL_IF_EMPTY-true}" \
         bash "$EXTRACT_SCRIPT"
     if [ -s "$GITHUB_OUTPUT_FILE" ]; then
         output="${output}"$'\n'"$(cat "$GITHUB_OUTPUT_FILE")"

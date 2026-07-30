@@ -23,7 +23,7 @@ run_store() {
         GITHUB_RUN_ATTEMPT="1" \
         GITHUB_SHA="deadbeef" \
         GITHUB_REF="refs/tags/1.4.0" \
-        INPUT_PLATFORM="${INPUT_PLATFORM:-ios}" \
+        INPUT_PLATFORM="${INPUT_PLATFORM-ios}" \
         INPUT_BUILD_NUMBER="${INPUT_BUILD_NUMBER:-}" \
         INPUT_DSYMS_PATH="${INPUT_DSYMS_PATH:-}" \
         INPUT_PROGUARD_MAPPING_FILE_PATH="${INPUT_PROGUARD_MAPPING_FILE_PATH:-}" \
