@@ -97,15 +97,17 @@ fi
 
 # ── archive ───────────────────────────────────────────────────────────────────
 
-archive_dir="${RUNNER_TEMP}/qb-debug-symbols"
-mkdir -p "$archive_dir"
-archive="${archive_dir}/debug-symbols-${platform}.tar.gz"
+# The upload action resolves its source relative to the workspace and would
+# prepend the workspace to an absolute path, so keep the archive in the
+# workspace and hand out a workspace-relative name.
+archive_name="debug-symbols-${platform}.tar.gz"
+archive="${GITHUB_WORKSPACE}/${archive_name}"
 rm -f "$archive"
 tar -C "$staging" -czf "$archive" .
 
 {
     echo "stored=true"
-    echo "archive=$archive"
+    echo "archive=$archive_name"
     echo "key-prefix=${GITHUB_REPOSITORY##*/}/debug-symbols/${build_number}"
 } >> "$GITHUB_OUTPUT"
 

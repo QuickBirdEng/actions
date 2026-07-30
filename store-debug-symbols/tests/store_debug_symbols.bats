@@ -46,7 +46,18 @@ setup() {
     INPUT_PROGUARD_MAPPING_FILE_PATH="build/app/outputs/mapping/release/mapping.txt" \
     run_store
     [ "$status" -eq 0 ]
-    [[ "$(github_output_value archive)" == *"/debug-symbols-android-apk.tar.gz" ]]
+    [ "$(github_output_value archive)" = "debug-symbols-android-apk.tar.gz" ]
+}
+
+# The upload action joins its source onto the workspace, so an absolute path
+# would be looked up at <workspace><absolute path> and never found.
+@test "the archive path is relative to the workspace, not absolute" {
+    INPUT_DSYMS_PATH="build/ios/archive/Runner.xcarchive/dSYMs" \
+    run_store
+    [ "$status" -eq 0 ]
+    archive="$(github_output_value archive)"
+    [[ "$archive" != /* ]]
+    [ -f "${WORKSPACE}/${archive}" ]
 }
 
 # ── Key prefix ────────────────────────────────────────────────────────────────
@@ -98,8 +109,8 @@ setup() {
     INPUT_DSYMS_PATH="build/ios/archive/Runner.xcarchive/dSYMs" \
     run_store
     [ "$status" -eq 0 ]
-    tar -xzf "$(github_output_value archive)" -O ./metadata.env | grep -q "^release=1.4.0+1764500000$"
-    tar -xzf "$(github_output_value archive)" -O ./metadata.env | grep -q "^build_number=1764500000$"
+    tar -xzf "${WORKSPACE}/$(github_output_value archive)" -O ./metadata.env | grep -q "^release=1.4.0+1764500000$"
+    tar -xzf "${WORKSPACE}/$(github_output_value archive)" -O ./metadata.env | grep -q "^build_number=1764500000$"
 }
 
 # ── Nothing to collect ────────────────────────────────────────────────────────

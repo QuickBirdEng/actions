@@ -23,6 +23,7 @@ run_store() {
         GITHUB_RUN_ATTEMPT="1" \
         GITHUB_SHA="deadbeef" \
         GITHUB_REF="refs/tags/1.4.0" \
+        GITHUB_WORKSPACE="${WORKSPACE}" \
         INPUT_PLATFORM="${INPUT_PLATFORM-ios}" \
         INPUT_BUILD_NUMBER="${INPUT_BUILD_NUMBER:-}" \
         INPUT_DSYMS_PATH="${INPUT_DSYMS_PATH:-}" \
@@ -44,5 +45,5 @@ github_output_value() {
 
 # List the paths inside the archive the script produced.
 archive_contents() {
-    tar -tzf "$(github_output_value archive)" | sed 's|^\./||' | grep -v '^$' | sort
+    tar -tzf "${WORKSPACE}/$(github_output_value archive)" | sed 's|^\./||' | grep -v '^$' | sort
 }

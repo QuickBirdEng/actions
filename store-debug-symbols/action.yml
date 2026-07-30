@@ -50,7 +50,7 @@ outputs:
     description: 'The prefix in the Space the archive was uploaded to'
     value: ${{ steps.collect.outputs.key-prefix }}
   archive:
-    description: 'The local path of the archive that was uploaded'
+    description: 'The name of the archive that was uploaded, relative to the workspace'
     value: ${{ steps.collect.outputs.archive }}
 runs:
   using: "composite"
@@ -78,3 +78,7 @@ runs:
         source: ${{ steps.collect.outputs.archive }}
         out_dir: ${{ steps.collect.outputs.key-prefix }}
         permission: private
+    - name: Remove the archive from the workspace
+      if: ${{ always() && steps.collect.outputs.stored == 'true' }}
+      shell: bash
+      run: rm -f "$GITHUB_WORKSPACE/${{ steps.collect.outputs.archive }}"
