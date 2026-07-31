@@ -4,28 +4,37 @@ load "setup.bash"
 
 setup() {
     stub_sentry_cli
-    setup_restored_symbols
+    setup_downloaded_symbols
 }
 
-# ── Restored directory ────────────────────────────────────────────────────────
+# ── Downloaded artifacts ──────────────────────────────────────────────────────
 
-@test "uploads dSYMs, dart symbols, obfuscation maps and the mapping of every platform" {
+@test "uploads the debug files, obfuscation maps and mapping of every platform" {
     INPUT_SYMBOLS_DIR="debug-symbols" \
     run_upload
     [ "$status" -eq 0 ]
-    [ "$(sentry_call_count)" -eq 6 ]
-    sentry_calls | grep -q "debug-files upload --org quickbird --project kaarlo debug-symbols/ios/dsyms$"
-    sentry_calls | grep -q "debug-files upload --org quickbird --project kaarlo debug-symbols/ios/dart-symbols$"
-    sentry_calls | grep -q "debug-files upload --org quickbird --project kaarlo debug-symbols/android-aab/dart-symbols$"
-    sentry_calls | grep -q "upload-proguard --org quickbird --project kaarlo debug-symbols/android-aab/proguard/mapping.txt$"
+    # one debug-files upload per platform, two maps, one proguard mapping
+    [ "$(sentry_call_count)" -eq 5 ]
+    sentry_calls | grep -q "debug-files upload --org quickbird --project kaarlo debug-symbols/debug-symbols-ios$"
+    sentry_calls | grep -q "debug-files upload --org quickbird --project kaarlo debug-symbols/debug-symbols-android-aab$"
+    sentry_calls | grep -q "upload-proguard --org quickbird --project kaarlo debug-symbols/debug-symbols-android-aab/build/app/outputs/mapping/release/mapping.txt$"
     [ "$(sentry_calls | grep -c 'dart-symbol-map upload')" -eq 2 ]
+}
+
+@test "finds the symbols wherever the build put them in the artifact" {
+    INPUT_SYMBOLS_DIR="debug-symbols" \
+    run_upload
+    [ "$status" -eq 0 ]
+    # the mapping sits several levels deep and is still found by name
+    sentry_calls | grep -q "upload-proguard .*build/app/outputs/mapping/release/mapping.txt$"
+    sentry_calls | grep -q "dart-symbol-map upload .*app_symbols/obfuscation.map.json .*app_symbols/app.ios-arm64.symbols$"
 }
 
 @test "every call targets the configured sentry server" {
     INPUT_SYMBOLS_DIR="debug-symbols" \
     run_upload
     [ "$status" -eq 0 ]
-    [ "$(sentry_calls | grep -c '^--url https://sentry.quickbirdstudios.com ')" -eq 6 ]
+    [ "$(sentry_calls | grep -c '^--url https://sentry.quickbirdstudios.com ')" -eq 5 ]
 }
 
 @test "falls back to sentry.io when no url is configured" {
@@ -33,7 +42,7 @@ setup() {
     INPUT_SYMBOLS_DIR="debug-symbols" \
     run_upload
     [ "$status" -eq 0 ]
-    [ "$(sentry_calls | grep -c '^--url https://sentry.io ')" -eq 6 ]
+    [ "$(sentry_calls | grep -c '^--url https://sentry.io ')" -eq 5 ]
 }
 
 @test "the auth token never reaches the command line" {
@@ -43,11 +52,12 @@ setup() {
     ! sentry_calls | grep -q "secret-token"
 }
 
-@test "the metadata file is never uploaded as a debug file" {
+@test "an empty artifact folder is skipped" {
+    mkdir -p "${WORKSPACE}/debug-symbols/debug-symbols-android-apk"
     INPUT_SYMBOLS_DIR="debug-symbols" \
     run_upload
     [ "$status" -eq 0 ]
-    ! sentry_calls | grep -q "metadata.env"
+    ! sentry_calls | grep -q "debug-symbols-android-apk"
 }
 
 @test "a failing sentry-cli fails the step" {
@@ -74,7 +84,7 @@ setup() {
 }
 
 @test "a platform folder holding only dSYMs is uploaded" {
-    rm -rf "${WORKSPACE}/debug-symbols/android-aab" "${WORKSPACE}/debug-symbols/ios/dart-symbols"
+    rm -rf "${WORKSPACE}/debug-symbols/debug-symbols-android-aab" "${WORKSPACE}/debug-symbols/debug-symbols-ios/app_symbols"
     INPUT_SYMBOLS_DIR="debug-symbols" \
     run_upload
     [ "$status" -eq 0 ]
@@ -82,8 +92,8 @@ setup() {
 }
 
 @test "dart symbols without an obfuscation map skip the map upload" {
-    rm -f "${WORKSPACE}/debug-symbols/ios/dart-symbols/obfuscation.map.json"
-    rm -rf "${WORKSPACE}/debug-symbols/android-aab"
+    rm -f "${WORKSPACE}/debug-symbols/debug-symbols-ios/app_symbols/obfuscation.map.json"
+    rm -rf "${WORKSPACE}/debug-symbols/debug-symbols-android-aab"
     INPUT_SYMBOLS_DIR="debug-symbols" \
     run_upload
     [ "$status" -eq 0 ]
