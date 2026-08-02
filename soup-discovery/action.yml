@@ -48,6 +48,17 @@ inputs:
     description: 'Upload the sbom directory as a workflow artifact'
     required: false
     default: 'true'
+  publish-to-release:
+    description: >-
+      On a tag, attach the bundle to the GitHub release as sbom-<tag>.cdx.json (and the PDF).
+      The stable name is what makes the deployed version resolvable to its SBOM (DEV-196) —
+      resolve-deployed.sh looks for exactly this asset.
+    required: false
+    default: 'true'
+  repo-token:
+    description: 'Token for attaching release assets. Required when publish-to-release is on and the run is on a tag.'
+    required: false
+    default: ''
   runs-on-note:
     description: 'Unused. Present so callers can document their runner choice; the workflow, not the action, selects the runner.'
     required: false
@@ -130,6 +141,28 @@ runs:
             echo "| Gaps | \`${{ steps.run.outputs.gaps }}\` |"
           fi
         } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Attach bundle to the release
+      if: ${{ inputs.publish-to-release == 'true' && github.ref_type == 'tag' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.repo-token }}
+      run: |
+        BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
+        PDF="${{ inputs.output-dir }}/bom/solution.cdx.pdf"
+        TAG="${{ github.ref_name }}"
+        if [ -z "$GH_TOKEN" ]; then
+          echo "::error::publish-to-release is on but repo-token is empty — the bundle would not be attached and the deployed version would have no resolvable SBOM"
+          exit 1
+        fi
+        # Stable, predictable names. resolve-deployed.sh looks for exactly sbom-<tag>.cdx.json;
+        # a per-project naming scheme would make the lookup guesswork.
+        cp "$BOM" "sbom-$TAG.cdx.json"
+        args=("sbom-$TAG.cdx.json")
+        [ -f "$PDF" ] && cp "$PDF" "sbom-$TAG.pdf" && args+=("sbom-$TAG.pdf")
+        gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes ""
+        gh release upload "$TAG" "${args[@]}" --clobber
+        echo "attached ${args[*]} to release $TAG"
 
     - name: Upload SBOM
       if: ${{ inputs.upload-artifact == 'true' }}
