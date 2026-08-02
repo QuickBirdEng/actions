@@ -1,0 +1,107 @@
+name: 'KEV monitor — is anything we run actively exploited?'
+description: 'Daily check of the deployed version against the CISA KEV catalog, with a dated evidence record on every run'
+
+inputs:
+  product:
+    description: 'Product name, used in the record and the alert'
+    required: true
+  repo:
+    description: 'owner/repo to resolve the deployed version from'
+    required: false
+    default: ${{ github.repository }}
+  cra-scope:
+    description: >-
+      Whether this product is in scope of the Cyber Resilience Act — true | false | unknown.
+      Drives whether the alert states the 24-hour reporting obligation. Left at "unknown" the
+      alert says so rather than assuming either way, because assuming "false" is the one
+      wrong answer with a legal consequence.
+    required: false
+    default: 'unknown'
+  slack-channel-id:
+    description: 'Channel to post to. Without it the run still produces its record; only the notification is skipped.'
+    required: false
+    default: ''
+  slack-bot-token:
+    description: 'Slack bot token'
+    required: false
+    default: ''
+  evidence-dir:
+    description: 'Where the dated run record is written'
+    required: false
+    default: 'kev-monitor'
+  gh-token:
+    description: 'Token for reading deployments and release assets'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict:
+    description: 'all-clear | kev-findings | incomplete'
+    value: ${{ steps.run.outputs.verdict }}
+  record:
+    description: 'Path to the dated run record'
+    value: ${{ steps.run.outputs.record }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run the KEV check
+      id: run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        CRA_SCOPE: ${{ inputs.cra-scope }}
+      run: |
+        set -o pipefail
+        OUT="${{ inputs.evidence-dir }}"
+        bash "$GITHUB_ACTION_PATH/../soup-discovery/scripts/monitor-kev.sh" \
+          "${{ inputs.repo }}" "${{ inputs.product }}" "$OUT"
+        REC=$(ls -1 "$OUT"/*-"${{ inputs.product }}".json | head -1)
+        {
+          echo "verdict=$(jq -r '.verdict' "$REC")"
+          echo "record=$REC"
+          echo "has-alert=$([ -s "$OUT/alert.txt" ] && echo true || echo false)"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Post to Slack
+      if: ${{ steps.run.outputs.has-alert == 'true' && inputs.slack-channel-id != '' }}
+      shell: bash
+      env:
+        SLACK_TOKEN: ${{ inputs.slack-bot-token }}
+      run: |
+        # curl rather than slackapi/slack-github-action: the alert is multi-line markdown
+        # assembled by the script, and routing it through the action's YAML payload template
+        # mangles the newlines. chat.postMessage is the same API either way.
+        BODY=$(cat "${{ inputs.evidence-dir }}/alert.txt")
+        jq -n --arg ch "${{ inputs.slack-channel-id }}" --arg t "$BODY" \
+          '{channel:$ch, text:$t, mrkdwn:true}' \
+        | curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data @- | jq -e '.ok' >/dev/null \
+          || echo "::error::Slack post failed — the run record was still written"
+
+    - name: Keep the record
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        # Retained on every run, including all-clear ones. The dated record is what
+        # distinguishes "we checked and found nothing" from "nobody looked", and only the
+        # second of those is a finding at an audit.
+        name: kev-monitor-${{ inputs.product }}
+        path: ${{ inputs.evidence-dir }}
+        retention-days: 90
+
+    - name: Summary
+      if: always()
+      shell: bash
+      run: |
+        V="${{ steps.run.outputs.verdict }}"
+        case "$V" in
+          all-clear)    echo "### KEV monitor: all clear" ;;
+          kev-findings) echo "### KEV monitor: ACTIVELY EXPLOITED vulnerability in the running version" ;;
+          incomplete)   echo "### KEV monitor: could not complete — this is not an all-clear" ;;
+        esac >> "$GITHUB_STEP_SUMMARY"
+        [ -s "${{ inputs.evidence-dir }}/alert.txt" ] && {
+          echo '```'; cat "${{ inputs.evidence-dir }}/alert.txt"; echo '```'
+        } >> "$GITHUB_STEP_SUMMARY" || true
