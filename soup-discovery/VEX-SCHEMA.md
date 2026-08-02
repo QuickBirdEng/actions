@@ -55,9 +55,22 @@ own is not an argument. "Not exploitable" is not a detail.
 **`response`** — optional, for `affected`: `can_not_fix`, `will_not_fix`, `update`,
 `rollback`, `workaround_available`.
 
-**Ownership.** VEX statements are authored by the **SOUP approver**, not by whoever is
-annoyed by the alert. A `not_affected` is a defensible reachability claim about this
-product, and it is the claim that suppresses a Slack alert in DEV-191.
+**Ownership — drafted by a developer, countersigned by a SOUP approver.** Decided
+2026-08-02. The developer writes the statement, because whether the vulnerable code path is
+reachable is a question about the code and the person who works in it is the one who knows.
+A SOUP approver then countersigns.
+
+The useful part: **no new mechanism is needed to enforce the countersign.** A VEX statement
+lives in a `.soups/**/*.json` record, so adding one is a change to a SOUP file — which
+already triggers `soup-approval-verification-workflow`, and that workflow already refuses
+any approval not coming from `vars.SOUP_APPROVERS`. The countersign is structural rather
+than procedural: a developer cannot merge their own VEX statement without an authorised
+approver reviewing the PR.
+
+What this does not do is check *who typed it*. The gate validates that a statement exists
+and is well-formed; the review is what validates that someone with authority agreed. That
+split is deliberate — a script cannot judge whether "not reachable from our code" is true,
+and pretending otherwise would be the more dangerous design.
 
 **`under_investigation` expires.** It is a holding state, not a resting state — if it is
 still `under_investigation` when the finding's mitigation deadline elapses, it reverts to
@@ -111,12 +124,9 @@ gives exit 0 lenient, exit 1 strict.
 
 ## Open questions for the approval workflow
 
-1. **Where the fix-or-VEX gate runs.** The merge *reports* vulnerabilities without an
-   analysis; `soup-approval-verification-workflow` is where it should *block*. That workflow
-   currently checks requirements and the version condition only — CVEs do not appear in it
-   at all, so this is new behaviour rather than a tightening.
-2. **Who may author a VEX statement.** `vars.SOUP_APPROVERS` already gates who may approve a
-   SOUP. Reusing it for VEX is the obvious choice, but should be a decision, not a default.
+1. ~~Where the fix-or-VEX gate runs.~~ **Resolved:** implemented as `check-fix-or-vex.sh`
+   plus the `soup-fix-or-vex` action, wired into `soup-approval-verification-workflow`
+   before approval is recorded.
 3. **Approval fields are inconsistent.** The record in `qb-soups` has
    `approval.{date,by,condition}`; the approval workflow writes `by_url` as well; DEV-190
    assumes `is_temporary`. The merge tolerates all three shapes, but the schema should be

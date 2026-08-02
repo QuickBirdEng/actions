@@ -75,11 +75,7 @@ include:
   - id: deployment-keycloak.tf-main
     reason: Pinned Terraform provider versions for the Keycloak configuration.
 
-  # --- analytics stack, deployed and reachable ----------------------------------
-  - path: deployment/k8s-utils/countly/
-    reason: >-
-      Countly analytics (api, frontend, mongo) runs in the production cluster and
-      processes usage data. Third-party, deployed by us, therefore in CVE scope.
+  # (Countly moved to exclude — see below.)
 
 exclude:
   # --- build stages that never reach production ---------------------------------
@@ -97,6 +93,17 @@ exclude:
     reason: >-
       Locally built Strapi image from web/docker-compose.yml, tagged `latest`. The
       deployed Strapi is qbsdocker/mindnet-strapi; this entry is the dev-compose variant.
+
+  # --- external service ----------------------------------------------------------
+  - path: deployment/k8s-utils/countly/
+    reason: >-
+      Countly is an external service, not part of the medical device. Decided 2026-08-02.
+      Covers its api, frontend and mongo manifests, which are one deployment.
+      Note this is a scope call about the *SBOM*, not about the product documentation:
+      an external service still belongs in the "Software Tools" / interfacing-systems
+      section of the SBOM QMS record (MN-002-03), and it remains subject to the usual
+      data-protection assessment. It is simply not a component of the shipped software,
+      so its container contents are not our configuration items.
 
   # --- utility container --------------------------------------------------------
   - id: deployed-ubuntu-with-utils-latest
