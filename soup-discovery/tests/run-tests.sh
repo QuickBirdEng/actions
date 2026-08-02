@@ -385,6 +385,120 @@ test_policy_resolves_tier_defaults() {
   assert "$(jq -r '.planned_remediation_ceiling' <<<"$out")" "90d"
 }
 
+# ---------------------------------------------------------------- classifier
+CLS() { python3 "$S/classify-findings.py" "$@"; }
+
+mkpolicy() { printf 'product: p\ntier: Basic\ncra_scope: false\nrelease_cadence: monthly\nalerts:\n  threshold: %s\n' "${1:-high}" > "$TMP/cp.yml"
+             bash "$S/validate-policy.sh" "$TMP/cp.yml" 2>/dev/null > "$TMP/cp.json"; }
+
+mkvuln() { # <id> <cvss-vector|null> <kev|null> <epss|null> [vex-state] [justification]
+  jq -n --arg id "$1" --arg vec "$2" --arg kev "$3" --arg epss "$4" --arg vs "${5:-}" --arg j "${6:-}" \
+    '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"p"}},components:[],
+      vulnerabilities:[ ({id:$id}
+        + (if $vec != "null" then {ratings:[{source:{name:"OSV"},method:"CVSSv31",vector:$vec}]} else {ratings:[]} end)
+        + (if $epss != "null" then {ratings:[{source:{name:"OSV"},method:"CVSSv31",vector:(if $vec=="null" then "" else $vec end)},
+                                             {source:{name:"EPSS"},method:"other",score:($epss|tonumber)}]} else {} end)
+        + (if $kev != "null" then {properties:[{name:"quickbird:vuln:kev",value:$kev}]} else {} end)
+        + (if $vs != "" then {analysis:({state:$vs} + (if $j != "" then {justification:$j} else {} end))} else {} end)) ]}' \
+    > "$TMP/cv.json"
+}
+
+test_classify_kev_is_immediate_regardless_of_cvss() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N" true null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "immediate" || return 1
+  assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "1"
+}
+
+# "unknown" must not behave like "not in KEV": a catalog we could not read is not evidence.
+test_classify_kev_unknown_is_treated_as_kev() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N" unknown null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "immediate"
+}
+
+test_classify_high_plus_high_epss_is_immediate() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" false 0.7
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "3"
+}
+
+test_classify_missing_cvss_is_expedited_not_low() {
+  mkpolicy; mkvuln GHSA-x null false null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "expedited" || return 1
+  assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "9"
+}
+
+test_classify_vex_not_affected_is_suppressed() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" true null not_affected vulnerable_code_not_present
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.total' "$TMP/co.json")" "0" || return 1
+  assert "$(jq -r '.summary.suppressed_by_vex' "$TMP/co.json")" "1"
+}
+
+# A not_affected without a justification code is an assertion, not an argument, and must
+# not suppress.
+test_classify_vex_without_justification_does_not_suppress() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" false null not_affected
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.total' "$TMP/co.json")" "1"
+}
+
+test_classify_deadlines_come_from_the_policy() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" false null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].mitigation_due[0:10]' "$TMP/co.json")" "2026-01-04" || return 1   # 72h
+  assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/co.json")" "2026-01-22"              # 21d
+}
+
+# §2.2 — EPSS decays daily. Without latching a Track 1 finding becomes Track 2 a week later,
+# its deadline moves outward, and the trail shows a deadline that was never breached because
+# it kept receding.
+test_classify_latches_track_downward_never() {
+  mkpolicy
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" false 0.7      # rule 3 -> immediate
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/day1.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/day1.json")" "immediate" || return 1
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" false 0.01     # EPSS decayed
+  CLS "$TMP/cv.json" "$TMP/cp.json" --state "$TMP/day1.json" --out "$TMP/day8.json" --now 2026-01-08T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/day8.json")" "immediate" || return 1
+  assert "$(jq -r '.findings[0].latched.from' "$TMP/day8.json")" "expedited" || return 1
+  # and the clock must not restart
+  assert "$(jq -r '.findings[0].first_seen[0:10]' "$TMP/day8.json")" "2026-01-01"
+}
+
+test_classify_escalation_restarts_the_clock() {
+  mkpolicy
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N" false null     # medium -> planned
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/e1.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N" true null      # added to KEV
+  CLS "$TMP/cv.json" "$TMP/cp.json" --state "$TMP/e1.json" --out "$TMP/e2.json" --now 2026-02-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/e2.json")" "immediate" || return 1
+  assert "$(jq -r '.findings[0].first_seen[0:10]' "$TMP/e2.json")" "2026-02-01"
+}
+
+test_classify_alert_threshold_from_policy() {
+  mkpolicy critical; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" false null  # high
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].alerts' "$TMP/co.json")" "false" || return 1
+  mkpolicy high
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co2.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].alerts' "$TMP/co2.json")" "true"
+}
+
+test_classify_marks_overdue() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" false null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/o1.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  CLS "$TMP/cv.json" "$TMP/cp.json" --state "$TMP/o1.json" --out "$TMP/o2.json" --now 2026-03-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].remediation_overdue' "$TMP/o2.json")" "true" || return 1
+  assert "$(jq -r '.summary.overdue' "$TMP/o2.json")" "1"
+}
+
+test_classify_cvss_matches_published_scores() {
+  S="$S" python3 "$HERE/cvss-reference.py"
+}
+
 # ---------------------------------------------------------------- network
 test_net_enrichment_against_live_feeds() {
   need_net || return 77
