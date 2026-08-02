@@ -1,0 +1,59 @@
+# Machine-readable form of the classification process, §2.1 and §3.
+#
+# This file is the counterpart to classification-draft.md: the document is what a person
+# reads and what an auditor is shown, this is what the tooling applies. They must not
+# diverge, so a change here is a change to the process and belongs in the same review.
+#
+# Ships with the tooling. A project overrides parts of it in its own .soup-policy.yml;
+# validate-policy.sh merges the two and refuses overrides that loosen a deadline or a
+# threshold without a stated reason.
+
+process_version: "2026-08-02"
+
+# §2.1 — EPSS thresholds that escalate a finding within its CVSS band.
+epss:
+  elevated: 0.10          # Medium+elevated -> Expedited, Low+elevated -> Planned
+  high: 0.50              # High+high       -> Immediate
+
+# §3 — two clocks per track, in calendar time.
+#   mitigation  = exposure measurably reduced and documented
+#   remediation = the fix is live in the version users run; only a deploy stops this clock
+tracks:
+  immediate:              # KEV, or CVSS >= 9.0, or High + EPSS >= 0.50
+    mitigation: 72h
+    remediation: 21d
+  expedited:              # CVSS 7.0-8.9, or Medium + EPSS >= 0.10, or unscored
+    mitigation: 20d
+    remediation: 40d
+  planned:                # CVSS 4.0-6.9, or Low + EPSS >= 0.10
+    mitigation: 30d
+    remediation: next-release
+  monitor:                # CVSS < 4.0
+    mitigation: none
+    remediation: next-release
+
+# §3.3 — after a breach, how long until a decision is required.
+breach:
+  decision_within: 5d
+  risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)
+
+# §6 — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
+dependency_currency:
+  max_behind:
+    major: 0
+    minor: 1
+    patch: unlimited
+
+# §7 — tier drives the backstop cadence.
+tiers:
+  Basic:
+    backstop: annual
+    planned_remediation_ceiling: 90d
+  Extended:
+    backstop: quarterly
+    planned_remediation_ceiling: 60d
+
+# Which findings reach Slack. Everything below the threshold goes to the report and the
+# overview only. KEV is unconditional and is not subject to this.
+alerts:
+  threshold: high         # critical | high | medium | low

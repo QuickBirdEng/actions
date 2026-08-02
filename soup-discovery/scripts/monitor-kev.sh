@@ -24,12 +24,34 @@ OUT_DIR="${3:-monitor-out}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_DATE="${RUN_DATE:-$(date -u +%Y-%m-%d)}"
 RUN_TS="${RUN_TS:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-CRA_SCOPE="${CRA_SCOPE:-unknown}"     # true | false | unknown
+CRA_SCOPE="${CRA_SCOPE:-}"            # true | false | unknown; normally from the policy
+POLICY_FILE="${SOUP_POLICY_FILE:-.soup-policy.yml}"
 
 for t in gh jq curl; do command -v "$t" >/dev/null 2>&1 || { echo "::error::$t required" >&2; exit 1; }; done
 mkdir -p "$OUT_DIR"
 
 log() { printf '%s\n' "$*" >&2; }
+
+# --- policy -----------------------------------------------------------------
+# The per-product policy is the machine-readable side of the classification process: it is
+# where cra_scope, the alert threshold and the deadlines live. Reading it here rather than
+# taking them as arguments means the values are versioned in the repo and validated against
+# the process defaults, instead of being retyped into a workflow call.
+POLICY_JSON=""
+if [[ -f "$POLICY_FILE" ]]; then
+  if POLICY_JSON=$(bash "$HERE/validate-policy.sh" "$POLICY_FILE" 2>/dev/null); then
+    [[ -z "$CRA_SCOPE" ]] && CRA_SCOPE=$(jq -r '.cra_scope | tostring' <<<"$POLICY_JSON")
+    log "policy: $(jq -r '"\(.product) · tier \(.tier) · CRA \(.cra_scope)"' <<<"$POLICY_JSON")"
+  else
+    # An invalid policy is not a reason to fall back to defaults quietly — the defaults
+    # might be exactly what the project meant to override.
+    echo "::error::$POLICY_FILE failed validation; run validate-policy.sh to see why" >&2
+    exit 1
+  fi
+else
+  log "::warning::no $POLICY_FILE — falling back to arguments and process defaults"
+fi
+CRA_SCOPE="${CRA_SCOPE:-unknown}"
 
 # --- 1. what is live, and can we scan it? -----------------------------------
 # MONITOR_LOCAL_SBOM exists so the alerting path can be exercised before any release
