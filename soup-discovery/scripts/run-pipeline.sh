@@ -102,6 +102,36 @@ while IFS=$'\t' read -r id source resolvable; do
       [[ -d "$libdir" ]] || { log "  gap  $id — no install output"; GAPS+=("$id"); continue; }
       target="dir:$libdir"
       ;;
+    mvn)
+      # Same reasoning as installDist: the packaged output is the resolved set, while the
+      # pom lists declared dependencies only. mindnet's three Keycloak provider extensions
+      # went to the gap list purely because target/ had never been built.
+      mdir="$REPO/$arg"
+      if [[ ! -f "$mdir/pom.xml" ]]; then
+        log "  gap  $id — no pom.xml in $arg"; GAPS+=("$id"); continue
+      fi
+      if ! command -v mvn >/dev/null 2>&1; then
+        log "  gap  $id — maven not available on this runner"; GAPS+=("$id"); continue
+      fi
+      # package alone is not enough. Without a shade/assembly plugin, target/ holds only
+      # the artifact jar — scanning it found 2 components for an extension that has 8
+      # runtime dependencies including protobuf-java and five netty jars, exactly the kind
+      # of library that carries CVEs. copy-dependencies materialises the resolved runtime
+      # closure, which is the Maven analogue of Gradle's installDist.
+      #
+      # includeScope=runtime deliberately drops `provided` dependencies: the Keycloak SPI
+      # jars are supplied by the Keycloak runtime, so they ship in the Keycloak image's BOM
+      # rather than in the extension's. Counting them here would double-count them.
+      log "  build $id (mvn package + copy-dependencies)"
+      ( cd "$mdir" && mvn -q -B package -DskipTests \
+          dependency:copy-dependencies -DincludeScope=runtime \
+          -DoutputDirectory=target/sbom-deps ) >&2 || {
+        log "  gap  $id — mvn build failed"; GAPS+=("$id"); continue; }
+      [[ -d "$mdir/target" ]] || { log "  gap  $id — no target/ after build"; GAPS+=("$id"); continue; }
+      NDEPS=$(find "$mdir/target/sbom-deps" -name '*.jar' 2>/dev/null | wc -l | tr -d ' ')
+      log "       $NDEPS runtime dependency jar(s) materialised"
+      target="dir:$mdir/target"
+      ;;
     binary|apk)
       # These need a project-specific build (a linked Go binary, a signed APK). Rather
       # than guess a build command, record the gap so the consolidated BOM declares it.
