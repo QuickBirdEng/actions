@@ -1,0 +1,130 @@
+name: 'SOUP Discovery + SBOM'
+description: 'Discover dependencies across every ecosystem, enforce a recorded scope, and produce a verified CycloneDX SBOM'
+
+inputs:
+  product:
+    description: 'Product name for the consolidated BOM subject'
+    required: true
+  version:
+    description: 'Product version. Use the release tag; do not leave at a placeholder.'
+    required: true
+  repo-root:
+    description: 'Root to scan'
+    required: false
+    default: '.'
+  scope-file:
+    description: 'Scope declaration. Every discovered candidate must be classified in it or the run fails.'
+    required: false
+    default: '.soup-scope.yml'
+  output-dir:
+    description: 'Where to write candidates.json, scan-plan.json and bom/'
+    required: false
+    default: 'sbom'
+  syft-version:
+    description: 'Pinned syft version. Not "latest" on purpose — the component list must not change because a scanner auto-updated between two runs of the same commit.'
+    required: false
+    default: '1.20.0'
+  keep-timestamp:
+    description: 'Set true for the release tier, which needs metadata.timestamp. Leave false for a committable, diffable BOM.'
+    required: false
+    default: 'false'
+  registry-username:
+    description: 'Registry login for private images. Without it, private images are recorded as gaps rather than scanned — verified against qbsdocker/*, which is private.'
+    required: false
+    default: ''
+  registry-password:
+    description: 'Registry password/token'
+    required: false
+    default: ''
+  registry-server:
+    description: 'Registry host'
+    required: false
+    default: 'docker.io'
+  upload-artifact:
+    description: 'Upload the sbom directory as a workflow artifact'
+    required: false
+    default: 'true'
+  runs-on-note:
+    description: 'Unused. Present so callers can document their runner choice; the workflow, not the action, selects the runner.'
+    required: false
+    default: ''
+
+outputs:
+  solution-bom:
+    description: 'Path to the consolidated CycloneDX document'
+    value: ${{ steps.run.outputs.solution-bom }}
+  complete:
+    description: 'false if any in-scope candidate could not be scanned'
+    value: ${{ steps.run.outputs.complete }}
+  gaps:
+    description: 'Comma-separated ids of in-scope candidates that produced no BOM'
+    value: ${{ steps.run.outputs.gaps }}
+  component-count:
+    description: 'Components in the consolidated BOM'
+    value: ${{ steps.run.outputs.component-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check prerequisites
+      shell: bash
+      run: |
+        missing=()
+        for t in jq yq curl; do command -v "$t" >/dev/null 2>&1 || missing+=("$t"); done
+        if [ ${#missing[@]} -gt 0 ]; then
+          echo "::error::missing required tools: ${missing[*]}"
+          echo "::error::install them on the runner, or use a runner image that has them"
+          exit 1
+        fi
+
+    - name: Registry login
+      if: ${{ inputs.registry-username != '' }}
+      shell: bash
+      env:
+        REG_PASS: ${{ inputs.registry-password }}
+      run: |
+        echo "$REG_PASS" | docker login "${{ inputs.registry-server }}" \
+          -u "${{ inputs.registry-username }}" --password-stdin
+
+    - name: Discover, scope, scan, consolidate
+      id: run
+      shell: bash
+      env:
+        SBOM_OUT_DIR: ${{ inputs.output-dir }}
+        SOUP_SCOPE_FILE: ${{ inputs.scope-file }}
+        SYFT_VERSION: ${{ inputs.syft-version }}
+        KEEP_TIMESTAMP: ${{ inputs.keep-timestamp == 'true' && '1' || '0' }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/scripts/run-pipeline.sh" \
+          "${{ inputs.product }}" "${{ inputs.version }}" "${{ inputs.repo-root }}"
+
+        SOL="${{ inputs.output-dir }}/bom/solution.cdx.json"
+        {
+          echo "solution-bom=$SOL"
+          echo "complete=$(jq -r '.metadata.properties[] | select(.name=="quickbird:sbom:complete") | .value' "$SOL")"
+          echo "gaps=$(jq -r '[.metadata.properties[] | select(.name=="quickbird:sbom:missing") | .value] | join(",")' "$SOL")"
+          echo "component-count=$(jq '[.components[]] | length' "$SOL")"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Summary
+      shell: bash
+      run: |
+        {
+          echo "### SBOM"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Components | ${{ steps.run.outputs.component-count }} |"
+          echo "| Complete | ${{ steps.run.outputs.complete }} |"
+          if [ -n "${{ steps.run.outputs.gaps }}" ]; then
+            echo "| Gaps | \`${{ steps.run.outputs.gaps }}\` |"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload SBOM
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom
+        path: ${{ inputs.output-dir }}
+        retention-days: 90
