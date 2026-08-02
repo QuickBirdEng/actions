@@ -43,6 +43,11 @@ dependency_currency:
     major: 0
     minor: 1
     patch: unlimited
+  # Upstream staleness: no release in this long means the component is no longer
+  # maintained, which is a different finding from us being behind and has a different
+  # answer — there is nothing to upgrade to. 12 months matches the analysis period the
+  # SOUP records already use in grq-3 ("Is maintained and support is available").
+  stale_after: 12m
 
 # §7 — tier drives the backstop cadence.
 tiers:

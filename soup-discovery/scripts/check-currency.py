@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Dependency currency (§6): how far behind its latest version a component may be.
+"""Dependency currency and staleness (§6).
+
+Two different questions, deliberately answered separately because they call for different
+actions:
+
+  behind   we are not keeping up — 0 major / 1 minor / unlimited patch behind the latest.
+           The fix is an upgrade.
+  stale    *upstream* is not keeping up — no release in the staleness window. An upgrade
+           is not available, so the answer is replace, fork, or accept with a reason. A
+           component can be perfectly current and stale at the same time, and that
+           combination is the one worth seeing: it means we are on the last version there
+           will ever be.
+
+The staleness window defaults to 12 months to match the analysis period the SOUP records
+already use in `grq-3` ("Is maintained and support is available", 12 months, min. releases
+expected). Reusing that rather than inventing a second definition of "maintained".
 
 Separate from CVEs on purpose. A component with no known vulnerability can still be
 unmaintainable, and IEC 81001-5-1 expects components to be kept reasonably current. The
@@ -30,9 +45,16 @@ import sys
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 REGISTRY = {
-    "npm": "https://registry.npmjs.org/{name}/latest",
+    # The *full* document, not the abbreviated one. The abbreviated form carries only
+    # `modified`, which changes on any metadata edit — a deprecation flag, an ownership
+    # change, a tarball re-sign. npm reported `request` as modified three weeks ago when
+    # its last actual release was 2020-02-11, and `left-pad` as 2024 when its last release
+    # was 2018. Staleness read off `modified` would let exactly the abandoned packages
+    # through as fresh. The full document costs more bytes and answers the right question.
+    "npm": "https://registry.npmjs.org/{name}",
     "pypi": "https://pypi.org/pypi/{name}/json",
     "pub": "https://pub.dev/api/packages/{name}",
     # repo1 rather than search.maven.org: the search API took 30-45s and timed out on two
@@ -49,43 +71,84 @@ def fetch_text(url, timeout=20):
         return r.read().decode("utf-8", "replace")
 
 
-def fetch(url, timeout=20):
-    req = urllib.request.Request(url, headers={"User-Agent": "quickbird-soup-currency"})
+def fetch(url, timeout=20, accept=None):
+    h = {"User-Agent": "quickbird-soup-currency"}
+    if accept:
+        h["Accept"] = accept
+    req = urllib.request.Request(url, headers=h)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
 def latest_version(purl):
-    """(version, error). Returns (None, reason) rather than guessing."""
+    """(version, published_iso, error). Returns None rather than guessing."""
     m = re.match(r"pkg:([a-z]+)/(.+?)(?:@([^?]+))?(?:\?.*)?$", purl or "")
     if not m:
-        return None, "no parsable purl"
+        return None, None, "no parsable purl"
     eco, name = m.group(1), m.group(2)
     try:
         if eco == "npm":
-            return fetch(REGISTRY["npm"].format(name=name)).get("version"), None
+            d = fetch(REGISTRY["npm"].format(name=name))
+            v = (d.get("dist-tags") or {}).get("latest")
+            times = d.get("time") or {}
+            # the publish time of the latest version, never `modified`
+            t = times.get(v)
+            if not t:
+                return v, None, "npm returned no publish time for the latest version"
+            return v, t, None
         if eco == "pypi":
-            return fetch(REGISTRY["pypi"].format(name=name))["info"]["version"], None
+            d = fetch(REGISTRY["pypi"].format(name=name))
+            v = d["info"]["version"]
+            urls = d.get("urls") or []
+            t = urls[0].get("upload_time_iso_8601") if urls else None
+            return v, t, None
         if eco == "pub":
-            return fetch(REGISTRY["pub"].format(name=name))["latest"]["version"], None
+            d = fetch(REGISTRY["pub"].format(name=name))["latest"]
+            return d["version"], d.get("published"), None
         if eco == "golang":
-            return fetch(REGISTRY["golang"].format(name=name)).get("Version"), None
+            d = fetch(REGISTRY["golang"].format(name=name))
+            return d.get("Version"), d.get("Time"), None
         if eco == "maven":
             if "/" not in name:
-                return None, "maven purl without a group"
+                return None, None, "maven purl without a group"
             group, artifact = name.rsplit("/", 1)
             path = group.replace(".", "/") + "/" + artifact
             xml = fetch_text(REGISTRY["maven"].format(path=path))
+            # lastUpdated is yyyyMMddHHmmss
+            lu = re.search(r"<lastUpdated>(\d{14})</lastUpdated>", xml)
+            t = (f"{lu.group(1)[0:4]}-{lu.group(1)[4:6]}-{lu.group(1)[6:8]}T"
+                 f"{lu.group(1)[8:10]}:{lu.group(1)[10:12]}:{lu.group(1)[12:14]}+00:00") if lu else None
             # <release> is the newest non-snapshot; <latest> can be a snapshot, which is not
             # something we would ever be expected to upgrade to.
             for tag in ("release", "latest"):
                 m = re.search(rf"<{tag}>([^<]+)</{tag}>", xml)
                 if m:
-                    return m.group(1), None
-            return None, "no <release> in maven-metadata.xml"
-        return None, f"no registry configured for {eco}"
+                    return m.group(1), t, None
+            return None, None, "no <release> in maven-metadata.xml"
+        return None, None, f"no registry configured for {eco}"
     except (urllib.error.URLError, urllib.error.HTTPError, KeyError, json.JSONDecodeError, TimeoutError) as e:
-        return None, f"registry lookup failed: {type(e).__name__}"
+        return None, None, f"registry lookup failed: {type(e).__name__}"
+
+
+def parse_window(s, default_months=12):
+    """'12m' / '18months' / '540d' -> days."""
+    m = re.match(r"(\d+)\s*(m|month|months|d|day|days|y|year|years)?$", str(s or "").strip())
+    if not m:
+        return default_months * 30
+    n, unit = int(m.group(1)), (m.group(2) or "m")[0]
+    return n * (30 if unit == "m" else 365 if unit == "y" else 1)
+
+
+def age_days(iso, now):
+    if not iso:
+        return None
+    try:
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return (now - d).days
+    except ValueError:
+        return None
 
 
 def semver(v):
@@ -137,9 +200,12 @@ def main():
 
     bom = json.load(open(args.bom, encoding="utf-8"))
     policy = json.load(open(args.policy, encoding="utf-8"))
-    limits = policy.get("dependency_currency", {}).get("max_behind", {})
+    cur_policy = policy.get("dependency_currency", {})
+    limits = cur_policy.get("max_behind", {})
     max_major = limits.get("major", 0)
     max_minor = limits.get("minor", 1)
+    stale_days = parse_window(cur_policy.get("stale_after", "12m"))
+    now = datetime.now(timezone.utc)
     reasons = load_soup_reasons(args.soups) if args.soups else {}
 
     # Direct dependencies only. A component is direct if a SOUP record exists for it — that
@@ -158,28 +224,55 @@ def main():
     print(f"checking {len(direct)} component(s) against their registries", file=sys.stderr)
 
     def check(c):
-        latest, err = latest_version(c["purl"])
-        return c, latest, err
+        latest, published, err = latest_version(c["purl"])
+        return c, latest, published, err
 
     results, unknown = [], []
     with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        for c, latest, err in ex.map(check, direct):
+        for c, latest, published, err in ex.map(check, direct):
             name, cur = c.get("name"), c.get("version")
             if latest is None:
                 unknown.append({"name": name, "version": cur, "purl": c.get("purl"),
                                 "why": err or "no latest version returned"})
                 continue
+
+            age = age_days(published, now)
+            is_stale = age is not None and age > stale_days
             b = behind(cur, latest)
             if b is None:
                 unknown.append({"name": name, "version": cur, "latest": latest,
                                 "why": "version is not semver-comparable"})
                 continue
             over = (b[0] > max_major) or (b[1] > max_minor and max_minor != "unlimited")
-            if not over:
+
+            if not over and not is_stale:
                 continue
+
             entry = {"name": name, "current": cur, "latest": latest,
                      "behind": {"major": b[0], "minor": b[1], "patch": b[2]},
-                     "purl": c.get("purl")}
+                     "purl": c.get("purl"),
+                     "last_release": published,
+                     "last_release_age_days": age,
+                     "beyond_max_behind": over,
+                     "stale": is_stale}
+
+            # The distinction that decides what anyone can do about it. Being behind has an
+            # upgrade as its answer; being stale while already current does not — there is
+            # no newer version to move to, so it is a replace, fork or accept decision, and
+            # WI-006-03 already discourages taking on a SOUP that is no longer maintained.
+            if is_stale and not over:
+                entry["finding"] = "upstream-stale-and-we-are-current"
+                entry["action"] = (f"no upgrade available: we are on the latest version and "
+                                   f"upstream has not released in {age} days. Replace, fork, "
+                                   f"or accept with a recorded reason.")
+            elif is_stale and over:
+                entry["finding"] = "upstream-stale-and-we-are-behind"
+                entry["action"] = (f"upgrade to {latest} is possible but upstream stalled "
+                                   f"{age} days ago — upgrading buys less than it looks.")
+            else:
+                entry["finding"] = "behind"
+                entry["action"] = f"upgrade to {latest}"
+
             if name in reasons:
                 entry["justified"] = True
                 entry["reason"] = reasons[name]
@@ -190,10 +283,13 @@ def main():
 
     doc = {
         "schema": "quickbird.dependency-currency/v1",
-        "policy": {"max_behind": limits},
+        "policy": {"max_behind": limits, "stale_after_days": stale_days},
         "summary": {
             "checked": len(direct),
-            "beyond_policy": len(flagged),
+            "beyond_policy": len([r for r in flagged if r["beyond_max_behind"]]),
+            "stale": len([r for r in flagged if r["stale"]]),
+            "stale_with_no_upgrade": len([r for r in flagged
+                                          if r["finding"] == "upstream-stale-and-we-are-current"]),
             "justified": len(justified),
             "unknown": len(unknown),
         },
@@ -212,8 +308,12 @@ def main():
             fh.write(text + "\n")
 
     s = doc["summary"]
-    print(f"currency: {s['beyond_policy']} beyond policy, {s['justified']} justified, "
-          f"{s['unknown']} could not be determined", file=sys.stderr)
+    print(f"currency: {s['beyond_policy']} beyond policy, {s['stale']} stale "
+          f"({s['stale_with_no_upgrade']} of them with no upgrade available), "
+          f"{s['justified']} justified, {s['unknown']} could not be determined", file=sys.stderr)
+    for r in flagged:
+        if r["finding"] == "upstream-stale-and-we-are-current":
+            print(f"::warning::{r['name']} {r['current']}: {r['action']}", file=sys.stderr)
     if unknown:
         print("::warning::a component whose latest version could not be determined is "
               "reported as unknown, not as current", file=sys.stderr)
