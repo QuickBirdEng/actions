@@ -89,8 +89,9 @@ N_TARGETS=$(jq 'length' <<<"$TARGETS")
 N_UNSCANNABLE=$(jq 'length' <<<"$UNSCANNABLE")
 log "$PRODUCT: $N_TARGETS scannable target(s), $N_UNSCANNABLE unscannable"
 
-FINDINGS='[]'; SUPPRESSED='[]'; UNKNOWN='[]'; SCANNED='[]'
+FINDINGS='[]'; SUPPRESSED='[]'; UNKNOWN='[]'; SCANNED='[]'; CLASSIFIED='[]'
 FEEDS='{}'
+STATE_FILE="${MONITOR_STATE:-$OUT_DIR/state.json}"
 
 # --- 2. per target: scan, enrich, filter -------------------------------------
 while IFS=$'\t' read -r name version sbom_url; do
@@ -108,55 +109,45 @@ while IFS=$'\t' read -r name version sbom_url; do
     continue
   fi
 
-  vulns="$OUT_DIR/$name.vulns.json"
-  if ! bash "$HERE/scan-vulns.sh" "$bom" "$vulns" >/dev/null 2>&1; then
+  # One path for both consumers. The monitor used to chain scan -> enrich -> merge itself
+  # and skip classification entirely, which is how merge-enrichment and the classifier ended
+  # up called by nothing: two subsets of the same pipeline, neither of them complete.
+  POL_EFF="$OUT_DIR/policy.effective.json"
+  if [[ ! -f "$POL_EFF" ]]; then
+    if [[ -n "$POLICY_JSON" ]]; then printf '%s' "$POLICY_JSON" > "$POL_EFF"
+    else bash "$HERE/validate-policy.sh" "$HERE/../policy-defaults.yml" >"$POL_EFF" 2>/dev/null || true; fi
+  fi
+
+  ASSESS=("$bom" "$POL_EFF" --out-dir "$OUT_DIR")
+  [[ -d "$OUT_DIR/soups" ]] && ASSESS+=(--soups "$OUT_DIR/soups")
+  [[ -f "$STATE_FILE" ]] && ASSESS+=(--state "$STATE_FILE")
+  if ! bash "$HERE/assess-bom.sh" "${ASSESS[@]}" >&2; then
     UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" \
-      '. + [{name:$n, version:$v, why:"vulnerability scan failed"}]' <<<"$UNSCANNABLE")
+      '. + [{name:$n, version:$v, why:"assessment failed"}]' <<<"$UNSCANNABLE")
     continue
   fi
+  final="$OUT_DIR/$name.assessed.cdx.json"
+  cls="$OUT_DIR/$name.findings.json"
+  FEEDS=$(jq -c --slurpfile e "$OUT_DIR/$name.enrichment.json" '$e[0].feeds' <<<"$FEEDS")
+  enr="$OUT_DIR/$name.enrichment.json"
 
-  enr="$OUT_DIR/$name.enrich.json"
-  if ! QB_ENRICH_CVE_FILE="$vulns" QB_ENRICH_OUTPUT="$enr" \
-       bash "$HERE/../../kev-epss-enrichment/scripts/enrich.sh" >/dev/null 2>&1 \
-    && ! QB_ENRICH_CVE_FILE="$vulns" QB_ENRICH_OUTPUT="$enr" \
-       bash "$HERE/enrich.sh" >/dev/null 2>&1; then
-    # Enrichment failing means KEV membership is unestablished for the whole target. That
-    # is emphatically not "no KEV findings" — mark the target unscannable instead.
-    UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" \
-      '. + [{name:$n, version:$v, why:"KEV enrichment failed — membership could not be established"}]' <<<"$UNSCANNABLE")
-    continue
-  fi
+  # KEV findings, from the classified output: the classifier already applied VEX
+  # suppression and the tri-state KEV rule, so re-deriving them here would be a second
+  # implementation of the same decision.
+  hits=$(jq -c --arg n "$name" --arg v "$version" '
+    [ .findings[]
+      | select(.kev == "true" or .kev == "unknown")
+      | { cve: .id, target: $n, version: $v, track: .track,
+          kev_uncertain: (.kev == "unknown"),
+          epss: .epss,
+          mitigation_due: .mitigation_due, remediation_due: .remediation_due,
+          overdue: ((.mitigation_overdue // false) or (.remediation_overdue // false)),
+          components: .affects, vex_state: .vex_state } ]' "$cls")
 
-  FEEDS=$(jq -c --slurpfile e "$enr" '$e[0].feeds' <<<"$FEEDS")
-
-  # VEX suppression, where the repo carries SOUP records with vex blocks.
-  final="$vulns"
-  if [[ -d "$OUT_DIR/soups" ]]; then
-    bash "$HERE/merge-assessment.sh" "$vulns" "$OUT_DIR/soups" "$OUT_DIR/$name.assessed.json" >/dev/null 2>&1 \
-      && final="$OUT_DIR/$name.assessed.json"
-  fi
-
-  # kev is tri-state. true -> alert. false -> clear. null -> unknown, and unknown must not
-  # be silently folded into clear, which is the whole reason DEV-192 distinguishes them.
-  hits=$(jq -c --slurpfile e "$enr" --arg n "$name" --arg v "$version" '
-    ($e[0].cves) as $c
-    | [ .vulnerabilities[]?
-        | . as $vuln
-        | ($c[$vuln.id] // null) as $k
-        | select($k != null and $k.kev == true)
-        | { cve: $vuln.id, target: $n, version: $v,
-            kev_date_added: $k.kev_date_added,
-            ransomware: ($k.kev_ransomware == "Known"),
-            epss: $k.epss,
-            components: [ $vuln.affects[]?.ref ],
-            vex_state: ($vuln.analysis.state // null) } ]' "$final")
-
-  sup=$(jq -c '[ .[] | select(.vex_state == "not_affected") ]' <<<"$hits")
-  act=$(jq -c '[ .[] | select(.vex_state != "not_affected") ]' <<<"$hits")
-  unk=$(jq -c --slurpfile e "$enr" --arg n "$name" '
-    ($e[0].cves) as $c
-    | [ .vulnerabilities[]? | select(($c[.id] // {kev:null}).kev == null)
-        | {cve: .id, target: $n} ]' "$final")
+  sup=$(jq -c '[ .suppressed[] | {cve:.id, why:.why} ]' "$cls")
+  act="$hits"
+  unk=$(jq -c --arg n "$name" '[ .findings[] | select(.kev == "unknown") | {cve:.id, target:$n} ]' "$cls")
+  CLASSIFIED=$(jq -c --slurpfile c "$cls" --arg n "$name" '. + [{target:$n, summary:$c[0].summary}]' <<<"$CLASSIFIED")
 
   FINDINGS=$(jq -c --argjson a "$act" '. + $a' <<<"$FINDINGS")
   SUPPRESSED=$(jq -c --argjson s "$sup" '. + $s' <<<"$SUPPRESSED")
@@ -176,6 +167,7 @@ jq -n \
   --argjson scanned "$SCANNED" --argjson unscannable "$UNSCANNABLE" \
   --argjson findings "$FINDINGS" --argjson suppressed "$SUPPRESSED" \
   --argjson unknown "$UNKNOWN" --argjson feeds "$FEEDS" --argjson synthetic "$SYNTHETIC" \
+  --argjson classified "$CLASSIFIED" \
   '{
      schema: "quickbird.kev-monitor-run/v1",
      product: $product, repo: $repo, run_at: $at, cra_scope: $cra,
@@ -186,6 +178,7 @@ jq -n \
      kev_findings: $findings,
      kev_suppressed_by_vex: $suppressed,
      kev_membership_unknown: $unknown,
+     classification: $classified,
      all_clear: (($findings | length) == 0
                  and ($unscannable | length) == 0
                  and ($unknown | length) == 0),
@@ -193,6 +186,14 @@ jq -n \
                elif ($unscannable | length) > 0 or ($unknown | length) > 0 then "incomplete"
                else "all-clear" end)
    }' > "$RECORD"
+
+# Carry the classified findings forward. Without this every run restarts every clock and
+# latching never happens — the deadlines would look correct and mean nothing.
+for f in "$OUT_DIR"/*.findings.json; do
+  [[ -e "$f" ]] || continue
+  cp "$f" "$STATE_FILE"
+  break
+done
 
 jq -r '"  verdict: \(.verdict)  (kev=\(.kev_findings|length), suppressed=\(.kev_suppressed_by_vex|length), unknown=\(.kev_membership_unknown|length), not scanned=\(.not_scanned|length))"' "$RECORD" >&2
 log "  record: $RECORD"

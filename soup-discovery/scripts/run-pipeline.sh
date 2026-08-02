@@ -169,7 +169,25 @@ SBOM_MISSING="$(IFS=,; echo "${GAPS[*]:-}")" \
 
 bash "$HERE/verify-bom.sh" "$SOLUTION" >&2 || die "consolidated BOM failed the gate"
 
-# --- 5. human-readable PDF (optional) --------------------------------------
+# --- 5. assess: vulnerabilities, enrichment, VEX, classification -------------
+# The release bundle is evidence, and a component list without its assessment is only half
+# of it. Guarded by a policy: without one there is nothing to classify against, and
+# inventing defaults here would produce deadlines nobody agreed to.
+if [[ -n "${SOUP_POLICY_FILE:-}" && -f "${SOUP_POLICY_FILE}" ]]; then
+  if EFF=$(bash "$HERE/validate-policy.sh" "$SOUP_POLICY_FILE" 2>/dev/null); then
+    printf '%s' "$EFF" > "$OUT_DIR/policy.effective.json"
+    ASSESS_ARGS=("$SOLUTION" "$OUT_DIR/policy.effective.json" --out-dir "$OUT_DIR/bom")
+    [[ -d "$REPO/.soups" ]] && ASSESS_ARGS+=(--soups "$REPO/.soups")
+    bash "$HERE/assess-bom.sh" "${ASSESS_ARGS[@]}" || die "assessment failed"
+    SOLUTION="$OUT_DIR/bom/solution.assessed.cdx.json"
+  else
+    die "$SOUP_POLICY_FILE failed validation — refusing to classify against a policy that does not hold"
+  fi
+else
+  log "::warning::no policy file — the bundle carries components but no vulnerability assessment"
+fi
+
+# --- 6. human-readable PDF (optional) --------------------------------------
 # Guarded rather than required: the pipeline's value is the machine-readable bundle, and
 # a missing python dependency should not fail a run that already produced it.
 if [[ "${RENDER_PDF:-false}" == "true" ]]; then
