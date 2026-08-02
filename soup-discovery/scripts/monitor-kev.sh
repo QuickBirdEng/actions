@@ -93,6 +93,7 @@ FINDINGS='[]'; SUPPRESSED='[]'; UNKNOWN='[]'; SCANNED='[]'; CLASSIFIED='[]'
 FEEDS='{}'
 STATE_FILE="${MONITOR_STATE:-$OUT_DIR/state.json}"
 LIFECYCLE_STATE="${MONITOR_LIFECYCLE_STATE:-$OUT_DIR/lifecycle-state.json}"
+DECISIONS_FILE="${SOUP_DECISIONS_FILE:-.soup-decisions.yml}"
 
 # --- 2. per target: scan, enrich, filter -------------------------------------
 while IFS=$'\t' read -r name version sbom_url; do
@@ -176,6 +177,16 @@ if [[ -n "$LATEST_FINDINGS" ]]; then
   python3 "$HERE/track-lifecycle.py" "${LC_ARGS[@]}" >&2 || LIFECYCLE=""
 fi
 
+# --- 2c. deadline escalation --------------------------------------------------
+ESCALATION=""
+if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
+  ESCALATION="$OUT_DIR/escalation.json"
+  ESC_ARGS=("$LIFECYCLE" --out "$ESCALATION")
+  [[ -f "$OUT_DIR/policy.effective.json" ]] && ESC_ARGS+=(--policy "$OUT_DIR/policy.effective.json")
+  [[ -f "$DECISIONS_FILE" ]] && ESC_ARGS+=(--decisions "$DECISIONS_FILE")
+  python3 "$HERE/escalate-breaches.py" "${ESC_ARGS[@]}" >&2 || ESCALATION=""
+fi
+
 # --- 3. the run record ------------------------------------------------------
 # all_clear requires that we actually established the answer: no KEV findings AND nothing
 # unscannable AND no CVE whose KEV membership is unknown. Anything else is "not clear",
@@ -188,6 +199,7 @@ jq -n \
   --argjson unknown "$UNKNOWN" --argjson feeds "$FEEDS" --argjson synthetic "$SYNTHETIC" \
   --argjson classified "$CLASSIFIED" \
   --argjson lifecycle "$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -c '{summary, release_required, transitions}' "$LIFECYCLE" || echo null )" \
+  --argjson escalation "$( [[ -n "$ESCALATION" && -f "$ESCALATION" ]] && jq -c '{summary, escalations}' "$ESCALATION" || echo null )" \
   '{
      schema: "quickbird.kev-monitor-run/v1",
      product: $product, repo: $repo, run_at: $at, cra_scope: $cra,
@@ -200,6 +212,7 @@ jq -n \
      kev_membership_unknown: $unknown,
      classification: $classified,
      lifecycle: $lifecycle,
+     escalation: $escalation,
      all_clear: (($findings | length) == 0
                  and ($unscannable | length) == 0
                  and ($unknown | length) == 0),
@@ -246,6 +259,17 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
       echo ":question: *CRA scope for this product is not recorded.* Determine it before assuming the 24-hour clock does not apply."
     fi
     echo ""
+    if [[ -n "$ESCALATION" && -f "$ESCALATION" ]]; then
+      UD=$(jq -r '.summary.by_level.undecided // 0' "$ESCALATION")
+      BR=$(jq -r '.summary.by_level.breached // 0' "$ESCALATION")
+      if [[ "$UD" != "0" || "$BR" != "0" ]]; then
+        echo ""
+        echo ":alarm_clock: *Deadlines* — $BR breached, $UD breached with no valid decision on record:"
+        jq -r '.escalations[] | select(.level=="undecided" or .level=="breached")
+               | "   • \(.id) [\(.level)] \(.detail[-1])"' "$ESCALATION"
+        [[ "$UD" != "0" ]] && echo "_§3.3 requires a recorded decision — a revised date or a risk acceptance — in .soup-decisions.yml._"
+      fi
+    fi
     if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
       RR=$(jq -r '.summary.release_required' "$LIFECYCLE")
       if [[ "$RR" != "0" && -n "$RR" ]]; then
