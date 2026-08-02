@@ -563,6 +563,169 @@ test_lifecycle_records_transitions() {
   assert "$(jq -r '.transitions[0].to' "$TMP/t2.json")" "fix-ready-release-pending"
 }
 
+# ---------------------------------------------------------------- escalation
+ESC() { python3 "$S/escalate-breaches.py" "$@"; }
+mkesc() { jq -n --argjson f "$1" '{findings:$f}' > "$TMP/ef.json"; }
+
+test_escalate_warns_before_the_deadline() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-08-06T00:00:00+00:00"}]'
+  ESC "$TMP/ef.json" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "approaching"
+}
+
+# §3.3 gives five *working* days. Counting calendar days would escalate across a weekend
+# before the owner has had a working day to respond.
+test_escalate_counts_working_days() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-08-07T00:00:00+00:00"}]'
+  # Fri 7 Aug -> Mon 10 Aug is one working day, not three calendar days
+  ESC "$TMP/ef.json" --out "$TMP/eo.json" --now 2026-08-10T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "breached" || return 1
+  contains "$(jq -r '.escalations[0].detail[0]' "$TMP/eo.json")" "4 more working day"
+}
+
+test_escalate_undecided_after_the_decision_window() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00"}]'
+  ESC "$TMP/ef.json" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "undecided"
+}
+
+test_escalate_recorded_decision_holds_the_level() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00"}]'
+  printf 'decisions:\n  - cve: CVE-A\n    decision: revised-date\n    by: x\n    expires: 2026-12-01\n' > "$TMP/dec.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec.yml" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "breached"
+}
+
+# An expired decision reads as handled while protecting nothing — worse than none at all.
+test_escalate_expired_decision_is_undecided() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00"}]'
+  printf 'decisions:\n  - cve: CVE-A\n    decision: risk-accepted\n    by: x\n    expires: 2026-07-15\n' > "$TMP/dec.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec.yml" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "undecided"
+}
+
+# An unreadable decisions file must stop the run: silently ignoring it would escalate every
+# breach that is in fact already handled.
+test_escalate_refuses_unreadable_decisions() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00"}]'
+  printf 'decisions: [ this is not: valid: yaml\n' > "$TMP/bad.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/bad.yml" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1
+  assert "$?" "1"
+}
+
+test_escalate_ignores_satisfied_findings() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00","remediation_satisfied":true}]'
+  ESC "$TMP/ef.json" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.total' "$TMP/eo.json")" "0"
+}
+
+# ---------------------------------------------------------------- currency
+test_currency_comparison_logic() { S="$S" python3 "$HERE/currency-logic.py"; }
+
+mkcur() { jq -n --argjson c "$1" '{bomFormat:"CycloneDX",specVersion:"1.6",
+  metadata:{component:{name:"p"}},components:$c}' > "$TMP/cb.json"; }
+
+# A registry that cannot be reached must yield "unknown", never "current" — not knowing how
+# far behind something is is not the same as it being up to date.
+test_currency_unreachable_registry_is_unknown_not_current() {
+  mkcur '[{"bom-ref":"a","type":"library","name":"x","version":"1.0.0","purl":"pkg:npm/x@1.0.0",
+           "properties":[{"name":"quickbird:soup:record","value":"r"}]}]'
+  mkdir -p "$TMP/csoups"
+  printf '{"package":"x","version":"1.x.x"}' > "$TMP/csoups/x.json"
+  https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+    python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.unknown' "$TMP/co.json")" "1" || return 1
+  assert "$(jq -r '.summary.beyond_policy' "$TMP/co.json")" "0"
+}
+
+# Transitives cannot be upgraded independently, so flagging them produces a list nobody can
+# act on. Only components carrying a SOUP record are checked.
+test_currency_skips_transitives() {
+  mkcur '[{"bom-ref":"a","type":"library","name":"direct","version":"1.0.0","purl":"pkg:npm/direct@1.0.0",
+           "properties":[{"name":"quickbird:soup:record","value":"r"}]},
+          {"bom-ref":"b","type":"library","name":"trans","version":"1.0.0","purl":"pkg:npm/trans@1.0.0"}]'
+  mkdir -p "$TMP/csoups2"; printf '{"package":"direct","version":"1.x.x"}' > "$TMP/csoups2/d.json"
+  https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+    python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups2" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.checked' "$TMP/co.json")" "1"
+}
+
+test_currency_is_report_only() {
+  mkcur '[]'
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups2" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.severity' "$TMP/co.json")" "report-only"
+}
+
+test_net_currency_against_real_registries() {
+  need_net || return 77
+  mkcur '[{"bom-ref":"a","type":"library","name":"okhttp","version":"4.12.0","purl":"pkg:maven/com.squareup.okhttp3/okhttp@4.12.0",
+           "properties":[{"name":"quickbird:soup:record","value":"r"}]}]'
+  mkdir -p "$TMP/csoups3"; printf '{"package":"okhttp","version":"4.x.x"}' > "$TMP/csoups3/o.json"
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups3" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.beyond_policy' "$TMP/co.json")" "1"
+}
+
+# ---------------------------------------------------------------- backstop
+mkrun() { jq -n --arg p "$1" --arg at "${2}T09:00:00+00:00" --arg v "$3" --argjson syn "${4:-false}" \
+  '{schema:"quickbird.kev-monitor-run/v1",product:$p,run_at:$at,verdict:$v,synthetic:$syn}' \
+  > "$TMP/ev/${2}-$1${5:-}.json"; }
+
+# The finding a daily alert can never produce: a product that stopped being scanned emits
+# no alerts at all, which is indistinguishable from a product with nothing wrong.
+test_backstop_catches_a_product_that_stopped_being_scanned() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun p1 2026-07-01 all-clear
+  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.coverage[0].status' "$TMP/bs.json")" "stale" || return 1
+  assert "$(jq -r '.verdict' "$TMP/bs.json")" "action-required"
+}
+
+test_backstop_catches_a_product_with_no_records_at_all() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun p1 2026-08-02 all-clear
+  python3 "$S/backstop-report.py" "$TMP/ev" --products p1,p2 --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '[.coverage[]|select(.product=="p2")][0].status' "$TMP/bs.json")" "never-scanned"
+}
+
+# A synthetic run is a test, not evidence that a product was monitored.
+test_backstop_ignores_synthetic_runs() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun p1 2026-08-02 all-clear true -synth
+  python3 "$S/backstop-report.py" "$TMP/ev" --products p1 --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.coverage[0].status' "$TMP/bs.json")" "never-scanned"
+}
+
+test_backstop_reports_gaps_between_runs() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun p1 2026-07-01 all-clear; mkrun p1 2026-07-20 all-clear; mkrun p1 2026-08-02 all-clear
+  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.coverage[0].status' "$TMP/bs.json")" "gaps" || return 1
+  assert "$(jq -r '.coverage[0].gaps|length' "$TMP/bs.json")" "2"
+}
+
+# A backstop that always passes is not a control.
+test_backstop_exits_nonzero_when_action_is_required() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun p1 2026-07-01 all-clear
+  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1
+  assert "$?" "1"
+}
+
+test_backstop_clean_when_everything_is_current() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  for d in 2026-08-01 2026-08-02; do mkrun p1 "$d" all-clear; done
+  python3 "$S/backstop-report.py" "$TMP/ev" --products p1 --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$?" "0" || return 1
+  assert "$(jq -r '.verdict' "$TMP/bs.json")" "clean"
+}
+
+# What it does not check must be visible, not absent.
+test_backstop_states_what_it_does_not_check() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"; mkrun p1 2026-08-02 all-clear
+  python3 "$S/backstop-report.py" "$TMP/ev" --products p1 --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  [[ "$(jq -r '.not_checked|length' "$TMP/bs.json")" -gt 0 ]] || { echo "not_checked is empty"; return 1; }
+}
+
 # ---------------------------------------------------------------- network
 test_net_enrichment_against_live_feeds() {
   need_net || return 77
@@ -580,6 +743,9 @@ test_net_fix_or_vex_blocks_known_vulnerable_version() {
 }
 
 # ---------------------------------------------------------------- run
+printf 'product: t\ntier: Basic\ncra_scope: false\nrelease_cadence: monthly\n' > "$TMP/cpol.yml"
+bash "$S/validate-policy.sh" "$TMP/cpol.yml" 2>/dev/null > "$TMP/cp.json"
+
 echo "SOUP pipeline tests${FILTER:+ (filter: $FILTER)}"
 for fn in $(declare -F | awk '{print $3}' | grep '^test_' | sort); do
   t "${fn#test_}" "$fn"
