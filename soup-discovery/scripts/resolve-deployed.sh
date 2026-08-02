@@ -25,20 +25,43 @@ ASSET_PATTERN="${SBOM_ASSET_PATTERN:-sbom-%s.cdx.json}"
 
 for t in gh jq; do command -v "$t" >/dev/null 2>&1 || { echo "::error::$t required" >&2; exit 1; }; done
 
+# --- mobile: the last production build is what is live ----------------------
+# For the apps there is no deployment record, because the release goes straight to the
+# stores. The convention that already exists in the release assets carries the answer:
+# a build is tagged -android-production / -ios-production, and the newest release carrying
+# one is what users are running. Staging, study and develop flavours are not live.
+#
+# This is derived from what the release pipeline already produces rather than requiring new
+# instrumentation — but it does mean the *asset naming* is now load-bearing, which is worth
+# knowing before someone renames it.
+MOBILE_PATTERN="${MOBILE_PROD_PATTERN:-production}"
+# Note: `gh api --jq` takes only an expression — it does not forward --arg to jq. Passing
+# one silently loses the variable and every repo comes back "not live", which is a wrong
+# answer that looks like a legitimate one. Pipe to jq instead.
+mobile=$(gh api "repos/$REPO/releases?per_page=100" 2>/dev/null \
+  | jq -c --arg pat "$MOBILE_PATTERN" '
+      [ .[] | select([.assets[].name] | any(test($pat; "i")))
+        | { tag: .tag_name, published: .published_at,
+            artifacts: [.assets[].name | select(test($pat; "i"))],
+            sbom: ([.assets[] | select(.name | test("^sbom-.*\\.cdx\\.json$")) | .browser_download_url][0] // null) } ]
+      | sort_by(.published) | last // null' 2>/dev/null) || mobile=null
+[[ -z "$mobile" ]] && mobile=null
+
 deployments=$(gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null) || {
   echo "::error::cannot read deployments for $REPO" >&2; exit 1; }
 
-if [[ "$(jq 'length' <<<"$deployments")" == "0" ]]; then
+if [[ "$(jq 'length' <<<"$deployments")" == "0" && "$mobile" == "null" ]]; then
   jq -n --arg repo "$REPO" '{
     schema: "quickbird.deployed-version/v1",
     repo: $repo,
-    resolvable: false,
-    reason: "no GitHub deployments recorded — nothing states what is running, and the latest tag is not evidence of it",
-    environments: []
+    environments: [],
+    mobile: null,
+    unresolvable: [{environment: "*", why: "no GitHub deployments and no production release artifact — nothing states what is running, and the latest tag is not evidence of it"}]
   }'
-  echo "::warning::$REPO: no deployments recorded — the deployed version is unknown" >&2
+  echo "::warning::$REPO: nothing states what is running — the deployed version is unknown" >&2
   exit 0
 fi
+[[ "$(jq 'length' <<<"$deployments")" == "0" ]] && deployments='[]' 
 
 # latest deployment per environment
 latest=$(jq -c '[.[] | {env: .environment, ref: .ref, sha: .sha, at: .created_at, id: .id}]
@@ -82,12 +105,29 @@ while IFS=$'\t' read -r env ref sha at id; do
            sbom_status:$sstate}]' <<<"$out")
 done < <(jq -r '.[] | "\(.env)\t\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$latest")
 
-jq -n --arg repo "$REPO" --argjson envs "$out" '{
+jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" '{
   schema: "quickbird.deployed-version/v1",
   repo: $repo,
+  # The apps and the backend are separately live and can differ — that is the concrete
+  # case behind "multiple concurrent live versions", not a hypothetical.
+  mobile: (if $mobile == null then null else {
+      live_version: $mobile.tag,
+      published: $mobile.published,
+      artifacts: $mobile.artifacts,
+      sbom: $mobile.sbom,
+      sbom_status: (if $mobile.sbom != null then "available"
+                    else "production release carries no sbom-*.cdx.json asset" end)
+    } end),
   environments: $envs,
-  scannable: [$envs[] | select(.sbom != null) | .environment],
-  unresolvable: [$envs[] | select(.sbom == null) | {environment, ref, why: .sbom_status}]
+  scannable: ([$envs[] | select(.sbom != null) | .environment]
+              + (if ($mobile != null and $mobile.sbom != null) then ["mobile"] else [] end)),
+  unresolvable: ([$envs[] | select(.sbom == null) | {environment, ref, why: .sbom_status}]
+                 + (if $mobile != null and $mobile.sbom == null
+                    then [{environment: "mobile", ref: $mobile.tag,
+                           why: "production release carries no SBOM asset"}] else [] end)
+                 + (if $mobile == null
+                    then [{environment: "mobile", ref: null,
+                           why: "no release carries a production artifact — the product may not be live yet (study/staging flavours only)"}] else [] end))
 }'
 
 # Warnings on stderr so a CI job surfaces them without parsing the JSON.
