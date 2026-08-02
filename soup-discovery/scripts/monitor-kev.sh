@@ -92,6 +92,7 @@ log "$PRODUCT: $N_TARGETS scannable target(s), $N_UNSCANNABLE unscannable"
 FINDINGS='[]'; SUPPRESSED='[]'; UNKNOWN='[]'; SCANNED='[]'; CLASSIFIED='[]'
 FEEDS='{}'
 STATE_FILE="${MONITOR_STATE:-$OUT_DIR/state.json}"
+LIFECYCLE_STATE="${MONITOR_LIFECYCLE_STATE:-$OUT_DIR/lifecycle-state.json}"
 
 # --- 2. per target: scan, enrich, filter -------------------------------------
 while IFS=$'\t' read -r name version sbom_url; do
@@ -157,6 +158,24 @@ while IFS=$'\t' read -r name version sbom_url; do
     '. + [{name:$n, version:$v, vulnerabilities:$t}]' <<<"$SCANNED")
 done < <(jq -r '.[] | "\(.name)\t\(.version)\t\(.sbom)"' <<<"$TARGETS")
 
+# --- 2b. lifecycle -----------------------------------------------------------
+# The classifier says what a finding is; this says where it stands. Without it the monitor
+# cannot tell "nobody has fixed this" from "the fix is merged and waiting to ship", and the
+# second of those is the state the whole ticket is about.
+#
+# MONITOR_MAIN_BOM is the comparison against main. Absent, every finding reads as open and
+# the middle state is unreachable — the lifecycle says so rather than pretending.
+LIFECYCLE=""
+LATEST_FINDINGS=$(ls -1t "$OUT_DIR"/*.findings.json 2>/dev/null | head -1)
+if [[ -n "$LATEST_FINDINGS" ]]; then
+  LIFECYCLE="$OUT_DIR/lifecycle.json"
+  LC_ARGS=(--deployed "$LATEST_FINDINGS" --out "$LIFECYCLE")
+  [[ -n "${MONITOR_MAIN_BOM:-}" && -f "${MONITOR_MAIN_BOM}" ]] && LC_ARGS+=(--main "$MONITOR_MAIN_BOM")
+  [[ -f "$LIFECYCLE_STATE" ]] && LC_ARGS+=(--state "$LIFECYCLE_STATE")
+  [[ -f "$OUT_DIR/policy.effective.json" ]] && LC_ARGS+=(--policy "$OUT_DIR/policy.effective.json")
+  python3 "$HERE/track-lifecycle.py" "${LC_ARGS[@]}" >&2 || LIFECYCLE=""
+fi
+
 # --- 3. the run record ------------------------------------------------------
 # all_clear requires that we actually established the answer: no KEV findings AND nothing
 # unscannable AND no CVE whose KEV membership is unknown. Anything else is "not clear",
@@ -168,6 +187,7 @@ jq -n \
   --argjson findings "$FINDINGS" --argjson suppressed "$SUPPRESSED" \
   --argjson unknown "$UNKNOWN" --argjson feeds "$FEEDS" --argjson synthetic "$SYNTHETIC" \
   --argjson classified "$CLASSIFIED" \
+  --argjson lifecycle "$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -c '{summary, release_required, transitions}' "$LIFECYCLE" || echo null )" \
   '{
      schema: "quickbird.kev-monitor-run/v1",
      product: $product, repo: $repo, run_at: $at, cra_scope: $cra,
@@ -179,6 +199,7 @@ jq -n \
      kev_suppressed_by_vex: $suppressed,
      kev_membership_unknown: $unknown,
      classification: $classified,
+     lifecycle: $lifecycle,
      all_clear: (($findings | length) == 0
                  and ($unscannable | length) == 0
                  and ($unknown | length) == 0),
@@ -194,6 +215,7 @@ for f in "$OUT_DIR"/*.findings.json; do
   cp "$f" "$STATE_FILE"
   break
 done
+[[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && cp "$LIFECYCLE" "$LIFECYCLE_STATE"
 
 jq -r '"  verdict: \(.verdict)  (kev=\(.kev_findings|length), suppressed=\(.kev_suppressed_by_vex|length), unknown=\(.kev_membership_unknown|length), not scanned=\(.not_scanned|length))"' "$RECORD" >&2
 log "  record: $RECORD"
@@ -222,6 +244,16 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
       echo "_Not in CRA scope — no 24-hour reporting obligation. Still Track 1 under the classification: act immediately._"
     else
       echo ":question: *CRA scope for this product is not recorded.* Determine it before assuming the 24-hour clock does not apply."
+    fi
+    echo ""
+    if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
+      RR=$(jq -r '.summary.release_required' "$LIFECYCLE")
+      if [[ "$RR" != "0" && -n "$RR" ]]; then
+        echo ""
+        echo ":package: *Release required* — $RR finding(s) are fixed in main but not yet live:"
+        jq -r '.release_required[] | "   • \(.id) — \(.why)"' "$LIFECYCLE"
+        echo "_A merged fix does not stop the remediation clock. Only a deploy does._"
+      fi
     fi
     echo ""
     echo "Classification: KEV is Track 1 unconditionally — mitigation 72 h, remediation 21 d, and the remediation clock stops only on deploy."
