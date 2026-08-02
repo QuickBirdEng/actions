@@ -52,15 +52,34 @@ jq --slurpfile recs "$TMP/records.json" '
   # All defs first: in jq a def must introduce the expression that follows it, so a
   # leading pipe before "def" is a syntax error.
 
-  # Match a record to a component: the name must agree, and the resolved version if the
-  # component has one. metadata.input_version is the resolved version; .version is the
-  # wildcard ("1.x.x") and is deliberately not used for matching.
+  # Match a record to a component by name and by the *version family* the approval covers.
+  #
+  # A SOUP approval is not version-specific: the record carries version "1.x.x" and an
+  # metadata.input_version ("1.0.1") that is merely the version checked at approval time.
+  # Matching on input_version would mean a component at 1.0.2 finds no record, gets no
+  # requirement properties, and the record is reported as orphaned — three wrong answers
+  # from one wrong join. The family is what the approval is about.
+  #
+  # "1.x.x" -> any 1.*        "0.9.x" -> any 0.9.*        "1.0.1" -> exactly that
+  # For 0.x the minor is the compatibility axis, which is the same convention the existing
+  # cve-check.sh uses when it derives a version range.
+  def version_matches($pattern; $v):
+    ($pattern // "") as $p
+    | ($v // "") as $ver
+    | if $p == "" or $ver == "" then true
+      elif ($p | test("[xX*]")) then
+        ( $p | split(".") ) as $pp
+        | ( $pp | map(select(test("^[0-9]+$"))) ) as $fixed
+        | ( $fixed | join(".") ) as $prefix
+        | if $prefix == "" then true else ($ver | startswith($prefix + ".")) or ($ver == $prefix) end
+      else $ver == $p
+      end;
+
   def match_record($records; $c):
     $records
     | map(select(
         (.package // "") == ($c.name // "")
-        and ( ((.metadata.input_version // "") == "")
-              or ((.metadata.input_version // "") == ($c.version // "")) )
+        and version_matches(.version; $c.version)
       ))
     | first;
 
@@ -121,7 +140,9 @@ jq --slurpfile recs "$TMP/records.json" '
         | .properties = ( ((.properties // []) + req_props($r)
                            + [ { name: "quickbird:soup:record",   value: ($r._source // "") },
                                { name: "quickbird:soup:approved",
-                                 value: ((($r.metadata.approval.by // "") != "") | tostring) } ]
+                                 value: ((($r.metadata.approval.by // "") != "") | tostring) },
+                               { name: "quickbird:soup:approved-family", value: ($r.version // "") },
+                               { name: "quickbird:soup:checked-version", value: ($r.metadata.input_version // "") } ]
                            + ( if (($r.risk_refs // []) | length) > 0
                                then ($r.risk_refs | map({name:"quickbird:soup:risk-ref", value:.}))
                                else [] end ))

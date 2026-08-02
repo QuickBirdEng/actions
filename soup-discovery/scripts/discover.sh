@@ -109,8 +109,8 @@ done <<<"$(grep -E '(^|/)build\.gradle(\.kts)?$' <<<"$FILES" || true)"
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   dir=$(dirname "$f")
-  add "$(basename "$dir")" "jvm-maven" "dir:$dir/target" "$f" "true" \
-      "scan the packaged output; 'mvn dependency:list' is the fallback if target/ is absent"
+  add "$(basename "$dir")" "jvm-maven" "mvn:$dir" "$f" "true" \
+      "package first, then scan target/ — the pom lists declared dependencies only, the packaged output is the resolved set"
 done <<<"$(grep -E '(^|/)pom\.xml$' <<<"$FILES" || true)"
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,15 @@ while IFS= read -r f; do
   last_line=$(tail -1 <<<"$froms" | cut -d: -f1)
   while IFS= read -r fl; do
     ln=$(cut -d: -f1 <<<"$fl")
+    # Strip the line number, the FROM keyword, any build flags, and the AS alias.
+    # --platform=linux/amd64 is common in multi-arch builds and was silently ending up
+    # inside the image reference ("registry:--platform=linux/amd64 nginx:mainline-alpine"),
+    # which made the scan fail and the candidate land in the gap list for the wrong reason.
     img=$(sed -E 's/^[0-9]+:[[:space:]]*FROM[[:space:]]+//; s/[[:space:]]+AS[[:space:]]+.*$//I' <<<"$fl")
+    while [[ "$img" == --* ]]; do
+      img="${img#* }"
+      img="${img#"${img%%[![:space:]]*}"}"
+    done
     if [[ "$ln" == "$last_line" ]]; then ships=true; else ships=false; fi
     if [[ "$img" == *"@sha256:"* ]]; then
       note="digest-pinned"

@@ -64,9 +64,21 @@ still `under_investigation` when the finding's mitigation deadline elapses, it r
 `affected` and alerts (see `classification-draft.md` §4). Without that rule
 `under_investigation` becomes the mute button `not_affected` was designed not to be.
 
-**Scope.** A statement is bound to a component version range and to this product. It does
-not carry over to a new major version of the component automatically, and it is re-reviewed
-when the version changes.
+**Scope — the approval is a version *family*, not a version.** The record's `version` field
+carries the family (`1.x.x`), and `metadata.input_version` is merely the version that was
+checked when the approval was granted. A component shipping 1.0.4 is covered by a record
+that says `1.x.x` / checked `1.0.1`; it does not need re-approval for every patch bump.
+`merge-assessment.sh` joins on the family for that reason — joining on `input_version`
+would leave the component with no requirement properties *and* report the record as
+orphaned, two wrong answers from one wrong join.
+
+Both values are preserved in the BOM so the difference stays visible:
+`quickbird:soup:approved-family` and `quickbird:soup:checked-version`. A new major version
+is a new family and does need a fresh approval — verified: a 2.0.0 component does not match
+a `1.x.x` record.
+
+A VEX statement inherits that scope. It is bound to the family and to this product, and is
+re-reviewed when the family changes.
 
 ## What the merge produces
 
