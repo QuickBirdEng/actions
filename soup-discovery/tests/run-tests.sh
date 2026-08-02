@@ -656,6 +656,24 @@ test_currency_is_report_only() {
   assert "$(jq -r '.severity' "$TMP/co.json")" "report-only"
 }
 
+# The staleness window is a different question from the currency window and has a
+# different answer: there is nothing to upgrade to.
+test_currency_stale_and_current_needs_no_upgrade() {
+  S="$S" python3 "$HERE/staleness-logic.py"
+}
+
+test_net_currency_detects_an_abandoned_package() {
+  need_net || return 77
+  mkcur '[{"bom-ref":"a","type":"library","name":"request","version":"2.88.2","purl":"pkg:npm/request@2.88.2",
+           "properties":[{"name":"quickbird:soup:record","value":"r"}]}]'
+  mkdir -p "$TMP/csoups4"; printf '{"package":"request","version":"2.x.x"}' > "$TMP/csoups4/r.json"
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups4" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  # request has been unreleased since 2020 while npm's `modified` field still moves
+  assert "$(jq -r '.beyond_policy[0].finding' "$TMP/co.json")" "upstream-stale-and-we-are-current" || return 1
+  [[ "$(jq -r '.beyond_policy[0].last_release_age_days' "$TMP/co.json")" -gt 1000 ]] \
+    || { echo "age looks like npm's modified field, not the publish time"; return 1; }
+}
+
 test_net_currency_against_real_registries() {
   need_net || return 77
   mkcur '[{"bom-ref":"a","type":"library","name":"okhttp","version":"4.12.0","purl":"pkg:maven/com.squareup.okhttp3/okhttp@4.12.0",

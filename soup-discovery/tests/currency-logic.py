@@ -30,9 +30,12 @@ eq("partial version",     cc.behind("1", "1.2.0"), (0, 2, 0))
 eq("unparsable current",  cc.behind("not-a-version", "1.0.0"), None)
 eq("unparsable latest",   cc.behind("1.0.0", "latest"), None)
 
-# purl parsing feeds the registry choice; a wrong ecosystem means a wrong or no answer
-eq("npm purl",   cc.latest_version("not-a-purl")[0], None)
-eq("no registry", cc.latest_version("pkg:cargo/serde@1.0.0")[1], "no registry configured for cargo")
+# purl parsing feeds the registry choice; a wrong ecosystem means a wrong or no answer.
+# latest_version returns (version, published, error) — the middle slot is the publish time
+# that staleness needs, so the error is the third.
+eq("unparsable purl", cc.latest_version("not-a-purl")[0], None)
+eq("unparsable purl reason", cc.latest_version("not-a-purl")[2], "no parsable purl")
+eq("no registry", cc.latest_version("pkg:cargo/serde@1.0.0")[2], "no registry configured for cargo")
 
 for b in bad:
     print("  " + b)
