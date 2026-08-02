@@ -1,0 +1,22 @@
+# Per-product policy for QuickBirdEng/mindnet. Sits next to .soup-scope.yml.
+#
+# Everything not stated here comes from the process defaults (policy-defaults.yml, which is
+# §2.1/§3 of the classification process in machine-readable form). Overriding a deadline to
+# be *longer*, or a threshold to be *higher*, requires a `reason:` — otherwise
+# "configurable per project" would just mean the process is advisory.
+#
+# DRAFT. cra_scope in particular is a determination, not a guess.
+
+product: mindnet
+tier: Basic
+release_cadence: monthly
+
+# Mindnet is a medical device under MDR, so it sits outside the CRA's product requirements
+# (CRA Art. 2) — but that is a determination that should be recorded by whoever is
+# accountable for it, not inferred by tooling. Set to unknown until then: the alert will
+# say the scope is undetermined rather than claim there is no 24-hour obligation.
+cra_scope: unknown
+
+alerts:
+  slack_channel: ""        # fill in — without it, runs record but nobody is notified
+  threshold: high

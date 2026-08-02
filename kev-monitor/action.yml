@@ -9,14 +9,18 @@ inputs:
     description: 'owner/repo to resolve the deployed version from'
     required: false
     default: ${{ github.repository }}
+  policy-file:
+    description: 'Per-product policy. Supplies cra_scope, the alert channel and the deadlines, validated against the process defaults.'
+    required: false
+    default: '.soup-policy.yml'
   cra-scope:
     description: >-
-      Whether this product is in scope of the Cyber Resilience Act — true | false | unknown.
-      Drives whether the alert states the 24-hour reporting obligation. Left at "unknown" the
-      alert says so rather than assuming either way, because assuming "false" is the one
-      wrong answer with a legal consequence.
+      Override for the policy's cra_scope — true | false | unknown. Normally left empty so
+      the value comes from the policy file, where it is versioned and reviewable. Empty and
+      with no policy file, the alert says the scope is unknown rather than assuming either
+      way: assuming "false" is the one wrong answer with a legal consequence.
     required: false
-    default: 'unknown'
+    default: ''
   slack-channel-id:
     description: 'Channel to post to. Without it the run still produces its record; only the notification is skipped.'
     required: false
@@ -51,6 +55,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.gh-token }}
         CRA_SCOPE: ${{ inputs.cra-scope }}
+        SOUP_POLICY_FILE: ${{ inputs.policy-file }}
       run: |
         set -o pipefail
         OUT="${{ inputs.evidence-dir }}"
