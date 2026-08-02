@@ -499,6 +499,70 @@ test_classify_cvss_matches_published_scores() {
   S="$S" python3 "$HERE/cvss-reference.py"
 }
 
+# ---------------------------------------------------------------- lifecycle
+LC() { python3 "$S/track-lifecycle.py" "$@"; }
+mkfind() { jq -n --argjson f "$2" --argjson ok "${3:-true}" \
+  '{schema:"quickbird.classified-findings/v1",product:"p",
+    summary:(if $ok then {total:($f|length)} else {} end),findings:$f,suppressed:[]}' > "$1"; }
+
+test_lifecycle_fix_in_main_does_not_satisfy_remediation() {
+  mkfind "$TMP/d.json" '[{"id":"CVE-A","track":"immediate","remediation_due":"2026-08-23T00:00:00+00:00","remediation_overdue":false}]'
+  mkfind "$TMP/m.json" '[]'
+  LC --deployed "$TMP/d.json" --main "$TMP/m.json" --out "$TMP/l.json" --now 2026-08-05T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].state' "$TMP/l.json")" "fix-ready-release-pending" || return 1
+  assert "$(jq -r '.findings[0].mitigation_satisfied' "$TMP/l.json")" "true" || return 1
+  # the rule the whole ticket rests on
+  assert "$(jq -r '.findings[0].remediation_satisfied' "$TMP/l.json")" "false"
+}
+
+test_lifecycle_resolves_only_when_gone_from_the_running_version() {
+  mkfind "$TMP/d1.json" '[{"id":"CVE-A","track":"immediate"}]'
+  mkfind "$TMP/m.json" '[]'
+  LC --deployed "$TMP/d1.json" --main "$TMP/m.json" --out "$TMP/l1.json" --now 2026-08-01T00:00:00+00:00 >/dev/null 2>&1
+  mkfind "$TMP/d2.json" '[]'
+  LC --deployed "$TMP/d2.json" --main "$TMP/m.json" --state "$TMP/l1.json" --out "$TMP/l2.json" --now 2026-08-10T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].state' "$TMP/l2.json")" "deployed" || return 1
+  assert "$(jq -r '.findings[0].remediation_satisfied' "$TMP/l2.json")" "true"
+}
+
+# The dangerous one. A finding absent because the scan failed must never read as resolved -
+# that is how a live vulnerability gets closed on the strength of a network error.
+test_lifecycle_failed_scan_does_not_resolve() {
+  mkfind "$TMP/d1.json" '[{"id":"CVE-A","track":"immediate"}]'
+  mkfind "$TMP/m.json" '[]'
+  LC --deployed "$TMP/d1.json" --main "$TMP/m.json" --out "$TMP/l1.json" --now 2026-08-01T00:00:00+00:00 >/dev/null 2>&1
+  mkfind "$TMP/dbad.json" '[]' false     # no summary.total -> the scan did not complete
+  LC --deployed "$TMP/dbad.json" --main "$TMP/m.json" --state "$TMP/l1.json" --out "$TMP/l3.json" --now 2026-08-10T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].state' "$TMP/l3.json")" "unknown" || return 1
+  assert "$(jq -r '.findings[0].remediation_satisfied' "$TMP/l3.json")" "false"
+}
+
+test_lifecycle_without_main_everything_is_open() {
+  mkfind "$TMP/d.json" '[{"id":"CVE-A","track":"immediate"}]'
+  LC --deployed "$TMP/d.json" --out "$TMP/l.json" --now 2026-08-05T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].state' "$TMP/l.json")" "open" || return 1
+  assert "$(jq -r '.main_comparison' "$TMP/l.json")" "false"
+}
+
+test_lifecycle_release_required_is_track1_only() {
+  mkfind "$TMP/d.json" '[{"id":"CVE-A","track":"immediate","remediation_due":"2026-09-01T00:00:00+00:00","remediation_overdue":false},
+                          {"id":"CVE-B","track":"expedited","remediation_due":"2026-09-01T00:00:00+00:00","remediation_overdue":false}]'
+  mkfind "$TMP/m.json" '[]'
+  LC --deployed "$TMP/d.json" --main "$TMP/m.json" --out "$TMP/l.json" --now 2026-08-05T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.release_required' "$TMP/l.json")" "1" || return 1
+  assert "$(jq -r '.release_required[0].id' "$TMP/l.json")" "CVE-A"
+}
+
+test_lifecycle_records_transitions() {
+  mkfind "$TMP/d.json" '[{"id":"CVE-A","track":"immediate"}]'
+  mkfind "$TMP/m1.json" '[{"id":"CVE-A"}]'
+  LC --deployed "$TMP/d.json" --main "$TMP/m1.json" --out "$TMP/t1.json" --now 2026-08-01T00:00:00+00:00 >/dev/null 2>&1
+  mkfind "$TMP/m2.json" '[]'
+  LC --deployed "$TMP/d.json" --main "$TMP/m2.json" --state "$TMP/t1.json" --out "$TMP/t2.json" --now 2026-08-05T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.transitions[0].from' "$TMP/t2.json")" "open" || return 1
+  assert "$(jq -r '.transitions[0].to' "$TMP/t2.json")" "fix-ready-release-pending"
+}
+
 # ---------------------------------------------------------------- network
 test_net_enrichment_against_live_feeds() {
   need_net || return 77
