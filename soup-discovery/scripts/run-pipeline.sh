@@ -169,6 +169,18 @@ SBOM_MISSING="$(IFS=,; echo "${GAPS[*]:-}")" \
 
 bash "$HERE/verify-bom.sh" "$SOLUTION" >&2 || die "consolidated BOM failed the gate"
 
+# --- 5. human-readable PDF (optional) --------------------------------------
+# Guarded rather than required: the pipeline's value is the machine-readable bundle, and
+# a missing python dependency should not fail a run that already produced it.
+if [[ "${RENDER_PDF:-false}" == "true" ]]; then
+  PDF="${SOLUTION%.json}.pdf"
+  if python3 -c 'import reportlab' 2>/dev/null; then
+    python3 "$HERE/render-bundle-pdf.py" "$SOLUTION" "$PDF" || log "::warning::PDF rendering failed; the bundle itself is unaffected"
+  else
+    log "::warning::reportlab not installed — skipping the PDF. pip install reportlab"
+  fi
+fi
+
 log ""
 log "done: $SOLUTION"
 log "  ${#BOMS[@]} target(s) scanned, ${#GAPS[@]} gap(s) recorded"

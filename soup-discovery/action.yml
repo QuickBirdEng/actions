@@ -40,6 +40,10 @@ inputs:
     description: 'Registry host'
     required: false
     default: 'docker.io'
+  render-pdf:
+    description: 'Also render a human-readable PDF from the consolidated bundle — the artifact a release reviewer, auditor or customer reads. Installs reportlab if absent.'
+    required: false
+    default: 'true'
   upload-artifact:
     description: 'Upload the sbom directory as a workflow artifact'
     required: false
@@ -86,10 +90,16 @@ runs:
         echo "$REG_PASS" | docker login "${{ inputs.registry-server }}" \
           -u "${{ inputs.registry-username }}" --password-stdin
 
+    - name: Install PDF renderer dependency
+      if: ${{ inputs.render-pdf == 'true' }}
+      shell: bash
+      run: python3 -c 'import reportlab' 2>/dev/null || pip3 install --quiet reportlab
+
     - name: Discover, scope, scan, consolidate
       id: run
       shell: bash
       env:
+        RENDER_PDF: ${{ inputs.render-pdf }}
         SBOM_OUT_DIR: ${{ inputs.output-dir }}
         SOUP_SCOPE_FILE: ${{ inputs.scope-file }}
         SYFT_VERSION: ${{ inputs.syft-version }}
