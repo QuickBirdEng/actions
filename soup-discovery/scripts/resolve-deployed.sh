@@ -63,10 +63,48 @@ if [[ "$(jq 'length' <<<"$deployments")" == "0" && "$mobile" == "null" ]]; then
 fi
 [[ "$(jq 'length' <<<"$deployments")" == "0" ]] && deployments='[]' 
 
-# latest deployment per environment
+# A GitHub deployment record does not mean an application was deployed. *Any* workflow that
+# declares an environment creates one — including jobs that ship no code at all. mindnet's
+# "Staging to Production Content Migration Workflow" migrates the Strapi database and
+# created a Production deployment record pointing at whatever branch it happened to be
+# dispatched from; GitHub then auto-marked the real v1.0.15 app deployment `inactive` as a
+# side effect. Reading that as "production runs a branch" was wrong, and it is exactly the
+# mistake this filter exists to prevent.
+#
+# The rule, which matches how releases are actually versioned here: an application
+# deployment is one whose ref is a tag. Records with a non-tag ref are reported separately
+# as informational rather than treated as the live version.
 latest=$(jq -c '[.[] | {env: .environment, ref: .ref, sha: .sha, at: .created_at, id: .id}]
-                | group_by(.env) | map(sort_by(.at) | last)' <<<"$deployments")
-[[ -n "$WANT_ENV" ]] && latest=$(jq -c --arg e "$WANT_ENV" 'map(select(.env == $e))' <<<"$latest")
+                | group_by(.env) | map(sort_by(.at))' <<<"$deployments")
+[[ -n "$WANT_ENV" ]] && latest=$(jq -c --arg e "$WANT_ENV" 'map(select(.[0].env == $e))' <<<"$latest")
+
+# Fetch the tag list once. Checking each record with its own API call meant 100 requests
+# for a repo that deployed `main` a hundred times (apellis), which was slow enough to time
+# out and would also burn API quota on every scheduled run.
+TAGS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags" 2>/dev/null \
+       | jq -r '.[].ref | sub("^refs/tags/";"")' 2>/dev/null | sort -u)
+is_tag() { printf '%s\n' "$TAGS" | grep -Fxq "$1"; }
+
+# per environment: newest tag-ref deployment, plus a note if newer non-tag records exist
+picked='[]'; NONTAG='[]'
+while IFS= read -r group; do
+  [[ -z "$group" ]] && continue
+  env=$(jq -r '.[0].env' <<<"$group")
+  chosen=""; skipped=0
+  while IFS=$'\t' read -r ref sha at id; do
+    [[ -z "$ref" ]] && continue
+    if is_tag "$ref"; then
+      chosen=$(jq -c --arg r "$ref" --arg s "$sha" --arg a "$at" --arg i "$id" --arg e "$env" \
+                 -n '{env:$e, ref:$r, sha:$s, at:$a, id:$i}')
+      break
+    fi
+    skipped=$((skipped+1))
+    NONTAG=$(jq -c --arg e "$env" --arg r "$ref" --arg a "$at" \
+      '. + [{environment:$e, ref:$r, at:$a}]' <<<"$NONTAG")
+  done < <(jq -r 'reverse | .[] | "\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$group")
+  [[ -n "$chosen" ]] && picked=$(jq -c --argjson c "$chosen" '. + [$c]' <<<"$picked")
+done < <(jq -c '.[]' <<<"$latest")
+latest="$picked"
 
 out='[]'
 while IFS=$'\t' read -r env ref sha at id; do
@@ -74,11 +112,11 @@ while IFS=$'\t' read -r env ref sha at id; do
 
   state=$(gh api "repos/$REPO/deployments/$id/statuses?per_page=1" --jq '.[0].state // "unknown"' 2>/dev/null)
 
-  is_tag=false
-  gh api "repos/$REPO/git/ref/tags/$ref" >/dev/null 2>&1 && is_tag=true
+  ref_is_tag=false
+  is_tag "$ref" && ref_is_tag=true
 
   sbom_url=""; sbom_state=""
-  if $is_tag; then
+  if $ref_is_tag; then
     asset=$(printf "$ASSET_PATTERN" "$ref")
     sbom_url=$(gh api "repos/$REPO/releases/tags/$ref" \
                  --jq --arg a "$asset" '[.assets[] | select(.name==$a) | .browser_download_url][0] // ""' \
@@ -98,14 +136,14 @@ while IFS=$'\t' read -r env ref sha at id; do
   fi
 
   out=$(jq -c --arg env "$env" --arg ref "$ref" --arg sha "$sha" --arg at "$at" \
-           --arg state "$state" --argjson is_tag "$is_tag" \
+           --arg state "$state" --argjson is_tag "$ref_is_tag" \
            --arg url "$sbom_url" --arg sstate "$sbom_state" \
     '. + [{environment:$env, ref:$ref, sha:$sha, deployed_at:$at, status:$state,
            ref_is_tag:$is_tag, sbom: (if $url == "" then null else $url end),
            sbom_status:$sstate}]' <<<"$out")
 done < <(jq -r '.[] | "\(.env)\t\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$latest")
 
-jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" '{
+jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argjson nontag "$NONTAG" '{
   schema: "quickbird.deployed-version/v1",
   repo: $repo,
   # The apps and the backend are separately live and can differ — that is the concrete
@@ -119,6 +157,9 @@ jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" '{
                     else "production release carries no sbom-*.cdx.json asset" end)
     } end),
   environments: $envs,
+  # Deployment records that are not application releases — another workflow declaring the
+  # same environment. Reported so they are visible, never treated as the live version.
+  non_release_deployments: $nontag,
   scannable: ([$envs[] | select(.sbom != null) | .environment]
               + (if ($mobile != null and $mobile.sbom != null) then ["mobile"] else [] end)),
   unresolvable: ([$envs[] | select(.sbom == null) | {environment, ref, why: .sbom_status}]
