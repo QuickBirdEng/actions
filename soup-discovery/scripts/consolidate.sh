@@ -108,6 +108,19 @@ jq -n \
     }
   ' > "$OUT" || { echo "::error::consolidation failed" >&2; exit 1; }
 
+# bom-ref must be unique within a document. The "no component lost" check does not catch a
+# violation, because a duplicated ref still leaves both entries present — the document is
+# simply invalid. Found by feeding consolidation an input component whose ref collided with
+# a generated `quickbird:artifact:*` ref: two components came out sharing one ref, and every
+# check passed.
+DUPES=$(jq -r '[.components[]."bom-ref"] | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$OUT")
+if [[ -n "$DUPES" ]]; then
+  echo "::error::duplicate bom-ref in the consolidated document — CycloneDX requires them to be unique" >&2
+  printf '::error::  duplicate: %s\n' $DUPES >&2
+  echo "::error::  most likely an input component using a reserved quickbird:artifact:* ref" >&2
+  exit 1
+fi
+
 TOTAL=$(jq '[.components[]] | length' "$OUT")
 ARTIFACTS=$(jq '[.components[] | select(."bom-ref" | startswith("quickbird:artifact:"))] | length' "$OUT")
 COMPLETE=$(jq -r '.metadata.properties[] | select(.name=="quickbird:sbom:complete") | .value' "$OUT")
