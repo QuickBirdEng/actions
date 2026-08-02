@@ -1,0 +1,46 @@
+name: 'SOUP - Fix or VEX gate'
+description: 'Every vulnerability reported for the version being approved must have a fix or a VEX statement'
+
+inputs:
+  soup-files:
+    description: 'Whitespace-separated SOUP record paths. Usually the records changed in the PR.'
+    required: true
+  strict-under-investigation:
+    description: 'Block when a finding is still under_investigation. Off by default — it is a legitimate holding state at approval time and expires at the mitigation deadline.'
+    required: false
+    default: 'false'
+  osv-api:
+    description: 'OSV API base URL'
+    required: false
+    default: 'https://api.osv.dev'
+
+outputs:
+  open-findings:
+    description: 'Number of vulnerabilities left without a disposition'
+    value: ${{ steps.gate.outputs.open-findings }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Fix-or-VEX
+      id: gate
+      shell: bash
+      env:
+        STRICT_UNDER_INVESTIGATION: ${{ inputs.strict-under-investigation }}
+        OSV_API: ${{ inputs.osv-api }}
+      run: |
+        # The script lives in soup-discovery/ because it shares the VEX semantics with the
+        # rest of that pipeline. Both directories are in this repo, so the relative path is
+        # stable — GITHUB_ACTION_PATH points at this action's directory inside the
+        # checked-out actions repo.
+        GATE="$GITHUB_ACTION_PATH/../soup-discovery/scripts/check-fix-or-vex.sh"
+        if [ ! -f "$GATE" ]; then
+          echo "::error::gate script not found at $GATE"
+          exit 1
+        fi
+        set +e
+        bash "$GATE" ${{ inputs.soup-files }}
+        rc=$?
+        set -e
+        echo "open-findings=$rc" >> "$GITHUB_OUTPUT"
+        exit $rc
