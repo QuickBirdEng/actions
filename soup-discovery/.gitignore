@@ -1,0 +1,5 @@
+# Python writes these when a script is imported — the test harness imports
+# classify-findings.py and check-currency.py to check their internals against reference
+# values. Two of them were committed before this file existed.
+__pycache__/
+*.pyc
