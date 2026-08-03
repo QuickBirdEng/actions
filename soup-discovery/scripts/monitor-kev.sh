@@ -113,11 +113,10 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   # resolve-deployed.sh already established which version that is — so the version identity
   # is the guarantee, not the tier.
   #
-  # Refusing anything below `release` would have been wrong and would have broken exactly the
-  # products that need this most: if a product deploys v1.0.8-qa30 to production (and
-  # dermafy's and alvie's release flags say some do), then its SBOM is staging-tier and it is
-  # nonetheless the correct document for what is running. A `branch` bundle is different — it
-  # carries no version identity, so nothing can tie it to a deployment.
+  # Requiring a particular tier would be wrong here. A `candidate` document is a build of a
+  # release-shaped tag and a `staging` document a build of a QA tag; either can be the version the
+  # deployment record shows in production, and that record is the guarantee. A `branch` bundle is
+  # different — it carries no version identity, so nothing can tie it to a deployment.
   #
   # The tier is recorded either way, so the evidence says which kind of document was scanned.
   BOM_TIER=unmarked
@@ -243,17 +242,22 @@ jq -n \
   --argjson classified "$CLASSIFIED" \
   --argjson lifecycle "$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -c '{summary, release_required, transitions}' "$LIFECYCLE" || echo null )" \
   --argjson escalation "$( [[ -n "$ESCALATION" && -f "$ESCALATION" ]] && jq -c '{summary, escalations}' "$ESCALATION" || echo null )" \
-  '{
+  '# `select()` inside an object constructor does not omit the field — it makes the whole
+   # construction produce `empty`, and jq then writes nothing at all. That is how a run came to
+   # report success and leave a 0-byte evidence record: the policy had `onboarded: ""`. Map blank
+   # to null instead; the same mistake was already fixed once elsewhere in this pipeline.
+   def blank_to_null: if . == "" then null else . end;
+   {
      schema: "quickbird.kev-monitor-run/v1",
      product: $product, repo: $repo, run_at: $at, cra_scope: $cra,
      # Carried so the backstop can check the declared cadence against the actual release
      # history (§3.4) without needing the policy file of every project.
-     release_cadence: ($cadence | select(. != "")),
+     release_cadence: ($cadence | blank_to_null),
      # §3.4: the maintenance commitment. The backstop checks the windows against it, and the
      # classifier lands every Track 3/4 finding on the next one.
-     maintenance_interval: ($interval | select(. != "")),
-     onboarded: ($onboarded | select(. != "")),
-     tier: ($tier | select(. != "")),
+     maintenance_interval: ($interval | blank_to_null),
+     onboarded: ($onboarded | blank_to_null),
+     tier: ($tier | blank_to_null),
      # Which releases this product counts as production. Three signals answer that and they
      # disagree on most of the portfolio, so the backstop must not pick one on its own —
      # cadence, and every Track 3/4 deadline derived from it, depends on the answer.
@@ -275,6 +279,15 @@ jq -n \
                elif ($unscannable | length) > 0 or ($unknown | length) > 0 then "incomplete"
                else "all-clear" end)
    }' > "$RECORD"
+
+# An empty record is the worst outcome available: the run reports success and leaves no evidence
+# that the product was looked at, which is exactly what the backstop is supposed to catch and
+# cannot if the file exists but is blank.
+if [[ ! -s "$RECORD" ]] || ! jq -e . "$RECORD" >/dev/null 2>&1; then
+  echo "::error::the run record at $RECORD is empty or not valid JSON — this run produced no" >&2
+  echo "::error::  evidence that $PRODUCT was monitored, so it must not be treated as a clean run" >&2
+  exit 1
+fi
 
 # Carry the classified findings forward. Without this every run restarts every clock and
 # latching never happens — the deadlines would look correct and mean nothing.

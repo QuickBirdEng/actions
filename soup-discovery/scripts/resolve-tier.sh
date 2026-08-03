@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 # Which kind of document is this build producing?
 #
-#   release   a production release. The controlled record.
-#   staging   a pre-release build (v1.0.15-qa4). Attached to its own prerelease so it can be
-#             pulled later, and marked so it cannot be mistaken for the record.
+#   candidate a build from a release-shaped tag (v1.0.15). It MAY become what runs in production.
+#             It is not evidence that it did: in these repos a tag push only ever triggers the
+#             staging workflow, and production is a later manual dispatch of the same ref. Dermafy
+#             released v1.0.6 on 2025-10-15 and still runs v1.0.5 — a document stamped `release`
+#             at build time would have claimed release evidence for a version that never shipped.
+#   staging   a build from a QA tag (v1.0.15-qa4). Will never be production.
 #   branch    no tag at all. Nothing to attach it to and no version identity.
+#
+# Whether a candidate actually reached production is a separate, dated fact held in the deployment
+# record, and resolve-deployed.sh is what reads it. The document says what it is — a build of tag
+# X — and does not assert what happened to X afterwards. That keeps it immutable: nothing has to
+# be re-stamped later, which would mean editing a published asset.
 #
 # Derived from the *tag shape*, not from `github.ref_type`: ref_type is 'tag' for
 # v1.0.15-qa4 exactly as it is for v1.0.15, so deriving the tier from it marked every
-# staging build as a release. The shape is the same signal §3.4 uses to decide which
-# releases are production ones, so the two cannot drift — a project that redefines its
-# production tag pattern redefines this at the same time.
+# staging build as a release.
 #
 # Lives in a script rather than inline in action.yml so it can be tested. The inline
 # expression it replaces was wrong and nothing caught it.
@@ -47,7 +53,7 @@ if [[ $rc -gt 1 ]]; then
 fi
 
 if [[ $rc -eq 0 ]]; then
-  echo "release"
+  echo "candidate"
 else
   echo "staging"
 fi

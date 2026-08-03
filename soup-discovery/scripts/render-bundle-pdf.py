@@ -95,17 +95,25 @@ def build(bundle, out_path):
     gaps = prop_all(meta, "quickbird:sbom:missing")
     tier = mprops.get("quickbird:sbom:tier", "unmarked")
 
-    # Before anything else. A staging or branch document renders identically to a release
-    # one, so the only thing stopping it from being handed on as evidence is saying what it
-    # is, first and unmissably.
-    if tier != "release":
+    # Before anything else. Every tier renders identically, so the only thing separating a build
+    # that runs in production from one that never shipped is saying which this is, first and
+    # unmissably.
+    if tier == "candidate":
+        el.append(Paragraph(
+            f'<b>Built from tag {esc(subject.get("version","?"))}.</b> Whether this version is '
+            f'the one running in production is <b>not</b> stated here and cannot be: in this '
+            f'pipeline a tag build deploys to staging, and production is a separate, later step. '
+            f'The deployment history is what records which version went live — this document '
+            f'records what that version contains. Use it as release evidence only for a version '
+            f'the deployment history shows was deployed.', body))
+        el.append(Spacer(1, 8))
+    elif tier != "release":
         el.append(Paragraph(
             f'<font color="#b91c1c"><b>Not release evidence — this is a '
             f'{esc(tier)} build.</b></font> Produced for inspection and for comparing '
             f'component sets between builds. It describes a build that was not released, so '
             f'it is not a controlled record and must not be supplied to a customer, an '
-            f'auditor or a notified body. The release document for a version is the one '
-            f'attached to that version\'s release.', body))
+            f'auditor or a notified body.', body))
         el.append(Spacer(1, 8))
 
     # Completeness first, before anything reassuring.

@@ -496,29 +496,43 @@ designing against: sooner or later one of them is forwarded to a customer or a n
 What prevents that is the tier recorded **inside** the document (`quickbird:sbom:tier`), stated
 above everything else on page one of the PDF — not where the file is kept.
 
-The tier follows the **tag shape**, which is the same signal §3.4 uses to decide which releases
-are production ones. A project that redefines `production_release.tag_pattern` redefines this at
-the same time, so the two cannot drift.
+The tier follows the **tag shape**, and there are three:
 
-| | release tier (`v1.0.15`) | staging tier (`v1.0.15-qa4`) | branch tier (no tag) |
+| Tier | From | What it claims |
+| --- | --- | --- |
+| `candidate` | a release-shaped tag (`v1.0.15`) | this is what that tag contains. **Not** that it reached production |
+| `staging` | a QA tag (`v1.0.15-qa4`) | a build that will never be production |
+| `branch` | no tag | no version identity at all |
+
+There is deliberately no `release` tier, and that is a correction. A tag build in this pipeline
+only ever deploys to staging; production is a separate, later manual dispatch of the same ref
+(§3.4). So at the moment a document is written, nothing has reached production and a document
+stamped `release` would be claiming otherwise. Dermafy makes the case concrete: it released
+`v1.0.6` on 2025-10-15 and still runs `v1.0.5`. A `release`-tier bundle for `v1.0.6` would have
+asserted release evidence for a version that never shipped.
+
+**Whether a candidate reached production is a separate, dated fact**, held in the deployment
+record and read by `resolve-deployed.sh`. Keeping it out of the document is what lets the document
+stay immutable: nothing has to be re-stamped later, which would mean editing a published asset.
+
+| | candidate | staging | branch |
 |---|---|---|---|
-| Attached to its own release | yes — the controlled record | yes, as `sbom-v1.0.15-qa4.cdx.json` on the prerelease | refused: no version identity |
-| Read by continuous monitoring | yes | yes, **if that is what got deployed** | refused |
-| Recorded in the monitoring evidence | `sbom_tier: release` | `sbom_tier: staging` | n/a |
-| Timestamped | yes (`--release`) | no, so successive builds stay diffable | no |
+| Attached to its own release | yes | yes, on the prerelease | refused: no version identity |
+| Read by continuous monitoring | yes, if the deployment record shows this ref live | yes, same condition | refused |
+| Recorded in the monitoring evidence | `sbom_tier: candidate` | `sbom_tier: staging` | n/a |
+| Timestamped | optional | no, so successive builds stay diffable | no |
 
 Staging bundles are attached to their own prerelease rather than kept only as a 90-day
 workflow artifact, because an artifact that has expired cannot be pulled when someone needs to
 know what a build contained. The asset name carries the tag, so the two are not confusable by
 name either.
 
-What the monitor requires is **not** a release-tier document but the document that describes
-the version actually deployed. If a product deploys a pre-release tag to production — and the
-release flags on Dermafy and Alvie suggest some do — then the staging-tier bundle is the
-correct document for what is running, and refusing it would break monitoring for exactly the
-products that most need it. A `branch` bundle is refused, because it carries no version
-identity and nothing could tie it to a deployment. The tier is written into the evidence
-record either way, so a reader is never left assuming which kind of document a scan rested on.
+What the monitor requires is not a particular tier but the document that describes the version the
+deployment record shows as live. Either a `candidate` or a `staging` document can be that — the
+deployment record is the guarantee, not the tier. A `branch` bundle is refused, because it carries
+no version identity and nothing could tie it to a deployment. The tier is written into the evidence
+record either way (`sbom_tier`), so a reader is never left assuming which kind of document a scan
+rested on.
 
 ## 6. Dependency currency policy
 

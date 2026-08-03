@@ -244,9 +244,13 @@ test_discover_flags_templated_image_as_unresolvable() {
 # The tier decides whether a document is the controlled record. It used to be derived from
 # github.ref_type, which is 'tag' for v1.0.15-qa4 exactly as for v1.0.15 — so every staging
 # build was marked as a release and nothing caught it. These are the cases that were wrong.
-test_tier_release_for_a_clean_semver_tag() {
-  assert "$(bash "$S/resolve-tier.sh" tag v1.0.15)" "release" || return 1
-  assert "$(bash "$S/resolve-tier.sh" tag 1.0.15)" "release"
+# A release-shaped tag produces a *candidate*, not a release. In this pipeline a tag build only
+# ever deploys to staging; production is a later manual dispatch of the same ref. Dermafy released
+# v1.0.6 and still runs v1.0.5 — stamping `release` at build time would have claimed release
+# evidence for a version that never shipped.
+test_tier_candidate_for_a_clean_semver_tag() {
+  assert "$(bash "$S/resolve-tier.sh" tag v1.0.15)" "candidate" || return 1
+  assert "$(bash "$S/resolve-tier.sh" tag 1.0.15)" "candidate"
 }
 
 test_tier_staging_for_a_prerelease_tag() {
@@ -266,7 +270,7 @@ test_tier_follows_the_projects_tag_pattern() {
   printf 'production_release:
   tag_pattern: "^release-[0-9]+$"
 ' > "$TMP/pol.yml"
-  assert "$(bash "$S/resolve-tier.sh" tag release-42 "$TMP/pol.yml")" "release" || return 1
+  assert "$(bash "$S/resolve-tier.sh" tag release-42 "$TMP/pol.yml")" "candidate" || return 1
   # under this project's convention a clean semver tag is NOT a production release
   assert "$(bash "$S/resolve-tier.sh" tag v1.0.15 "$TMP/pol.yml")" "staging"
 }
@@ -815,6 +819,37 @@ mkalert() {
     '{schema:"quickbird.kev-monitor-run/v1",verdict:$v,kev_findings:[],
       kev_membership_unknown:[],not_scanned:[],scanned:[{name:"x",version:"1"}]}' \
     > "$TMP/mon/record.json"
+}
+
+# Regression, and the worst failure mode in the whole pipeline: `select()` inside a jq object
+# constructor makes the ENTIRE construction produce `empty`, so jq writes nothing. A policy with
+# `onboarded: ""` therefore produced a 0-byte evidence record while the run reported success —
+# no evidence that the product was monitored, indistinguishable from a clean day.
+test_monitor_writes_a_record_when_optional_policy_fields_are_blank() {
+  rm -rf "$TMP/mrec"; mkdir -p "$TMP/mrec"
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nonboarded: ""\n' \
+    > "$TMP/mrec/.soup-policy.yml"
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"},
+                    properties:[{name:"quickbird:sbom:tier",value:"candidate"}]},
+          components:[],vulnerabilities:[]}' > "$TMP/mrec/bom.json"
+  MONITOR_LOCAL_SBOM="$TMP/mrec/bom.json" SOUP_POLICY_FILE="$TMP/mrec/.soup-policy.yml" \
+    bash "$S/monitor-kev.sh" QuickBirdEng/x p "$TMP/mrec/out" >/dev/null 2>&1 || return 1
+  local rec; rec=$(ls "$TMP/mrec/out"/*-p.json 2>/dev/null | head -1)
+  [[ -s "$rec" ]] || return 1
+  jq -e . "$rec" >/dev/null || return 1
+  # the blank field is null, not a reason to drop the whole record
+  assert "$(jq -r '.onboarded // "null"' "$rec")" "null" || return 1
+  assert "$(jq -r '.maintenance_interval' "$rec")" "90d"
+}
+
+# And the run must refuse to look clean if the record did not survive.
+test_monitor_fails_when_the_record_would_be_empty() {
+  rm -rf "$TMP/mrec2"; mkdir -p "$TMP/mrec2/out"
+  : > "$TMP/mrec2/out/2026-01-01-p.json"
+  # a record that exists but is blank must not read as a monitored day
+  bash -c '[[ -s "$1" ]] && jq -e . "$1" >/dev/null 2>&1' _ "$TMP/mrec2/out/2026-01-01-p.json"
+  assert "$?" "1"
 }
 
 test_monitor_alerts_a_breach_without_any_kev_finding() {

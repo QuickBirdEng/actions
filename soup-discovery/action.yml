@@ -26,14 +26,14 @@ inputs:
     default: '1.20.0'
   tier:
     description: >-
-      release | staging | branch. Stamped into the document and onto the PDF cover. Only a
-      release-tier bundle may be attached to a release or consumed by the monitor: a staging
-      SBOM describes a build nobody is running, and it renders identically to a release one.
-      Defaults to release on a tag and staging otherwise, so the common case needs no input.
+      candidate | staging | branch. Stamped into the document and onto the PDF cover. Derived from
+      the tag shape by scripts/resolve-tier.sh, so it normally needs no input. `candidate` means
+      built from a release-shaped tag; it does not claim the version reached production, because a
+      tag build only ever deploys to staging in this pipeline.
     required: false
     default: ''
   keep-timestamp:
-    description: 'Set true for the release tier, which needs metadata.timestamp. Leave false for a committable, diffable BOM.'
+    description: 'Set true when the document needs metadata.timestamp. Leave false for a committable, diffable BOM — successive builds of the same commit then differ only where the components differ.'
     required: false
     default: 'false'
   registry-username:
@@ -177,11 +177,12 @@ runs:
         PDF="${BOM%.json}.pdf"
         TAG="${{ github.ref_name }}"
         TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
-        # Staging bundles are attached too, to the prerelease of their own tag. That is the
-        # point of producing them: a 90-day workflow artifact cannot be pulled later, and the
-        # asset name carries the tag, so sbom-v1.0.15-qa4.cdx.json is not confusable with
+        # Both candidate and staging bundles are attached, each to the release of its own tag.
+        # That is the point of producing them: a 90-day workflow artifact cannot be pulled later,
+        # and the asset name carries the tag, so sbom-v1.0.15-qa4.cdx.json is not confusable with
         # sbom-v1.0.15.cdx.json. What keeps them apart as *evidence* is the tier inside the
-        # document and the banner on the PDF, not where the file is stored.
+        # document and the banner on the PDF, not where the file is stored — and ultimately the
+        # deployment record, which says which tag is live.
         #
         # A `branch` bundle has no version identity at all, so there is nothing to attach it
         # to and nothing that could resolve it later.
@@ -202,7 +203,7 @@ runs:
         # A staging tag's release is a prerelease; creating it as one keeps the release list
         # honest if the build ran before anyone published it.
         PRE=""
-        [ "$TIER" = "staging" ] && PRE="--prerelease"
+        [ "$TIER" = "staging" ] && PRE="--prerelease"    # a QA tag's release is a prerelease
         gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "" $PRE
         gh release upload "$TAG" "${args[@]}" --clobber
         echo "attached ${args[*]} to release $TAG (tier $TIER)"
