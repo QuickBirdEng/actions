@@ -197,12 +197,18 @@ jq -n \
   --argjson scanned "$SCANNED" --argjson unscannable "$UNSCANNABLE" \
   --argjson findings "$FINDINGS" --argjson suppressed "$SUPPRESSED" \
   --argjson unknown "$UNKNOWN" --argjson feeds "$FEEDS" --argjson synthetic "$SYNTHETIC" \
+  --arg cadence "$(jq -r '.release_cadence // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
+  --arg tier "$(jq -r '.tier // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --argjson classified "$CLASSIFIED" \
   --argjson lifecycle "$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -c '{summary, release_required, transitions}' "$LIFECYCLE" || echo null )" \
   --argjson escalation "$( [[ -n "$ESCALATION" && -f "$ESCALATION" ]] && jq -c '{summary, escalations}' "$ESCALATION" || echo null )" \
   '{
      schema: "quickbird.kev-monitor-run/v1",
      product: $product, repo: $repo, run_at: $at, cra_scope: $cra,
+     # Carried so the backstop can check the declared cadence against the actual release
+     # history (§3.4) without needing the policy file of every project.
+     release_cadence: ($cadence | select(. != "")),
+     tier: ($tier | select(. != "")),
      synthetic: $synthetic,
      feeds: $feeds,
      scanned: $scanned,

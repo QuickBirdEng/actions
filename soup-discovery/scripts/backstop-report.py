@@ -13,8 +13,10 @@ Four questions, in order of how badly a wrong answer would hurt:
   2. Are there findings whose deadline has passed with no recorded decision?
   3. Have any recorded risk acceptances expired without being renewed?
   4. Does each product's declared release cadence match what it actually released? A
-     cadence that no longer holds turns every Track 3 deadline into fiction (§3.4).
-     NOT YET IMPLEMENTED — reported under `not_checked` rather than silently omitted.
+     cadence that no longer holds turns every Track 3 deadline into fiction, because those
+     deadlines are derived from it (§3.4). Needs the release history, which comes from
+     GitHub rather than the evidence store — the run record carries the repo name and the
+     declared cadence so this can be checked without every project's policy file.
 
 Reads the evidence store — the dated run records the monitor writes — rather than
 recomputing anything. If a run never happened there is nothing to recompute, and that
@@ -27,6 +29,7 @@ import argparse
 import glob
 import json
 import os
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -37,6 +40,50 @@ def load(path):
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+CADENCE_DAYS = {"daily": 1, "weekly": 7, "fortnightly": 14, "biweekly": 14,
+                "monthly": 31, "quarterly": 92, "biannual": 183, "annual": 366}
+# How far past the declared interval before the cadence counts as not holding. A release
+# cycle that slips by a third is normal; one that has slipped by half has stopped being a
+# cycle, and a deadline derived from it is no longer a deadline.
+TOLERANCE = 1.5
+
+
+def release_dates(repo, production_only=True):
+    """Published dates of a repo's releases, newest first. None if they cannot be read.
+
+    Counts *production* releases by default, identified the same way resolve-deployed.sh
+    does: a release carrying a `-production` artifact. The distinction is not cosmetic. alvie
+    published six releases in 90 days and looks like a product on a monthly cadence, while
+    its last production build was over a year old — those releases went to staging and to
+    study builds. A Track 3/4 deadline is a *remediation* deadline, and remediation is only
+    satisfied on deploy, so the cadence that can carry such a deadline is the cadence at
+    which things actually reach users.
+
+    Falls back to counting every release when a repo has no production-flavoured artifacts
+    at all, because a backend deployed from a plain tag has no such marker and would
+    otherwise read as never releasing.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{repo}/releases?per_page=100",
+             "--jq", '.[] | {at: .published_at, prod: ([.assets[].name] | any(test("production";"i")))}'],
+            capture_output=True, text=True, timeout=60, check=True)
+        rows = [json.loads(l) for l in (r.stdout or "").splitlines() if l.strip()]
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError, json.JSONDecodeError):
+        return None, None
+    if not rows:
+        return [], "no releases"
+    prod = [x["at"] for x in rows if x.get("prod") and x.get("at")]
+    if production_only and prod:
+        return prod, "production releases"
+    if production_only and not prod:
+        return ([x["at"] for x in rows if x.get("at")],
+                "all releases — no production-flavoured artifacts exist in this repo, so this "
+                "counts every release and may overstate how often the product reaches users")
+    return [x["at"] for x in rows if x.get("at")], "all releases"
 
 
 def parse_ts(s):
@@ -60,7 +107,8 @@ def main():
     args = ap.parse_args()
 
     now = parse_ts(args.now) or datetime.now(timezone.utc)
-    since = now - timedelta(days=args.window)
+    since_dt = now - timedelta(days=args.window)
+    since = since_dt
 
     runs = defaultdict(list)
     for path in sorted(glob.glob(os.path.join(args.evidence, "**", "*.json"), recursive=True)):
@@ -78,7 +126,7 @@ def main():
     expected = [p.strip() for p in (args.products or "").split(",") if p.strip()]
     products = sorted(set(list(runs.keys()) + expected))
 
-    coverage, open_breaches, expired = [], [], []
+    coverage, open_breaches, expired, cadence = [], [], [], []
 
     for product in products:
         rs = sorted(runs.get(product, []), key=lambda r: r[0])
@@ -118,6 +166,54 @@ def main():
                          "gaps": gaps, "incomplete_runs": incomplete,
                          "last_verdict": last.get("verdict")})
 
+        # --- declared cadence vs. reality (§3.4) ---------------------------------
+        declared = last.get("release_cadence")
+        repo = last.get("repo")
+        if not declared:
+            cadence.append({"product": product, "status": "not-declared",
+                            "detail": "the policy declares no release_cadence, so Track 3/4 "
+                                      "deadlines have nothing to derive from"})
+        elif not repo:
+            cadence.append({"product": product, "declared": declared, "status": "unknown",
+                            "detail": "the run record carries no repo, so releases cannot be read"})
+        else:
+            dates, basis = release_dates(repo)
+            expected = CADENCE_DAYS.get(str(declared).lower())
+            if dates is None:
+                cadence.append({"product": product, "declared": declared, "status": "unknown",
+                                "detail": f"could not read releases for {repo} — not knowing "
+                                          f"whether the cadence holds is not the same as it holding"})
+            elif expected is None:
+                cadence.append({"product": product, "declared": declared, "status": "unknown",
+                                "detail": f"'{declared}' is not a cadence this can measure "
+                                          f"({', '.join(sorted(CADENCE_DAYS))})"})
+            elif not dates:
+                cadence.append({"product": product, "declared": declared, "status": "broken",
+                                "detail": f"declared {declared} but the repo has no releases at all"})
+            else:
+                newest = parse_ts(dates[0])
+                since = (now - newest).days if newest else None
+                in_window = sum(1 for d in dates
+                                if (p := parse_ts(d)) and p >= since_dt)
+                expected_in_window = max(1, int(args.window / expected))
+                if since is not None and since > expected * TOLERANCE:
+                    status, detail = "broken", (
+                        f"declared {declared} (~{expected}d) but the last release was {since}d "
+                        f"ago — every Track 3/4 deadline derived from this cadence is fiction")
+                elif in_window < expected_in_window:
+                    status, detail = "lagging", (
+                        f"declared {declared}: expected ~{expected_in_window} release(s) in "
+                        f"{args.window}d, found {in_window}")
+                else:
+                    status, detail = "holds", (
+                        f"declared {declared}: {in_window} release(s) in {args.window}d, "
+                        f"last {since}d ago")
+                cadence.append({"product": product, "declared": declared, "status": status,
+                                "detail": detail, "last_release": dates[0],
+                                "days_since_last_release": since,
+                                "releases_in_window": in_window,
+                                "counted": basis})
+
         esc = (last.get("escalation") or {})
         for e in esc.get("escalations", []) or []:
             if e.get("level") == "undecided":
@@ -143,24 +239,20 @@ def main():
             "clean": sum(1 for c in coverage if c["status"] == "ok"),
             "undecided_breaches": len(open_breaches),
             "expired_decisions": len(expired),
+            "cadence_broken": sum(1 for c in cadence if c["status"] == "broken"),
+            "cadence_lagging": sum(1 for c in cadence if c["status"] == "lagging"),
+            "cadence_unknown": sum(1 for c in cadence if c["status"] in ("unknown", "not-declared")),
         },
         "coverage": coverage,
         "undecided_breaches": open_breaches,
         "expired_decisions": expired,
-        # §3.4 asks the backstop to compare each declared release cadence against what was
-        # actually released, because a cadence that no longer holds turns every Track 3
-        # deadline into fiction. That needs the release history, which lives in GitHub and
-        # not in the evidence store, so it is stated as missing rather than shipped as an
-        # empty list that reads like a clean result.
-        "not_checked": [
-            "declared release cadence vs. actual releases (§3.4) — needs the release "
-            "history; run resolve-deployed against each repo and compare"
-        ],
+        "cadence": cadence,
     }
 
     # The report is only worth anything if a bad result is visible without reading JSON.
     problems = (doc["summary"]["never_scanned"] + doc["summary"]["stale"]
-                + doc["summary"]["with_gaps"] + len(open_breaches) + len(expired))
+                + doc["summary"]["with_gaps"] + len(open_breaches) + len(expired)
+                + doc["summary"]["cadence_broken"])
     doc["verdict"] = "clean" if problems == 0 else "action-required"
 
     text = json.dumps(doc, indent=2)
@@ -182,6 +274,11 @@ def main():
             print(f"::warning::{c['product']}: {c['detail']}", file=sys.stderr)
     for b in open_breaches:
         print(f"::error::{b['product']} {b['id']}: {b['detail']}", file=sys.stderr)
+    for c in cadence:
+        if c["status"] == "broken":
+            print(f"::error::{c['product']} cadence: {c['detail']}", file=sys.stderr)
+        elif c["status"] in ("lagging", "not-declared", "unknown"):
+            print(f"::warning::{c['product']} cadence: {c['detail']}", file=sys.stderr)
     for e in expired:
         print(f"::error::{e['product']} {e['id']}: the {e['decision']} decision expired "
               f"{e['expired'][:10]} and was not renewed", file=sys.stderr)
