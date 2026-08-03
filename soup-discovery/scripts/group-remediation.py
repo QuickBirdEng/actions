@@ -47,10 +47,12 @@ Usage: group-remediation.py <classified-findings.json> <assessed-bom.cdx.json> [
 import argparse
 import json
 import re
+import subprocess
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 
-TRACK_ORDER = ["immediate", "expedited", "planned", "monitor"]
+TRACK_ORDER = ["kev", "immediate", "expedited", "planned", "monitor"]
 
 # Package types that are OS packages, i.e. contents of a base image rather than something a
 # developer selected. Kept explicit rather than inferred from a `distro=` qualifier, because
@@ -74,6 +76,54 @@ def is_third_party_image(artifact):
     return artifact.replace("quickbird:artifact:", "").startswith("deployed-")
 
 
+def parse_ts(v):
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def load_vendor_requests(path):
+    """Unit key -> recorded request to a third-party vendor.
+
+    Both of kontina-backend's remediation units are "bump or replace a third-party image", so
+    the fix is on someone else's release schedule. A 30-day deadline on such a unit breaches
+    with certainty and without anyone having done anything wrong — which produces exactly the
+    rubber stamps §3.5 was meant to remove.
+
+    So a documented request to the vendor puts the unit in `waiting-on-vendor`: not a breach,
+    but not closed either. It carries a follow-up date, and when that passes with no new image
+    the escalation is about replacing the image, not about accepting each CVE.
+
+    Lives in .soup-decisions.yml next to the deadline decisions, and read through yq for the
+    same reason: a missing Python YAML module would otherwise make every recorded request
+    invisible and report handled units as breached.
+    """
+    if not path:
+        return {}
+    try:
+        if path.endswith((".yml", ".yaml")):
+            r = subprocess.run(["yq", "-o=json", ".", path],
+                               capture_output=True, text=True, check=True)
+            doc = json.loads(r.stdout or "{}") or {}
+        else:
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh) or {}
+    except FileNotFoundError:
+        return {}
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as e:
+        print(f"::error::could not read {path}: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    out = {}
+    for v in doc.get("vendor_requests", []) or []:
+        if v.get("unit"):
+            out[str(v["unit"])] = v
+    return out
+
+
 def props(obj):
     return {p["name"]: p["value"] for p in obj.get("properties", []) or []}
 
@@ -94,8 +144,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("findings")
     ap.add_argument("bom")
+    ap.add_argument("--decisions", help=".soup-decisions.yml, for recorded vendor requests")
+    ap.add_argument("--now")
     ap.add_argument("--out", default="-")
     args = ap.parse_args()
+
+    now = parse_ts(args.now) or datetime.now(timezone.utc)
+    vendor = load_vendor_requests(args.decisions)
 
     doc = json.load(open(args.findings, encoding="utf-8"))
     bom = json.load(open(args.bom, encoding="utf-8"))
@@ -211,6 +266,49 @@ def main():
             "fix_status": sorted(u["fix_status"]),
         })
 
+    # --- vendor state (§3.5) -------------------------------------------------
+    # A third-party image is the case where remediation is not ours to perform. The state says
+    # which of three situations a unit is in, and only the last one is a breach.
+    for unit in out_units:
+        img = unit["artifact"].replace("quickbird:artifact:", "")
+        req = vendor.get(img) or vendor.get(unit["artifact"])
+        if unit["kind"] != "third-party-image":
+            unit["state"] = "ours"
+            continue
+        if not req:
+            unit["state"] = "no-vendor-request"
+            unit["state_detail"] = (
+                "remediation here means a newer image from the vendor, and no request to them "
+                "is on record. Until one is, the deadline below is being counted against work "
+                "nobody has started — record the request in .soup-decisions.yml under "
+                "vendor_requests, or decide to replace the image.")
+            continue
+        follow = parse_ts(req.get("follow_up"))
+        unit["vendor_request"] = {
+            "requested": str(req.get("requested") or ""),
+            "follow_up": str(req.get("follow_up") or ""),
+            "contact": str(req.get("contact") or ""),
+            "note": str(req.get("note") or ""),
+        }
+        if follow and now > follow:
+            unit["state"] = "vendor-overdue"
+            unit["state_detail"] = (
+                f"the vendor was asked on {req.get('requested')} and the follow-up date "
+                f"{req.get('follow_up')} has passed with no fixed image. The decision now is "
+                f"whether to replace this image, not whether to accept each finding in it.")
+        elif follow:
+            unit["state"] = "waiting-on-vendor"
+            unit["state_detail"] = (
+                f"requested from the vendor on {req.get('requested')}; following up "
+                f"{req.get('follow_up')}. Not a breach — the fix is on their release schedule, "
+                f"and this is on record.")
+        else:
+            unit["state"] = "vendor-request-undated"
+            unit["state_detail"] = (
+                "a request to the vendor is recorded but carries no follow_up date, so nothing "
+                "will ever bring it back up. A request without a follow-up date is a note, not "
+                "a control.")
+
     out_units.sort(key=lambda x: (TRACK_ORDER.index(x["track"]), -x["finding_count"]))
 
     summary = {
@@ -219,8 +317,11 @@ def main():
         "units_by_track": {},
         "findings_by_track": {},
     }
+    summary["units_by_state"] = {}
     for u in out_units:
         summary["units_by_track"][u["track"]] = summary["units_by_track"].get(u["track"], 0) + 1
+        st = u.get("state", "ours")
+        summary["units_by_state"][st] = summary["units_by_state"].get(st, 0) + 1
     for f in doc.get("findings", []):
         t = f.get("track")
         summary["findings_by_track"][t] = summary["findings_by_track"].get(t, 0) + 1
@@ -245,6 +346,11 @@ def main():
     if unplaced:
         print(f"::warning::{len(unplaced)} finding(s) could not be tied to an action and keep "
               f"their own deadline", file=sys.stderr)
+    for u in out_units:
+        if u.get("state") == "vendor-overdue":
+            print(f"::error::{u['action'][:80]} — {u['state_detail']}", file=sys.stderr)
+        elif u.get("state") in ("no-vendor-request", "vendor-request-undated"):
+            print(f"::warning::{u['action'][:80]} — {u['state_detail']}", file=sys.stderr)
     return 0
 
 

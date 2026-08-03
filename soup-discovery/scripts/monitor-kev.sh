@@ -216,6 +216,11 @@ if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
   ESCALATION="$OUT_DIR/escalation.json"
   ESC_ARGS=("$LIFECYCLE" --out "$ESCALATION")
   [[ -f "$OUT_DIR/policy.effective.json" ]] && ESC_ARGS+=(--policy "$OUT_DIR/policy.effective.json")
+  # Escalate per remediation action, not per finding (§3.5). On kontina-backend this is the
+  # difference between 507 escalations and 2.
+  for u in "$OUT_DIR"/*.remediation-units.json; do
+    [[ -f "$u" ]] && ESC_ARGS+=(--units "$u") && break
+  done
   [[ -f "$DECISIONS_FILE" ]] && ESC_ARGS+=(--decisions "$DECISIONS_FILE")
   python3 "$HERE/escalate-breaches.py" "${ESC_ARGS[@]}" >&2 || ESCALATION=""
 fi

@@ -31,7 +31,11 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 OK, APPROACHING, BREACHED, UNDECIDED = "ok", "approaching", "breached", "undecided"
-RANK = {OK: 0, APPROACHING: 1, BREACHED: 2, UNDECIDED: 3}
+# A unit whose fix is on a third party's release schedule is not in breach: the request is on
+# record and has a follow-up date. It sits between "approaching" and "breached" — visible on
+# every run, but not demanding a decision that is not ours to make.
+WAITING = "waiting-on-vendor"
+RANK = {OK: 0, APPROACHING: 1, WAITING: 1, BREACHED: 2, UNDECIDED: 3}
 
 
 def parse_dur(s, default_days=7):
@@ -102,6 +106,9 @@ def main():
     ap.add_argument("findings")
     ap.add_argument("--decisions", help=".soup-decisions.yml")
     ap.add_argument("--policy")
+    ap.add_argument("--units", help="group-remediation.py output. With it, escalation happens "
+                                    "per remediation action rather than per finding — which is "
+                                    "the whole point of §3.5: one decision, not hundreds")
     ap.add_argument("--lead", default="7d", help="how long before a deadline to start warning")
     ap.add_argument("--out", default="-")
     ap.add_argument("--now")
@@ -113,6 +120,19 @@ def main():
     lead = parse_dur(args.lead)
 
     doc = json.load(open(args.findings, encoding="utf-8"))
+
+    # finding id -> the action that resolves it
+    units, unit_of = [], {}
+    if args.units:
+        try:
+            u = json.load(open(args.units, encoding="utf-8"))
+            units = u.get("units", []) or []
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"::error::could not read {args.units}: {e}", file=sys.stderr)
+            return 1
+        for i, unit in enumerate(units):
+            for fid in unit.get("findings", []) or []:
+                unit_of[fid] = i
     policy = json.load(open(args.policy, encoding="utf-8")) if args.policy else {}
     decision_window = int(str(policy.get("breach", {}).get("decision_within", "5d")).rstrip("d") or 5)
     decisions = load_decisions(args.decisions)
@@ -182,6 +202,65 @@ def main():
                                        f"and has not been renewed")
             except ValueError:
                 pass
+
+    # --- collapse to remediation actions (§3.5) ------------------------------
+    # Without this, a waiting-on-vendor image with 99 findings in it escalates 99 times and the
+    # grouping achieves nothing. The unit takes the worst level among its members, so nothing
+    # is hidden — 99 lines become one line that names 99 findings.
+    if units:
+        per_unit = {}
+        standalone = []
+        for r in results:
+            idx = unit_of.get(r["id"])
+            if idx is None:
+                standalone.append(r)
+                continue
+            per_unit.setdefault(idx, []).append(r)
+
+        collapsed = []
+        for idx, members in per_unit.items():
+            unit = units[idx]
+            worst = max(members, key=lambda m: RANK[m["level"]])
+            level = worst["level"]
+            detail = list(worst["detail"])
+            state = unit.get("state", "ours")
+
+            # A fix on someone else's release schedule is not a breach of ours. It stays
+            # visible on every run and it does not ask anyone to accept a risk they cannot
+            # remove — but an elapsed follow-up date turns it into a real decision, and that
+            # decision is about the image, not about each finding inside it.
+            if state == "waiting-on-vendor":
+                # Including when the members are `undecided`. That level means "the deadline
+                # passed and no decision is on record" — and a dated request to the vendor with
+                # a live follow-up date IS the record. Requiring a second decision on top of it
+                # would ask someone to accept a risk they have already acted on and cannot
+                # remove. The follow-up date is what keeps this from becoming a parking space.
+                level = WAITING
+                detail = [unit.get("state_detail", "")]
+            elif state == "vendor-overdue":
+                level = UNDECIDED
+                detail = [unit.get("state_detail", "")]
+            elif state in ("no-vendor-request", "vendor-request-undated") and RANK[level] >= RANK[BREACHED]:
+                detail = [unit.get("state_detail", "")] + detail
+
+            collapsed.append({
+                "unit": unit.get("action"),
+                "kind": unit.get("kind"),
+                "artifact": unit.get("artifact"),
+                "state": state,
+                "id": f"{unit.get('kind')}:{unit.get('artifact')}",
+                "track": unit.get("track"),
+                "level": level,
+                "detail": detail,
+                "finding_count": len(unit.get("findings", []) or []),
+                "escalating_findings": [m["id"] for m in members],
+                "kev_findings": unit.get("kev_findings", []),
+                "mitigation_due": unit.get("mitigation_due"),
+                "remediation_due": unit.get("remediation_due"),
+                "vendor_request": unit.get("vendor_request"),
+                "decision": worst.get("decision"),
+            })
+        results = collapsed + standalone
 
     results.sort(key=lambda r: (-RANK[r["level"]], r.get("track") or ""))
     by_level = {}

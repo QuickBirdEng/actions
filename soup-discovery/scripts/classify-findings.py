@@ -86,8 +86,13 @@ def parse_duration(s):
     return None
 
 
-TRACK_ORDER = ["immediate", "expedited", "planned", "monitor"]
-BANDS = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+# KEV is its own track, not the top of the CVSS ladder. "Actively exploited" is a state of the
+# world; "CVSS 9.8" is a property of the vulnerability, and the two deserve different clocks —
+# measured on kontina-backend, 0 of 23 Critical findings were in KEV, so a shared 72h clock was
+# being justified by a risk that was not present in any of them.
+TRACK_ORDER = ["kev", "immediate", "expedited", "planned", "monitor"]
+# Alert bands map onto tracks: KEV and Critical both alert at "critical".
+BANDS = {"critical": 1, "high": 2, "medium": 3, "low": 4}
 
 
 def cvss_of(v):
@@ -128,9 +133,9 @@ def classify(v, policy):
     # could not read must not silently downgrade a finding, so it is treated as KEV for
     # classification and flagged, rather than assumed benign.
     if kev == "true":
-        return "immediate", 1, "in the CISA KEV catalog — actively exploited"
+        return "kev", 1, "in the CISA KEV catalog — actively exploited"
     if kev == "unknown":
-        return "immediate", 1, "KEV membership could not be established — treated as KEV until it can"
+        return "kev", 1, "KEV membership could not be established — treated as KEV until it can"
 
     if cvss is None:
         return "expedited", 9, "no CVSS score available — an unknown is not a low"
@@ -138,6 +143,8 @@ def classify(v, policy):
         return "immediate", 2, f"CVSS {cvss} (Critical)"
     if cvss >= 7.0:
         if epss is not None and epss >= hi:
+            # A high EPSS is a strong signal but not an observation of exploitation, so this
+            # escalates to Critical rather than into the KEV track.
             return "immediate", 3, f"CVSS {cvss} (High) with EPSS {epss} >= {hi}"
         return "expedited", 4, f"CVSS {cvss} (High)"
     if cvss >= 4.0:

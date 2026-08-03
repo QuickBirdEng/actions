@@ -46,7 +46,7 @@ Evaluated top to bottom; **the first matching rule wins.**
 | # | Condition | Track |
 | --- | --- | --- |
 | 0 | VEX state is `not_affected` **with** a valid justification (§4) | **Not applicable** — recorded, no clock, no alert |
-| 1 | CVE is in the CISA KEV catalog | **1 — Immediate** |
+| 1 | CVE is in the CISA KEV catalog | **KEV** |
 | 2 | CVSS base ≥ 9.0 (Critical) | **1 — Immediate** |
 | 3 | CVSS base 7.0–8.9 (High) **and** EPSS ≥ 0.50 | **1 — Immediate** |
 | 4 | CVSS base 7.0–8.9 (High) | **2 — Expedited** |
@@ -58,6 +58,14 @@ Evaluated top to bottom; **the first matching rule wins.**
 
 Rule 9 is deliberate: an unscored finding is an unknown, not a low. It is triaged as High until the
 advisory is scored or a VEX statement resolves it.
+
+**KEV is its own track, not the top of the CVSS ladder** (decided 2026-08-03). "Actively
+exploited" is a state of the world; "CVSS 9.8" is a property of the vulnerability. They had
+shared a 72-hour clock, and the measurement shows what that cost: of kontina-backend's 23
+Critical findings, **none** was in KEV. The clock was being justified by a risk that was not
+present in any of them, and the effect was to make the whole tier unmeetable and therefore
+ignorable. Rule 3 escalates a high-EPSS finding to Critical rather than into the KEV track,
+because a high probability of exploitation is a strong signal but not an observation of it.
 
 ### 2.1 EPSS thresholds
 
@@ -100,10 +108,33 @@ records in the evidence store are what make the discovery date auditable rather 
 
 | Track | Mitigation deadline | Remediation deadline |
 | --- | --- | --- |
-| **1 — Immediate** | 72 h | 21 d |
-| **2 — Expedited** | 20 d | 40 d |
-| **3 — Planned** | 30 d | next regular release (see §3.4) |
-| **4 — Monitor** | — | next regular release; reconciled at the backstop |
+| **KEV** | 72 h | 30 d |
+| **1 — Immediate** | 14 d | 30 d |
+| **2 — Expedited** | 30 d | next maintenance window (§3.4) |
+| **3 — Planned** | — | next maintenance window |
+| **4 — Monitor** | — | next maintenance window; reconciled at the backstop |
+
+**Revised 2026-08-03.** The previous values (72 h / 21 d and 20 d / 40 d, from DEV-191's draft)
+could not be met, and the reason was not capacity — §3.5 explains it: the deadline hung on each
+CVE, and a CVE is usually not a unit of work. These numbers are set for what an *action* takes,
+because that is what now carries them. An image bump on a regulated product means a regression
+test and a release.
+
+Three things in that table are deliberate:
+
+- **KEV stays at 72 hours while everything else lengthened.** It is the one case where speed is
+  justified by an observation rather than a score, and from 11 September 2026 the CRA places a
+  24-hour *reporting* obligation beside it. A remediation deadline six times longer than the
+  reporting deadline would not survive being asked about. Note what the 72 hours require: not a
+  fix, but triage — assess applicability and either reduce exposure or document that there is
+  none.
+- **Track 3 has no mitigation clock.** It stood at 30 days across 196 findings on one product,
+  and "mitigate a Medium" meant, in practice, writing a document. A control that only produces
+  paper costs the attention the Critical findings need. Track 3 rides the maintenance window.
+- **Mitigation is far shorter than remediation everywhere**, because they are different kinds of
+  work. Mitigation is triage; remediation needs a release. Collapsing them into one number per
+  track would have to pick one, and either choice is wrong: anchored to the release, triage goes
+  unregulated; anchored to triage, the deadline is unmeetable.
 
 **All values are calendar time, not service hours.** This differs from the support SLA table in
 `GDG-004-01`, where TTR is counted in service hours (Mon–Fri 09:00–18:00). The difference is
@@ -279,6 +310,50 @@ unit names the KEV member as the reason.
 
 What changes is that a missed deadline produces **one** decision instead of hundreds, and that
 the decision is about something a person can do.
+
+### 3.5.1 When remediation is not ours to perform
+
+Both of kontina-backend's remediation units are "bump or replace a third-party image". The fix
+is therefore on someone else's release schedule, and a 30-day deadline on such a unit breaches
+with certainty without anyone having done anything wrong — which produces exactly the rubber
+stamps §3.5 exists to remove.
+
+A unit whose action is a third-party image carries a **state**, and only two of the four are
+breaches:
+
+| State | Means | Escalation |
+| --- | --- | --- |
+| `no-vendor-request` | no request to the vendor is on record | the deadline is being counted against work nobody has started — this is the finding |
+| `waiting-on-vendor` | dated request with a live follow-up date | **not a breach.** Visible on every run |
+| `vendor-overdue` | the follow-up date passed with no fixed image | a decision is required: **replace the image**, not accept each finding |
+| `vendor-request-undated` | a request with no follow-up date | a note, not a control — nothing will bring it back up |
+
+The second row is the one that matters, and it needs stating precisely: a dated request with a
+live follow-up date **is** the decision on record. Requiring a further risk acceptance on top of
+it would ask someone to accept a risk they have already acted on and cannot remove. The
+follow-up date is what stops this from becoming a parking space.
+
+Requests live in `.soup-decisions.yml` beside the deadline decisions:
+
+```yaml
+vendor_requests:
+  - unit: deployed-wireguard-1.0.20210914
+    requested: 2026-08-03
+    follow_up: 2026-09-03
+    contact: "linuxserver.io GitHub issue #4711"
+    note: "asked for a rebuild on a current Alpine base; carries production ePA traffic"
+```
+
+Escalation happens at the unit, not the finding — which is the point of §3.5 and is worth the
+measurement. On kontina-backend, with every deadline elapsed:
+
+| | escalations |
+| --- | --- |
+| per finding | **507** |
+| per action | **2** |
+
+Nothing is hidden by that: each unit names its member findings and the count. What disappears
+is 505 lines demanding decisions that were all the same decision.
 
 **Fix availability is part of this.** A deadline on a finding with no published fix is not a
 deadline anyone can meet, so `quickbird:vuln:fix` records `available` / `none-published` /
@@ -511,6 +586,10 @@ Decided 2026-08-03:
 | Products without releases | `release_cadence: continuous`, measured against deploys with a gap ceiling | 3.4 |
 | Upstream staleness | 12 months without a release, tested separately from semver currency | 6 |
 | What carries a deadline | The remediation **action**, not the individual finding | 3.5 |
+| Track structure | KEV is its own track, separate from Critical | 2 |
+| Track deadlines | KEV 72 h/30 d · Critical 14 d/30 d · High 30 d/window · Medium and Low: window only | 3 |
+| Track 3 mitigation | Removed — it produced paper, not risk reduction | 3 |
+| Vendor-dependent remediation | `waiting-on-vendor` with a follow-up date is not a breach | 3.5.1 |
 | Track 3/4 deadline | The next **maintenance window** from a declared per-product interval | 3.4 |
 | Where the tier binds | Caps the maintenance commitment, not each finding's deadline | 3.4, 7 |
 | Onboarding | Windows before the onboarding date are history, not breaches | 3.4 |

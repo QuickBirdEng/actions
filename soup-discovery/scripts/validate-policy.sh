@@ -109,7 +109,7 @@ to_hours() {
 }
 
 # --- deadlines: longer than the default needs a reason -----------------------
-for track in immediate expedited planned monitor; do
+for track in kev immediate expedited planned monitor; do
   for clock in mitigation remediation; do
     dv=$(jq -r --arg t "$track" --arg c "$clock" '.tracks[$t][$c] // ""' <<<"$D")
     pv=$(jq -r --arg t "$track" --arg c "$clock" '.tracks[$t][$c] // ""' <<<"$P")

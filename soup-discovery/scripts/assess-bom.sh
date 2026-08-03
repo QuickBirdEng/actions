@@ -118,7 +118,10 @@ python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 class
 # resolve through 2 actions, and neither is in code we write. Without this step the report
 # demands 311 mitigations in three weeks; with it, it names two images.
 UNITS="$OUT_DIR/$BASE.remediation-units.json"
-python3 "$HERE/group-remediation.py" "$FINDINGS" "$ASSESSED" --out "$UNITS" 2>&1 \
+GR_ARGS=("$FINDINGS" "$ASSESSED" --out "$UNITS")
+[[ -n "${SOUP_DECISIONS_FILE:-}" && -f "${SOUP_DECISIONS_FILE}" ]] \
+  && GR_ARGS+=(--decisions "$SOUP_DECISIONS_FILE")
+python3 "$HERE/group-remediation.py" "${GR_ARGS[@]}" 2>&1 \
   | sed 's/^/6\/6 group      /' >&2 \
   || echo "::warning::could not group findings by remediation action — the per-finding deadlines still stand" >&2
 

@@ -18,15 +18,35 @@ epss:
 # §3 — two clocks per track, in calendar time.
 #   mitigation  = exposure measurably reduced and documented
 #   remediation = the fix is live in the version users run; only a deploy stops this clock
+# Revised 2026-08-03. The previous values (72h/21d, 20d/40d) came from DEV-191's draft and
+# could not be met — not for lack of capacity but because the deadline hung on each CVE. §3.5
+# moved it to the action, and these numbers are set for what an action actually takes: an image
+# bump on a regulated product means a regression test and a release.
+#
+# Mitigation is deliberately much shorter than remediation everywhere, because they are
+# different kinds of work. Mitigation is triage: assess applicability, and either reduce
+# exposure or document that there is none. Remediation needs a release.
 tracks:
-  immediate:              # KEV, or CVSS >= 9.0, or High + EPSS >= 0.50
+  kev:                    # in the CISA KEV catalog, or membership unestablished
+    # Kept at 72h while everything else lengthened. This is the one case where speed is
+    # justified by an observation rather than a score, and from 2026-09-11 the CRA puts a
+    # 24-hour *reporting* obligation beside it — a remediation deadline six times longer than
+    # the reporting deadline would not survive a question about it.
     mitigation: 72h
-    remediation: 21d
+    remediation: 30d
+  immediate:              # CVSS >= 9.0, or High + EPSS >= 0.50 — severe, but not observed in use
+    # 0 of kontina-backend's 23 Critical findings were in KEV. A 72h clock here was being
+    # justified by a risk none of them carried.
+    mitigation: 14d
+    remediation: 30d
   expedited:              # CVSS 7.0-8.9, or Medium + EPSS >= 0.10, or unscored
-    mitigation: 20d
-    remediation: 40d
-  planned:                # CVSS 4.0-6.9, or Low + EPSS >= 0.10
     mitigation: 30d
+    remediation: next-release
+  planned:                # CVSS 4.0-6.9, or Low + EPSS >= 0.10
+    # No mitigation clock. It stood at 30d over 196 findings on one product, and "mitigate a
+    # medium" in practice meant writing a document. A control that only produces paper costs
+    # the attention the critical findings need.
+    mitigation: none
     remediation: next-release
   monitor:                # CVSS < 4.0
     mitigation: none

@@ -123,12 +123,14 @@ def main():
         rec["mitigation_satisfied"] = state == FIX_READY
         rec["remediation_satisfied"] = False
 
-        # A Track 1 finding whose fix is staged but whose remediation deadline falls before
-        # the next scheduled release is the only thing that may force an out-of-band
-        # release. Deliberately narrow.
+        # A finding whose fix is staged but whose remediation deadline falls before the next
+        # scheduled release is the only thing that may force an out-of-band release.
+        # Deliberately narrow: the two top tracks only. KEV became its own track on
+        # 2026-08-03, and omitting it here would have quietly excluded the actively-exploited
+        # case from the one mechanism that can force a release.
         rec["release_required"] = bool(
             state == FIX_READY
-            and f.get("track") == "immediate"
+            and f.get("track") in ("kev", "immediate")
             and f.get("remediation_due")
             and not f.get("remediation_overdue", False)
         )
@@ -137,7 +139,7 @@ def main():
             rec["release_required_why"] = "remediation deadline already breached and the fix is not live"
         elif rec["release_required"]:
             rec["release_required_why"] = (
-                f"Track 1 fix is staged but not deployed; remediation due "
+                f"{f.get('track')} fix is staged but not deployed; remediation due "
                 f"{(f.get('remediation_due') or '')[:10]}"
             )
 

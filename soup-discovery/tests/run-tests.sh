@@ -523,18 +523,40 @@ mkvuln() { # <id> <cvss-vector|null> <kev|null> <epss|null> [vex-state] [justifi
     > "$TMP/cv.json"
 }
 
-test_classify_kev_is_immediate_regardless_of_cvss() {
+test_classify_kev_gets_its_own_track_regardless_of_cvss() {
   mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N" true null
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
-  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "immediate" || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "kev" || return 1
   assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "1"
+}
+
+# The point of separating the two: "actively exploited" is an observation, "CVSS 10.0" is a
+# score, and they no longer share a clock. Measured on kontina-backend, 0 of 23 Critical
+# findings were in KEV — the 72h clock there was justified by a risk none of them carried.
+test_classify_kev_and_critical_have_different_clocks() {
+  mkpolicy
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" true null      # KEV, also 10.0
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/k.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" false null     # same score, not KEV
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/c.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].mitigation_due[0:10]' "$TMP/k.json")" "2026-01-04" || return 1   # KEV: 72h
+  assert "$(jq -r '.findings[0].mitigation_due[0:10]' "$TMP/c.json")" "2026-01-15"               # Critical: 14d
+}
+
+# A Medium has no mitigation clock any more. It stood at 30d across 196 findings on one
+# product and meant "write a document"; Track 3 rides the maintenance window instead.
+test_classify_medium_has_no_mitigation_clock() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N" false null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "planned" || return 1
+  assert "$(jq -r '.findings[0].mitigation_due // "null"' "$TMP/co.json")" "null"
 }
 
 # "unknown" must not behave like "not in KEV": a catalog we could not read is not evidence.
 test_classify_kev_unknown_is_treated_as_kev() {
   mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N" unknown null
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
-  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "immediate"
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "kev"
 }
 
 test_classify_high_plus_high_epss_is_immediate() {
@@ -568,8 +590,8 @@ test_classify_vex_without_justification_does_not_suppress() {
 test_classify_deadlines_come_from_the_policy() {
   mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" false null
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
-  assert "$(jq -r '.findings[0].mitigation_due[0:10]' "$TMP/co.json")" "2026-01-04" || return 1   # 72h
-  assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/co.json")" "2026-01-22"              # 21d
+  assert "$(jq -r '.findings[0].mitigation_due[0:10]' "$TMP/co.json")" "2026-01-15" || return 1   # 14d
+  assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/co.json")" "2026-01-31"              # 30d
 }
 
 # §2.2 — EPSS decays daily. Without latching a Track 1 finding becomes Track 2 a week later,
@@ -594,7 +616,7 @@ test_classify_escalation_restarts_the_clock() {
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/e1.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
   mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N" true null      # added to KEV
   CLS "$TMP/cv.json" "$TMP/cp.json" --state "$TMP/e1.json" --out "$TMP/e2.json" --now 2026-02-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
-  assert "$(jq -r '.findings[0].track' "$TMP/e2.json")" "immediate" || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/e2.json")" "kev" || return 1
   assert "$(jq -r '.findings[0].first_seen[0:10]' "$TMP/e2.json")" "2026-02-01"
 }
 
@@ -925,6 +947,90 @@ test_units_unplaceable_finding_is_reported_not_dropped() {
   python3 "$S/group-remediation.py" "$TMP/ru-f.json" "$TMP/ru-bom.json" --out "$TMP/ru.json" 2>/dev/null || return 1
   assert "$(jq -r '.unplaced | length' "$TMP/ru.json")" "1" || return 1
   assert "$(jq -r '.unplaced[0].id' "$TMP/ru.json")" "CVE-X"
+}
+
+# ---------------------------------------------------------------- vendor state
+mkvendor() {
+  # <now> [decisions-file] -> units + escalation in $TMP
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[{"bom-ref":"c1",type:"library",name:"a",version:"1",purl:"pkg:rpm/rhel/a@1",
+                       properties:[{name:"quickbird:component:artifact",
+                                    value:"quickbird:artifact:deployed-wireguard-1.0.20210914"}]},
+                      {"bom-ref":"c2",type:"library",name:"b",version:"1",purl:"pkg:rpm/rhel/b@1",
+                       properties:[{name:"quickbird:component:artifact",
+                                    value:"quickbird:artifact:deployed-wireguard-1.0.20210914"}]}],
+          vulnerabilities:[{id:"CVE-A",affects:[{ref:"c1"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]},
+                           {id:"CVE-B",affects:[{ref:"c2"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]}]}' \
+    > "$TMP/vb.json"
+  jq -n '{findings:[{id:"CVE-A",track:"immediate",kev:false,
+                     mitigation_due:"2026-01-01T00:00:00+00:00",
+                     remediation_due:"2026-01-15T00:00:00+00:00"},
+                    {id:"CVE-B",track:"immediate",kev:false,
+                     mitigation_due:"2026-01-01T00:00:00+00:00",
+                     remediation_due:"2026-01-15T00:00:00+00:00"}]}' > "$TMP/vf.json"
+  local args=("$TMP/vf.json" "$TMP/vb.json" --now "$1" --out "$TMP/vu.json")
+  [[ -n "${2:-}" ]] && args+=(--decisions "$2")
+  python3 "$S/group-remediation.py" "${args[@]}" >/dev/null 2>&1 || return 1
+  python3 "$S/escalate-breaches.py" "$TMP/vf.json" --units "$TMP/vu.json" \
+    --now "$1" --out "$TMP/ve.json" >/dev/null 2>&1
+}
+
+# Both of kontina-backend's units are third-party images. Counting a deadline against work
+# nobody has started must be visible as exactly that.
+test_vendor_no_request_on_record_is_named() {
+  mkvendor 2026-06-01T00:00:00+00:00 || return 1
+  assert "$(jq -r '.units[0].state' "$TMP/vu.json")" "no-vendor-request" || return 1
+  jq -re '.units[0].state_detail | test("no request to them is on record")' "$TMP/vu.json" >/dev/null
+}
+
+# A dated request with a live follow-up is the record. Demanding a second decision on top would
+# ask someone to accept a risk they have already acted on and cannot remove.
+test_vendor_request_with_live_follow_up_is_not_a_breach() {
+  printf 'vendor_requests:
+  - unit: deployed-wireguard-1.0.20210914
+    requested: 2026-05-01
+    follow_up: 2026-12-01
+    contact: "issue #1"
+' > "$TMP/vd.yml"
+  mkvendor 2026-06-01T00:00:00+00:00 "$TMP/vd.yml" || return 1
+  assert "$(jq -r '.units[0].state' "$TMP/vu.json")" "waiting-on-vendor" || return 1
+  # deadlines are long past, yet this is not undecided
+  assert "$(jq -r '.escalations[0].level' "$TMP/ve.json")" "waiting-on-vendor"
+}
+
+# The follow-up date is what stops it being a parking space.
+test_vendor_overdue_follow_up_becomes_a_decision() {
+  printf 'vendor_requests:
+  - unit: deployed-wireguard-1.0.20210914
+    requested: 2026-05-01
+    follow_up: 2026-05-15
+    contact: "issue #1"
+' > "$TMP/vd.yml"
+  mkvendor 2026-06-01T00:00:00+00:00 "$TMP/vd.yml" || return 1
+  assert "$(jq -r '.units[0].state' "$TMP/vu.json")" "vendor-overdue" || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/ve.json")" "undecided" || return 1
+  # and the decision is about the image, not about each finding
+  jq -re '.escalations[0].detail[0] | test("whether to replace this image")' "$TMP/ve.json" >/dev/null
+}
+
+# A request with no follow-up date never comes back up, which makes it a note rather than a
+# control — and it must not read as handled.
+test_vendor_request_without_a_follow_up_date_is_flagged() {
+  printf 'vendor_requests:
+  - unit: deployed-wireguard-1.0.20210914
+    requested: 2026-05-01
+' > "$TMP/vd.yml"
+  mkvendor 2026-06-01T00:00:00+00:00 "$TMP/vd.yml" || return 1
+  assert "$(jq -r '.units[0].state' "$TMP/vu.json")" "vendor-request-undated"
+}
+
+# The point of collapsing: two findings in one image produce one escalation naming both.
+test_vendor_escalation_is_per_action_not_per_finding() {
+  mkvendor 2026-06-01T00:00:00+00:00 || return 1
+  assert "$(jq -r '.escalations | length' "$TMP/ve.json")" "1" || return 1
+  assert "$(jq -r '.escalations[0].finding_count' "$TMP/ve.json")" "2" || return 1
+  assert "$(jq -r '.escalations[0].escalating_findings | length' "$TMP/ve.json")" "2"
 }
 
 test_maintenance_window_grid() {
