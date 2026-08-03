@@ -1,0 +1,29 @@
+# Per-product policy for QuickBirdEng/dermafy. Sits next to .soup-scope.yml.
+#
+# Everything not stated here comes from the process defaults (policy-defaults.yml). A longer
+# deadline or a higher threshold needs a `reason:`.
+#
+# DRAFT. tier, cra_scope and production_release.detect_by need decisions.
+
+product: dermafy
+tier: Basic
+cra_scope: unknown
+
+# Measured from the clean-semver tags: v1.0.6 (2025-10-15) and v1.0.1 (2024-09-24) — about
+# thirteen months apart. Declared biannual and it still reads as broken (~291 days since the
+# last one). Set this to the intended cycle rather than to whatever makes the check pass:
+# with Track 3 remediation defined as "next release", a declared cadence that nobody keeps
+# means Track 3 findings have no real deadline at all, and that is the thing worth seeing.
+release_cadence: biannual
+
+# NEEDS A DECISION. Two signals disagree by about four months:
+#
+#   tag_pattern       v1.0.6       2025-10-15
+#   prerelease_flag   v1.1.0-qa7   2026-02-26     (a -qa tag marked as a full release)
+#   production_asset  none         —              (this repo attaches no such artifact)
+production_release:
+  detect_by: tag_pattern
+
+alerts:
+  slack_channel: ""
+  threshold: high

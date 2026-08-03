@@ -1,0 +1,43 @@
+# Per-product policy for QuickBirdEng/apellis. Sits next to .soup-scope.yml.
+#
+# Everything not stated here comes from the process defaults (policy-defaults.yml). A longer
+# deadline or a higher threshold needs a `reason:`.
+#
+# DRAFT. This product breaks an assumption the other four share, and that is the main thing
+# to read here rather than any of the field values.
+
+product: apellis
+tier: Basic
+cra_scope: unknown
+
+# THE TAG-KEYED MODEL DOES NOT APPLY TO THIS PRODUCT.
+#
+# apellis has zero tags and zero releases. analysis-pipeline-release.yml takes an `image_tag`
+# input — the git SHA — builds the images with it and deploys via `helm --set`. So:
+#
+#   * DEV-190's release bundle has nothing to attach to. There is no release, so there is no
+#     release asset and no frozen per-release evidence. The SBOM for a deployed version has
+#     to be keyed on the deployed image tag (the SHA) and stored somewhere that outlives the
+#     workflow run — a container registry referrer, or an evidence store keyed by SHA.
+#   * DEV-196's "resolve the deployed version from the deploy record" is the *only* way to
+#     know what is running here; there is no tag to fall back on.
+#   * §5's reproducibility fields still work, because the images are built from a SHA and the
+#     model image is digest-pinned. Nothing is unreproducible — it is simply not addressed by
+#     a version number.
+#
+# Declared `continuous` rather than given a cycle: this product deploys every merge, so
+# Track 3's "next release" resolves to the next deploy — which is faster than any of the
+# cycles the other products declare, not slower. The backstop measures it against the deploy
+# history rather than the release history, and asserts a ceiling rather than a cycle: if
+# nothing has deployed in production_release.max_deploy_gap days, "continuous" has stopped
+# being true and the Track 3 deadline has nothing to land on.
+release_cadence: continuous
+
+# Left at the default for completeness; no signal can fire on a repo with no releases, and
+# the backstop will say so rather than reporting a healthy cadence.
+production_release:
+  detect_by: tag_pattern
+
+alerts:
+  slack_channel: ""
+  threshold: high

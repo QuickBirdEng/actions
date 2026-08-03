@@ -1,0 +1,112 @@
+# Scope declaration for QuickBirdEng/alvie.
+#
+# 21 candidates across 5 ecosystems. Same shape as Osteocoach and Dermafy; the differences
+# are the second pub package, the ePA sidecar pair, and a data-import script.
+#
+# Rules match by exact `id` or by `path` prefix on any marker. An `id` rule beats a `path`
+# rule. Every entry needs a `reason`; an exclusion without one fails the run.
+#
+# DRAFT — proposals from reading the repo, not decisions. Needs the project's confirmation
+# before this file is committed to alvie.
+
+include:
+  # --- the medical device itself ------------------------------------------------
+  - id: app
+    reason: >-
+      The Flutter app. pubspec.lock is the resolved set, and it also resolves the in-repo
+      overlay_dialog package (verified: overlay_dialog's universal_io appears in
+      app/pubspec.lock as a transitive).
+
+  - id: app-android
+    reason: >-
+      Android build of the app. Contributes the Android/Kotlin side of the shipped APK,
+      which pubspec.lock does not cover.
+
+  - id: web
+    reason: >-
+      The web monorepo root. Its yarn.lock resolves web/packages/common and
+      web/packages/rest, which carry no lockfile of their own.
+
+  - id: strapi
+    reason: The CMS that serves product content. Carries its own lockfile.
+
+  # --- runtime base images that actually ship -----------------------------------
+  - id: web-dockerfiles-image-39
+    reason: >-
+      Final stage of web/dockerfiles/Dockerfile.node — the shipped REST API image base.
+      This is the Dockerfile that .github/workflows/web-release.yml builds and pushes via
+      docker-compose.prod.yml.
+  - id: web-packages-strapi-image-2
+    reason: The Strapi image we build; base image contents are in CVE scope.
+  - id: web-packages-keycloak-image-1
+    reason: The Keycloak image we build; base image contents are in CVE scope.
+
+  # --- third-party images deployed into the namespace ---------------------------
+  # Resolved from deployment/charts/alvie/values.yaml. Nothing else in this repo covers
+  # them, so these entries are the only reason they appear in the SBOM at all.
+  - id: deployed-epa4all-rest-service-v1.2.4
+    reason: >-
+      ePA REST service handling patient-record traffic. Built by a third party (Oviva), so
+      its contents are outside our control and squarely inside our CVE scope.
+  - id: deployed-wireguard-1.0.20210914
+    reason: >-
+      WireGuard sidecar carrying ePA traffic. Version dates from 2021 — expect this to
+      breach the dependency currency policy, which is the correct outcome rather than a
+      reason to exclude it.
+  - id: deployed-redis-7-alpine
+    reason: Redis in production (chart values redis.image, 7-alpine).
+  - id: deployed-qb-gid-server-0.1.10
+    reason: >-
+      Our own GID server, pinned to 0.1.10 in the chart values. This entry records the
+      deployed version; its component SBOM comes from its own repo.
+  - id: deployment-terraform-main
+    reason: Pinned Terraform provider versions for the production infrastructure.
+
+exclude:
+  # --- resolved elsewhere, would double count -----------------------------------
+  - id: overlay_dialog
+    reason: >-
+      In-repo Flutter package consumed by the app as a path dependency, so its transitive
+      closure is already in app/pubspec.lock. Its own pubspec.lock exists for developing the
+      package standalone. Including it would list the same components twice and inflate
+      every count in the bundle.
+
+  # --- build stages that never reach production ---------------------------------
+  - id: web-dockerfiles-image-2
+    reason: Build stage of Dockerfile.node. Does not ship.
+
+  # --- local developer stack ----------------------------------------------------
+  - id: web-dockerfiles-image-1
+    reason: >-
+      Dockerfile.postgres, referenced only from web/docker-compose.local.yml. The deployed
+      database is a managed service, not this image.
+  - id: deployed-web-strapi-latest
+    reason: >-
+      Locally built Strapi image from web/docker-compose.local.yml, tagged `latest`. The
+      deployed Strapi is deployed-alvie-strapi-appversion below.
+
+  # --- operator tooling, not part of the product --------------------------------
+  - id: exerciseImport
+    reason: >-
+      One-off data-import script (CSV to JSON) under deployment/scripts/. Run by an operator
+      to seed exercise content; it is not deployed and nothing it depends on runs in
+      production. This is a "Software Tool" in QMS terms, not a component of the shipped
+      software — it belongs in the tools record, not in the product SBOM.
+
+  # --- utility container --------------------------------------------------------
+  - id: deployed-curl-latest
+    reason: >-
+      Health-check cronjob, pinned to `latest` and therefore not reproducible. Out of scope
+      until it is pinned; tracked as a hygiene item rather than silently included.
+
+  # --- release-versioned images: our own, already covered ------------------------
+  # Repository resolves from the chart values, tag comes from `--set version`. Contents are
+  # covered by the build candidate named in each reason; the version gap is DEV-196.
+  - id: deployed-alvie-rest-appversion
+    reason: >-
+      Our own REST API image; contents covered by web-dockerfiles-image-39. Also the image
+      for the cronjobs in cronjobs.yaml. Version resolution is DEV-196.
+  - id: deployed-alvie-strapi-appversion
+    reason: Our own Strapi image; contents covered by web-packages-strapi-image-2. Version resolution is DEV-196.
+  - id: deployed-alvie-keycloak-appversion
+    reason: Our own Keycloak image; contents covered by web-packages-keycloak-image-1. Version resolution is DEV-196.

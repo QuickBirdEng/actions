@@ -37,6 +37,28 @@ breach:
   decision_within: 5d
   risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)
 
+# §3.4 — which releases count as production.
+#
+# Track 3 remediation is "next release", so the cadence a deadline is derived from has to be
+# the cadence at which things actually reach users. Three signals in a GitHub repo claim to
+# answer that, and across this portfolio they disagree — on alvie they name releases 315 days
+# apart. Whichever one a product actually maintains is a fact about that product, so it is
+# configured here rather than guessed, and the backstop reports a disagreement instead of
+# silently resolving it.
+#
+#   tag_pattern       the tag shape. A deploy runs from a tag, so where the convention is
+#                     kept this is the operational truth. The default.
+#   prerelease_flag   GitHub's prerelease checkbox. Reliable only if it is maintained.
+#   production_asset  a release asset whose name contains "production" — mobile builds.
+production_release:
+  detect_by: tag_pattern
+  # A product with `release_cadence: continuous` has no release cycle to measure — apellis
+  # deploys every merge by git SHA and has no tags at all. For those, cadence is measured
+  # against the deploy history and this is the ceiling: nothing deployed in this long means
+  # "continuous" is no longer true, and Track 3's "next release" has nothing to land on.
+  max_deploy_gap: 30
+  tag_pattern: '^v?[0-9]+\.[0-9]+\.[0-9]+$'
+
 # §6 — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
 dependency_currency:
   max_behind:

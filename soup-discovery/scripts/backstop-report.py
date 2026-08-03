@@ -29,6 +29,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -44,46 +45,134 @@ def load(path):
 
 CADENCE_DAYS = {"daily": 1, "weekly": 7, "fortnightly": 14, "biweekly": 14,
                 "monthly": 31, "quarterly": 92, "biannual": 183, "annual": 366}
-# How far past the declared interval before the cadence counts as not holding. A release
-# cycle that slips by a third is normal; one that has slipped by half has stopped being a
-# cycle, and a deadline derived from it is no longer a deadline.
-TOLERANCE = 1.5
+
+# A product that deploys every merge has no release cycle to measure, and apellis is one:
+# zero tags, zero releases, deployed by git SHA via `helm --set`. Declaring it monthly would
+# manufacture a Track 3 deadline out of releases that never happen; declaring nothing at all
+# would leave it unchecked. So `continuous` is measured against the deploy history instead of
+# the release history, and what it asserts is not a cycle but a ceiling: if nothing has
+# deployed in max_deploy_gap, then "continuous" has stopped being true and Track 3's
+# "next release" has no near-term meaning either.
+CONTINUOUS = "continuous"
+DEFAULT_MAX_DEPLOY_GAP = 30
 
 
-def release_dates(repo, production_only=True):
-    """Published dates of a repo's releases, newest first. None if they cannot be read.
-
-    Counts *production* releases by default, identified the same way resolve-deployed.sh
-    does: a release carrying a `-production` artifact. The distinction is not cosmetic. alvie
-    published six releases in 90 days and looks like a product on a monthly cadence, while
-    its last production build was over a year old — those releases went to staging and to
-    study builds. A Track 3/4 deadline is a *remediation* deadline, and remediation is only
-    satisfied on deploy, so the cadence that can carry such a deadline is the cadence at
-    which things actually reach users.
-
-    Falls back to counting every release when a repo has no production-flavoured artifacts
-    at all, because a backend deployed from a plain tag has no such marker and would
-    otherwise read as never releasing.
-    """
+def deployment_dates(repo):
+    """Production deployment timestamps, newest first. None if they cannot be read."""
     try:
         r = subprocess.run(
-            ["gh", "api", f"repos/{repo}/releases?per_page=100",
-             "--jq", '.[] | {at: .published_at, prod: ([.assets[].name] | any(test("production";"i")))}'],
+            ["gh", "api", f"repos/{repo}/deployments?per_page=100",
+             "--jq", '.[] | {at: .created_at, env: .environment, ref: .ref}'],
             capture_output=True, text=True, timeout=60, check=True)
         rows = [json.loads(l) for l in (r.stdout or "").splitlines() if l.strip()]
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
             FileNotFoundError, json.JSONDecodeError):
         return None, None
     if not rows:
-        return [], "no releases"
-    prod = [x["at"] for x in rows if x.get("prod") and x.get("at")]
-    if production_only and prod:
-        return prod, "production releases"
-    if production_only and not prod:
-        return ([x["at"] for x in rows if x.get("at")],
-                "all releases — no production-flavoured artifacts exist in this repo, so this "
-                "counts every release and may overstate how often the product reaches users")
-    return [x["at"] for x in rows if x.get("at")], "all releases"
+        return [], "no deployment records", False
+    prod = [x["at"] for x in rows
+            if x.get("at") and "prod" in str(x.get("env", "")).lower()]
+    if prod:
+        return prod, "production deployments", True
+    # Counting development deploys and calling the cadence healthy would be the same mistake
+    # as counting QA releases as production ones — measured on apellis, every recorded
+    # environment is a development one, so a "holds" here would assert that something reaches
+    # users when nothing in GitHub says so.
+    envs = sorted({str(x.get("env") or "?") for x in rows})
+    return ([x["at"] for x in rows if x.get("at")],
+            f"all deployments — none of the recorded environments ({', '.join(envs[:5])}) "
+            f"names production, so nothing here shows the product reaching users",
+            False)
+# How far past the declared interval before the cadence counts as not holding. A release
+# cycle that slips by a third is normal; one that has slipped by half has stopped being a
+# cycle, and a deadline derived from it is no longer a deadline.
+TOLERANCE = 1.5
+
+
+DEFAULT_TAG_PATTERN = r"^v?[0-9]+\.[0-9]+\.[0-9]+$"
+
+# The three ways a repo can say "this release went to production", in the order the default
+# policy trusts them. Which one is right is a per-product fact, not something the tooling
+# can derive — measured across the portfolio they disagree by up to 315 days on the same
+# repo, and cadence is what a Track 3/4 remediation deadline is derived from.
+SIGNALS = ("tag_pattern", "prerelease_flag", "production_asset")
+
+
+def _signal_dates(rows, signal, tag_pattern):
+    if signal == "tag_pattern":
+        rx = re.compile(tag_pattern)
+        return [x["at"] for x in rows if x.get("at") and rx.match(x.get("tag") or "")]
+    if signal == "prerelease_flag":
+        return [x["at"] for x in rows if x.get("at") and not x.get("pre")]
+    return [x["at"] for x in rows if x.get("at") and x.get("asset")]
+
+
+def release_dates(repo, production_only=True, policy=None):
+    """Published dates of a repo's production releases, newest first.
+
+    Returns (dates, basis, disagreement). A Track 3/4 deadline is a *remediation* deadline
+    and remediation is only satisfied on deploy, so the cadence that can carry such a
+    deadline is the cadence at which things actually reach users — which makes "did this
+    release go to production" a load-bearing question rather than a cosmetic one.
+
+    Three signals answer it, and on this portfolio they do not agree:
+
+        alvie   tag pattern    v1.0.7       2025-10-01
+                prerelease     v1.0.8-qa30  2026-05-04
+                asset name     v1.0.4       2025-06-23     <- 315 days apart
+
+    Any single one of them is a guess that reads as a measurement. So the signal is
+    configurable per product, and a disagreement between them is *reported* rather than
+    resolved: it means at least one is unmaintained, and until someone says which, the
+    measured cadence is not trustworthy.
+    """
+    policy = policy or {}
+    cfg = policy.get("production_release") or {}
+    signal = cfg.get("detect_by") or SIGNALS[0]
+    tag_pattern = cfg.get("tag_pattern") or DEFAULT_TAG_PATTERN
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"repos/{repo}/releases?per_page=100",
+             "--jq", '.[] | {at: .published_at, tag: .tag_name, pre: .prerelease, '
+                     'asset: ([.assets[].name] | any(test("production";"i")))}'],
+            capture_output=True, text=True, timeout=60, check=True)
+        rows = [json.loads(l) for l in (r.stdout or "").splitlines() if l.strip()]
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError, json.JSONDecodeError, re.error):
+        return None, None, None
+    if not rows:
+        return [], "no releases", None
+
+    if not production_only:
+        return [x["at"] for x in rows if x.get("at")], "all releases", None
+
+    per_signal = {s: _signal_dates(rows, s, tag_pattern) for s in SIGNALS}
+
+    # Disagreement is about which release is the most recent production one, because that is
+    # what the staleness check acts on. Two signals that pick the same latest release agree
+    # for this purpose even if they differ further back in history.
+    latest = {s: (d[0] if d else None) for s, d in per_signal.items()}
+    disagreement = None
+    if len({v for v in latest.values() if v}) > 1 or (
+            latest[signal] is None and any(latest.values())):
+        disagreement = {
+            "configured_signal": signal,
+            "latest_by_signal": {s: (latest[s] or "none") for s in SIGNALS},
+            "why_it_matters":
+                "the three ways this repo can mark a production release name different "
+                "releases, so at least one of them is not maintained. Cadence — and the "
+                "Track 3/4 remediation deadline derived from it — is measured from whichever "
+                f"one is configured (currently {signal}). Set production_release.detect_by "
+                "in .soup-policy.yml to the signal this product actually maintains.",
+        }
+
+    dates = per_signal[signal]
+    if dates:
+        return dates, f"production releases (by {signal})", disagreement
+    return ([x["at"] for x in rows if x.get("at")],
+            f"all releases — no release matches the configured {signal} signal, so this "
+            "counts every release and may overstate how often the product reaches users",
+            disagreement)
 
 
 def parse_ts(s):
@@ -176,8 +265,52 @@ def main():
         elif not repo:
             cadence.append({"product": product, "declared": declared, "status": "unknown",
                             "detail": "the run record carries no repo, so releases cannot be read"})
+        elif str(declared).lower() == CONTINUOUS:
+            # No cycle to measure — a ceiling on the deploy gap instead.
+            gap = int((((last.get("policy") or {}).get("production_release") or {})
+                       .get("max_deploy_gap") or DEFAULT_MAX_DEPLOY_GAP))
+            dates, basis, prod_found = deployment_dates(repo)
+            if dates is None:
+                cadence.append({"product": product, "declared": declared, "status": "unknown",
+                                "detail": f"could not read deployments for {repo} — not knowing "
+                                          f"whether anything still deploys is not the same as it "
+                                          f"deploying"})
+            elif not dates:
+                cadence.append({"product": product, "declared": declared, "status": "broken",
+                                "detail": f"declared continuous deployment but {repo} has no "
+                                          f"deployment records at all, and no releases either — "
+                                          f"there is no evidence in GitHub of anything reaching "
+                                          f"users, so Track 3's 'next release' has nothing to "
+                                          f"resolve against",
+                                "counted": basis})
+            else:
+                newest = parse_ts(dates[0])
+                # A deploy timestamped later today reads as -1 days otherwise.
+                since = max(0, (now - newest).days) if newest else None
+                in_window = sum(1 for d in dates if (p_ := parse_ts(d)) and p_ >= since_dt)
+                if not prod_found:
+                    status, detail = "unknown", (
+                        f"declared continuous and {in_window} deploy(s) were recorded in "
+                        f"{args.window}d, but none of them is to a production environment — so "
+                        f"this cannot show that remediation reaches users, which is the only "
+                        f"thing a Track 3 deadline depends on")
+                elif since is not None and since > gap:
+                    status, detail = "broken", (
+                        f"declared continuous but the last deploy was {since}d ago, past the "
+                        f"{gap}d ceiling — continuous deployment is how Track 3 remediation "
+                        f"lands here, so this is a deadline problem, not a process detail")
+                else:
+                    status, detail = "holds", (
+                        f"declared continuous: {in_window} deploy(s) in {args.window}d, "
+                        f"last {since}d ago (ceiling {gap}d)")
+                cadence.append({"product": product, "declared": declared, "status": status,
+                                "detail": detail, "last_release": dates[0],
+                                "days_since_last_release": since,
+                                "releases_in_window": in_window, "counted": basis,
+                                "signal_disagreement": None})
         else:
-            dates, basis = release_dates(repo)
+            dates, basis, disagreement = release_dates(
+                repo, policy=(last.get("policy") or {}))
             expected = CADENCE_DAYS.get(str(declared).lower())
             if dates is None:
                 cadence.append({"product": product, "declared": declared, "status": "unknown",
@@ -212,7 +345,11 @@ def main():
                                 "detail": detail, "last_release": dates[0],
                                 "days_since_last_release": since,
                                 "releases_in_window": in_window,
-                                "counted": basis})
+                                "counted": basis,
+                                # Carried on the entry rather than folded into the status: a
+                                # cadence that "holds" by an unmaintained signal is not a
+                                # cadence that holds, and the reader needs to see both.
+                                "signal_disagreement": disagreement})
 
         esc = (last.get("escalation") or {})
         for e in esc.get("escalations", []) or []:

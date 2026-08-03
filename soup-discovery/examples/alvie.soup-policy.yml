@@ -1,0 +1,34 @@
+# Per-product policy for QuickBirdEng/alvie. Sits next to .soup-scope.yml.
+#
+# Everything not stated here comes from the process defaults (policy-defaults.yml). A longer
+# deadline or a higher threshold needs a `reason:`.
+#
+# DRAFT. tier, cra_scope and production_release.detect_by all need a decision — the last is
+# not optional here, see below.
+
+product: alvie
+tier: Basic
+cra_scope: unknown
+
+# Measured from the clean-semver tags: v1.0.7 (2025-10-01), v1.0.4 (2025-06-23) — about a
+# quarter apart, and nothing since. Declared quarterly, this currently reads as broken
+# (~305 days since the last one).
+release_cadence: quarterly
+
+# THIS NEEDS A DECISION, and it moves a deadline by ten months.
+#
+# The three signals that could mark a production release name three different releases:
+#
+#   tag_pattern       v1.0.7       2025-10-01     (clean semver)
+#   prerelease_flag   v1.0.8-qa30  2026-05-04     (a -qa tag marked as a full release)
+#   production_asset  v1.0.4       2025-06-23     (last release with a -production artifact)
+#
+# Track 3 remediation is "next release", so whichever of these is true sets every Track 3
+# deadline for this product. The backstop reports the disagreement on every run until this
+# is set to the signal the project actually maintains.
+production_release:
+  detect_by: tag_pattern
+
+alerts:
+  slack_channel: ""
+  threshold: high

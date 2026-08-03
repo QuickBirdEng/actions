@@ -1,0 +1,105 @@
+# Scope declaration for QuickBirdEng/osteocoach.
+#
+# 21 candidates across 5 ecosystems. The same shape as Alvie and Dermafy — a Flutter app, an
+# Nx web monorepo, a Helm chart, one Terraform root — so these three files are deliberately
+# near-identical. Where they differ, the difference is called out.
+#
+# Rules match by exact `id` or by `path` prefix on any marker. An `id` rule beats a `path`
+# rule. Every entry needs a `reason`; an exclusion without one fails the run.
+#
+# DRAFT — proposals from reading the repo, not decisions. Needs the project's confirmation
+# before this file is committed to osteocoach.
+
+include:
+  # --- the medical device itself ------------------------------------------------
+  - id: app
+    reason: The Flutter app. pubspec.lock is the resolved set.
+
+  - id: app-android
+    reason: >-
+      Android build of the app. Contributes the Android/Kotlin side of the shipped APK,
+      which pubspec.lock does not cover.
+
+  - id: web
+    reason: >-
+      The web monorepo root. Its yarn.lock resolves web/packages/common and
+      web/packages/rest, which have no lockfile of their own (Nx workspace, no `workspaces`
+      key — see the npm_monorepo_root note in discover.sh).
+
+  - id: strapi
+    reason: The CMS that serves product content. Carries its own lockfile.
+
+  - id: keycloak-admin-client
+    reason: Ships as part of the web stack and carries its own lockfile.
+
+  # --- runtime base images that actually ship -----------------------------------
+  - id: web-packages-rest-image-23
+    reason: Final stage of web/packages/rest/Dockerfile — the shipped REST API image base.
+  - id: web-packages-strapi-image-23
+    reason: Final stage of web/packages/strapi/Dockerfile — the shipped Strapi image base.
+  - id: web-packages-keycloak-image-1
+    reason: The Keycloak image we build; base image contents are in CVE scope.
+
+  # --- third-party images deployed into the namespace ---------------------------
+  # Resolved from deployment/charts/osteo/values.yaml. Nothing else in this repo covers
+  # them, so these entries are the only reason they appear in the SBOM at all.
+  - id: deployed-redis-7-alpine
+    reason: Redis in production (chart values redis.image, 7-alpine).
+  - id: deployed-qb-gid-server-0.1.10
+    reason: >-
+      Our own GID server, pinned to 0.1.10 in the chart values. This entry records the
+      deployed version; its component SBOM comes from its own repo.
+  - id: deployment-terraform-main
+    reason: Pinned Terraform provider versions for the production infrastructure.
+
+exclude:
+  # --- build stages that never reach production ---------------------------------
+  - id: web-packages-rest-image-2
+    reason: Build stage of web/packages/rest/Dockerfile. Does not ship.
+  - id: web-packages-strapi-image-4
+    reason: Build stage of web/packages/strapi/Dockerfile. Does not ship.
+
+  # --- local developer stack ----------------------------------------------------
+  - path: web/docker-compose.local.yml
+    reason: >-
+      Local developer stack only. The deployed database is a managed service, not this
+      image.
+  - path: web/docker-compose.epa.yml
+    reason: >-
+      Local stack for developing against the ePA service (postgres 16.0-alpine plus
+      qbsdocker/epa-service:1.0.0). The deployed ePA service is
+      deployed-epa-service-appversion below, whose version is set per environment and is
+      not this one — so including this file would put a developer-local version into the
+      SBOM as though it were deployed.
+
+  # --- utility container --------------------------------------------------------
+  - id: deployed-curl-latest
+    reason: >-
+      Health-check cronjob, pinned to `latest` and therefore not reproducible. Out of scope
+      until it is pinned; tracked as a hygiene item rather than silently included.
+
+  # --- release-versioned images: our own, already covered ------------------------
+  # The repository resolves from the chart values, the tag comes from `--set version`. The
+  # image *contents* are covered by the build candidate named in each reason, so excluding
+  # these does not lose coverage — but the version gap is real and belongs to DEV-196.
+  - id: deployed-osteo-rest-appversion
+    reason: >-
+      Our own REST API image (qbsdocker/osteo-rest); contents covered by
+      web-packages-rest-image-23. Also the image for the three cronjobs. Version
+      resolution is DEV-196.
+  - id: deployed-osteo-strapi-appversion
+    reason: Our own Strapi image; contents covered by web-packages-strapi-image-23. Version resolution is DEV-196.
+  - id: deployed-osteo-keycloak-appversion
+    reason: Our own Keycloak image; contents covered by web-packages-keycloak-image-1. Version resolution is DEV-196.
+
+  # --- third-party image with no version anywhere in the repo --------------------
+  - id: deployed-epa-service-appversion
+    reason: >-
+      HYGIENE ITEM, not a clean exclusion. qbsdocker/epa-service is built outside this repo
+      and its chart tag is empty ("pin a published version per env"), so the deployed
+      version is not knowable here — and unlike our own images, no build candidate in this
+      repo covers its contents. It is therefore genuinely uncovered, not covered elsewhere.
+      Worse, the template falls back to `.Values.version | default .Chart.AppVersion`, so an
+      unset tag would request qbsdocker/epa-service:<osteocoach's own release version>.
+      Excluded only because it cannot be scanned from here; the fix is to pin the tag in the
+      chart values, at which point this becomes an include. Tracked under DEV-196.

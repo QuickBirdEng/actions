@@ -1,0 +1,121 @@
+# Scope declaration for QuickBirdEng/dermafy.
+#
+# 23 candidates across 5 ecosystems. Same shape as Osteocoach and Alvie, plus one thing
+# neither of them has: a second deployment mechanism. `web-release.yml` deploys the product
+# with Helm, and `superset-release.yml` runs an Ansible playbook against a separate study
+# server. That makes two of the scope calls below judgment calls rather than readings.
+#
+# Rules match by exact `id` or by `path` prefix on any marker. An `id` rule beats a `path`
+# rule. Every entry needs a `reason`; an exclusion without one fails the run.
+#
+# DRAFT — proposals from reading the repo, not decisions. Needs the project's confirmation
+# before this file is committed to dermafy. The two calls marked NEEDS A DECISION are the
+# ones to look at first.
+
+include:
+  # --- the medical device itself ------------------------------------------------
+  - id: app
+    reason: The Flutter app. pubspec.lock is the resolved set.
+
+  - id: app-android
+    reason: >-
+      Android build of the app. Contributes the Android/Kotlin side of the shipped APK,
+      which pubspec.lock does not cover.
+
+  - id: web
+    reason: The web monorepo root. Its yarn.lock is the resolved set.
+
+  - id: strapi
+    reason: The CMS that serves product content. Carries its own lockfile.
+
+  # --- runtime base images that actually ship -----------------------------------
+  - id: web-dockerfiles-image-34
+    reason: >-
+      Final stage of web/dockerfiles/Dockerfile.node — the shipped REST API image base.
+  - id: web-packages-strapi-image-2
+    reason: The Strapi image we build; base image contents are in CVE scope.
+  - id: web-packages-keycloak-image-1
+    reason: The Keycloak image we build; base image contents are in CVE scope.
+
+  # --- third-party images deployed into the namespace ---------------------------
+  # Resolved from deployment/charts/skinapy/values.yaml. Nothing else in this repo covers
+  # them, so these entries are the only reason they appear in the SBOM at all.
+  - id: deployed-epa4all-rest-service-v1.2.4
+    reason: >-
+      ePA REST service handling patient-record traffic. Built by a third party (Oviva), so
+      its contents are outside our control and squarely inside our CVE scope.
+  - id: deployed-wireguard-1.0.20210914
+    reason: >-
+      WireGuard sidecar carrying ePA traffic. Version dates from 2021 — expect this to
+      breach the dependency currency policy, which is the correct outcome rather than a
+      reason to exclude it. The same image and the same version run in Alvie and Kontina.
+  - id: deployed-redis-7-alpine
+    reason: Redis in production (chart values redis.image, 7-alpine).
+  - id: deployed-qb-gid-server-0.1.10
+    reason: >-
+      Our own GID server, pinned to 0.1.10 in the chart values. This entry records the
+      deployed version; its component SBOM comes from its own repo.
+  - id: deployment-terraform-main
+    reason: Pinned Terraform provider versions for the production infrastructure.
+
+exclude:
+  # --- build stages and local developer images -----------------------------------
+  - id: web-dockerfiles-image-2
+    reason: Build stage of Dockerfile.node. Does not ship.
+  - id: web-dockerfiles-image-1
+    reason: >-
+      Dockerfile.mysql and Dockerfile.postgres, single-stage images for the local developer
+      stack. The deployed database is a managed service, not these.
+  - id: deployed-web-strapi-latest
+    reason: >-
+      Locally built Strapi image from web/docker-compose.yml, tagged `latest`. The deployed
+      Strapi is deployed-dermafy-strapi-appversion below.
+
+  # --- utility container --------------------------------------------------------
+  - id: deployed-curl-latest
+    reason: >-
+      Health-check cronjob, pinned to `latest` and therefore not reproducible. Out of scope
+      until it is pinned; tracked as a hygiene item rather than silently included.
+
+  # --- release-versioned images: our own, already covered ------------------------
+  - id: deployed-dermafy-rest-appversion
+    reason: Our own REST API image; contents covered by web-dockerfiles-image-34. Version resolution is DEV-196.
+  - id: deployed-dermafy-strapi-appversion
+    reason: Our own Strapi image; contents covered by web-packages-strapi-image-2. Version resolution is DEV-196.
+  - id: deployed-dermafy-keycloak-appversion
+    reason: Our own Keycloak image; contents covered by web-packages-keycloak-image-1. Version resolution is DEV-196.
+
+  # --- NEEDS A DECISION 1: the Ansible web stack ---------------------------------
+  # No workflow references deployment/ansible/web.yml or keycloak.yml — only
+  # superset-release.yml runs Ansible, and only for superset. The web role's image tag comes
+  # from `{{ image.TAG }}`, defined in configs/develop and configs/staging but not in
+  # configs/study, which reads as a develop/staging path superseded by the Helm chart.
+  # If that is right these are dead code and the exclusion is free; if some environment is
+  # still deployed this way, then these entries are the deployed product and belong in
+  # `include` instead. The contents are covered by the same build candidates either way —
+  # what changes is which manifest is treated as the truth about production.
+  - path: deployment/ansible/roles/setup-web/
+    reason: >-
+      Ansible web role — appears superseded by the Helm chart (no workflow runs web.yml).
+      Covers qbsdocker/dermafy-rest, -strapi and -postgres-db, whose contents are covered by
+      web-dockerfiles-image-34 and web-packages-strapi-image-2. Confirm this path is dead
+      before accepting the exclusion.
+  - path: deployment/ansible/roles/setup-keycloak/
+    reason: >-
+      Ansible Keycloak role — same reasoning as setup-web. Contents covered by
+      web-packages-keycloak-image-1.
+
+  # --- NEEDS A DECISION 2: Superset --------------------------------------------
+  - path: deployment/ansible/roles/setup-superset/
+    reason: >-
+      Apache Superset, deployed by superset-release.yml to a study server. Excluded from
+      *this product's* SBOM because it is not part of the medical device — putting a BI stack
+      into the device's bill of materials would misrepresent what the device contains.
+      That is emphatically not the same as saying it needs no monitoring: we build, deploy
+      and patch it, so a CVE in it is ours to fix, and it should be its own entry in the
+      monitored-product list rather than disappearing between two scope files. The versions
+      are in deployment/ansible/configs/study/superset.yml and are not reassuring —
+      apache/superset:4.0.2-dev (a dev-tagged build of a 2024 release), redis:7,
+      postgres:15. Note also that discovery cannot resolve these automatically: it reads
+      Helm values.yaml but not Ansible config vars, so as long as this stays excluded the
+      versions above are only visible to someone reading the repo.

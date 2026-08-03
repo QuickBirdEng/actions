@@ -1,0 +1,111 @@
+# Scope declaration for QuickBirdEng/apellis.
+#
+# 28 candidates across 6 ecosystems, and the odd one out in the portfolio: a Go connector, a
+# Kotlin worker, a React dashboard, a GPU inference model and six Terraform roots. It also
+# has **no tags and no releases at all** — the analysis-pipeline release workflow takes an
+# `image_tag` input (the git SHA) and deploys with `helm --set`. Everything tag-keyed in
+# DEV-190 and DEV-196 therefore does not apply here; see apellis.soup-policy.yml.
+#
+# Rules match by exact `id` or by `path` prefix on any marker. An `id` rule beats a `path`
+# rule. Every entry needs a `reason`; an exclusion without one fails the run.
+#
+# DRAFT — proposals from reading the repo, not decisions.
+
+include:
+  # --- the software that runs in production ---------------------------------------
+  - id: worker
+    reason: >-
+      The analysis worker (Kotlin). Scanned via installDist output, not build.gradle.kts —
+      declared dependencies alone omit transitives and leave BOM-managed versions empty,
+      which is the defect DEV-195 exists for.
+  - id: dashboard
+    reason: The React dashboard. Its lockfile is the resolved set.
+  - id: appway-connector
+    reason: >-
+      The Appway connector (Go). Scanned from the linked binary rather than go.sum, so
+      test-only modules that never ship stay out.
+
+  # --- runtime base images that actually ship ------------------------------------
+  - id: apps-analysis-pipeline-worker-image-42
+    reason: Final stage of the worker Dockerfile — the shipped worker image base.
+  - id: apps-analysis-pipeline-dashboard-image-17
+    reason: Final stage of the dashboard Dockerfile — the shipped dashboard image base.
+  - id: apps-appway-connector-image-14
+    reason: Final stage of the connector Dockerfile — the shipped connector image base.
+
+  # --- images deployed into the cluster but built elsewhere -----------------------
+  - id: deployed-octf-inference-sha256-e8b89f6c31ab9dc87295d5ee530fd3ad03d301857a69a677d1812c2f6742ad6f
+    reason: >-
+      The OCT fluid inference model image, pulled from the Apellis registry and pinned by
+      digest in the chart values — the one image reference in the portfolio that is fully
+      reproducible. Built outside this repo, so its contents are out of our control and in
+      our CVE scope. The digest pin is what makes that scope meaningful; do not let it
+      regress to a floating tag.
+  - id: deployed-k8s-device-plugin-v0.17.1
+    reason: >-
+      NVIDIA device plugin, deployed as a daemonset into the production cluster. Third-party
+      and version-pinned, so it is both in scope and scannable.
+
+  # --- deploy-time tooling with pinned versions ----------------------------------
+  # Terraform providers are not part of the deployed software, so they are not SOUP in the
+  # IEC 62304 sense. They are included because a compromised provider can alter the
+  # infrastructure this product runs on, and the lockfiles make them cheap to track. If the
+  # project would rather keep tooling out of the product SBOM, all five move to exclude
+  # together — one consistent decision, not a per-root judgment.
+  - id: apps-acr-setup
+    reason: Container registry infrastructure. Pinned provider versions.
+  - id: apps-ai-training-server-setup
+    reason: Training server infrastructure. Pinned provider versions.
+  - id: apps-appway-link-setup
+    reason: Appway link infrastructure. Pinned provider versions.
+  - id: apps-heyex2-setup
+    reason: HEYEX2 integration infrastructure. Pinned provider versions.
+  - id: apps-terraform-state-setup
+    reason: Terraform state backend. Pinned provider versions.
+
+exclude:
+  # --- build stages that never reach production ----------------------------------
+  - id: apps-analysis-pipeline-worker-image-14
+    reason: Build stage of the worker Dockerfile. Does not ship.
+  - id: apps-analysis-pipeline-dashboard-image-4
+    reason: First build stage of the dashboard Dockerfile. Does not ship.
+  - id: apps-analysis-pipeline-dashboard-image-10
+    reason: Second build stage of the dashboard Dockerfile. Does not ship.
+  - id: apps-appway-connector-image-6
+    reason: Build stage of the connector Dockerfile. Does not ship.
+
+  # --- test infrastructure -------------------------------------------------------
+  - path: apps/analysis-pipeline/integration-test/
+    reason: >-
+      Integration-test harness — the mock model image, the orchestrator, busybox 1.37 and
+      postgres 16-alpine from its docker-compose. None of it is deployed; it exists to run
+      the pipeline against a fake model in CI. Covers
+      deployed-busybox-1.37 and deployed-postgres-16-alpine, whose only markers are that
+      compose file.
+  - id: apps-analysis-pipeline-e2e-test
+    reason: End-to-end test dependencies. Test-only, not deployed.
+  - id: docs-dicom-examples-tools
+    reason: >-
+      Example DICOM tooling under docs/. Documentation aid, not deployed and not shipped to
+      anyone.
+
+  # --- non-production environment -------------------------------------------------
+  - id: apps-analysis-pipeline-setup-environments-development
+    reason: >-
+      Terraform root for the development environment only. The production environment's
+      root is not in this repo path, which is itself worth confirming — if production is
+      provisioned from somewhere else, this scope file cannot see it.
+
+  # --- release-versioned images: our own, already covered -------------------------
+  # Repository resolves from the chart values; the tag is the git SHA passed at deploy. Both
+  # are covered by the build candidates above.
+  - id: deployed-pipeline-worker-appversion
+    reason: >-
+      Our own worker image (apellismlimageregistry.azurecr.io/pipeline-worker); contents
+      covered by apps-analysis-pipeline-worker-image-42. The deployed tag is a git SHA
+      supplied at deploy time — DEV-196, and see the note in the policy file about a product
+      with no tags at all.
+  - id: deployed-pipeline-dashboard-appversion
+    reason: >-
+      Our own dashboard image; contents covered by
+      apps-analysis-pipeline-dashboard-image-17. Deployed tag is a git SHA — DEV-196.

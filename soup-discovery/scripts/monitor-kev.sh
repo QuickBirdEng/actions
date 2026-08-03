@@ -213,6 +213,7 @@ jq -n \
   --argjson unknown "$UNKNOWN" --argjson feeds "$FEEDS" --argjson synthetic "$SYNTHETIC" \
   --arg cadence "$(jq -r '.release_cadence // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg tier "$(jq -r '.tier // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
+  --argjson prodrel "$(jq -c '.production_release // null' <<<"${POLICY_JSON:-{\}}" 2>/dev/null || echo null)" \
   --argjson classified "$CLASSIFIED" \
   --argjson lifecycle "$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -c '{summary, release_required, transitions}' "$LIFECYCLE" || echo null )" \
   --argjson escalation "$( [[ -n "$ESCALATION" && -f "$ESCALATION" ]] && jq -c '{summary, escalations}' "$ESCALATION" || echo null )" \
@@ -223,6 +224,10 @@ jq -n \
      # history (§3.4) without needing the policy file of every project.
      release_cadence: ($cadence | select(. != "")),
      tier: ($tier | select(. != "")),
+     # Which releases this product counts as production. Three signals answer that and they
+     # disagree on most of the portfolio, so the backstop must not pick one on its own —
+     # cadence, and every Track 3/4 deadline derived from it, depends on the answer.
+     policy: (if $prodrel == null then null else {production_release: $prodrel} end),
      synthetic: $synthetic,
      feeds: $feeds,
      scanned: $scanned,
