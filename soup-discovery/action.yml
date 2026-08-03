@@ -114,12 +114,26 @@ runs:
       shell: bash
       run: python3 -c 'import reportlab' 2>/dev/null || pip3 install --quiet reportlab
 
+    - name: Resolve the document tier
+      id: tier
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.tier }}" ]; then
+          TIER="${{ inputs.tier }}"
+        else
+          TIER=$(bash "$GITHUB_ACTION_PATH/scripts/resolve-tier.sh" \
+            "${{ github.ref_type }}" "${{ github.ref_name }}" \
+            "${{ inputs.repo-root }}/.soup-policy.yml") || exit 1
+        fi
+        echo "tier=$TIER" >> "$GITHUB_OUTPUT"
+        echo "document tier: $TIER (ref ${{ github.ref_name }})"
+
     - name: Discover, scope, scan, consolidate
       id: run
       shell: bash
       env:
         RENDER_PDF: ${{ inputs.render-pdf }}
-        SBOM_TIER: ${{ inputs.tier != '' && inputs.tier || (github.ref_type == 'tag' && 'release' || 'staging') }}
+        SBOM_TIER: ${{ steps.tier.outputs.tier }}
         SBOM_OUT_DIR: ${{ inputs.output-dir }}
         SOUP_SCOPE_FILE: ${{ inputs.scope-file }}
         SYFT_VERSION: ${{ inputs.syft-version }}
@@ -163,9 +177,17 @@ runs:
         PDF="${BOM%.json}.pdf"
         TAG="${{ github.ref_name }}"
         TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
-        if [ "$TIER" != "release" ]; then
-          echo "::error::refusing to attach a '$TIER' bundle to release $TAG — a release asset is"
-          echo "::error::  a controlled record, and a non-release bundle describes a build that was not released"
+        # Staging bundles are attached too, to the prerelease of their own tag. That is the
+        # point of producing them: a 90-day workflow artifact cannot be pulled later, and the
+        # asset name carries the tag, so sbom-v1.0.15-qa4.cdx.json is not confusable with
+        # sbom-v1.0.15.cdx.json. What keeps them apart as *evidence* is the tier inside the
+        # document and the banner on the PDF, not where the file is stored.
+        #
+        # A `branch` bundle has no version identity at all, so there is nothing to attach it
+        # to and nothing that could resolve it later.
+        if [ "$TIER" = "branch" ] || [ "$TIER" = "unmarked" ]; then
+          echo "::error::refusing to attach a '$TIER' bundle to $TAG — it carries no version"
+          echo "::error::  identity, so nothing could resolve it back to a build later"
           exit 1
         fi
         if [ -z "$GH_TOKEN" ]; then
@@ -177,9 +199,13 @@ runs:
         cp "$BOM" "sbom-$TAG.cdx.json"
         args=("sbom-$TAG.cdx.json")
         [ -f "$PDF" ] && cp "$PDF" "sbom-$TAG.pdf" && args+=("sbom-$TAG.pdf")
-        gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes ""
+        # A staging tag's release is a prerelease; creating it as one keeps the release list
+        # honest if the build ran before anyone published it.
+        PRE=""
+        [ "$TIER" = "staging" ] && PRE="--prerelease"
+        gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "" $PRE
         gh release upload "$TAG" "${args[@]}" --clobber
-        echo "attached ${args[*]} to release $TAG"
+        echo "attached ${args[*]} to release $TAG (tier $TIER)"
 
     - name: Upload SBOM
       if: ${{ inputs.upload-artifact == 'true' }}

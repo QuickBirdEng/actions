@@ -105,16 +105,24 @@ while IFS=$'\t' read -r name version sbom_url; do
   else
     curl -sSL --fail --max-time 180 "$sbom_url" -o "$bom" 2>/dev/null || true
   fi
-  # A staging or branch SBOM describes a build nobody is running. Scanning one and writing
-  # the result to the evidence store would produce a dated record that reads as monitoring
-  # of the live product and is not. The tier is stamped into the document by consolidate.sh
-  # precisely so this check is possible.
+  # What matters is that the document describes the version that is actually deployed, and
+  # resolve-deployed.sh already established which version that is — so the version identity
+  # is the guarantee, not the tier.
+  #
+  # Refusing anything below `release` would have been wrong and would have broken exactly the
+  # products that need this most: if a product deploys v1.0.8-qa30 to production (and
+  # dermafy's and alvie's release flags say some do), then its SBOM is staging-tier and it is
+  # nonetheless the correct document for what is running. A `branch` bundle is different — it
+  # carries no version identity, so nothing can tie it to a deployment.
+  #
+  # The tier is recorded either way, so the evidence says which kind of document was scanned.
+  BOM_TIER=unmarked
   if [[ -s "$bom" ]]; then
     BOM_TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$bom" 2>/dev/null)
-    if [[ "$BOM_TIER" != "release" ]]; then
-      log "::error::$name: the SBOM at that location is tier '$BOM_TIER', not 'release'"
-      UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" --arg t "$BOM_TIER" \
-        '. + [{name:$n, version:$v, why:("the SBOM found for this version is tier \($t), not release — a non-release SBOM describes a build nobody is running and must not become monitoring evidence")}]' <<<"$UNSCANNABLE")
+    if [[ "$BOM_TIER" == "branch" ]]; then
+      log "::error::$name: the SBOM at that location is a branch build with no version identity"
+      UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" \
+        '. + [{name:$n, version:$v, why:"the SBOM found for this version is a branch build — it carries no version identity, so it cannot be shown to describe what is deployed"}]' <<<"$UNSCANNABLE")
       continue
     fi
   fi
@@ -168,9 +176,13 @@ while IFS=$'\t' read -r name version sbom_url; do
   FINDINGS=$(jq -c --argjson a "$act" '. + $a' <<<"$FINDINGS")
   SUPPRESSED=$(jq -c --argjson s "$sup" '. + $s' <<<"$SUPPRESSED")
   UNKNOWN=$(jq -c --argjson u "$unk" '. + $u' <<<"$UNKNOWN")
-  SCANNED=$(jq -c --arg n "$name" --arg v "$version" \
+  SCANNED=$(jq -c --arg n "$name" --arg v "$version" --arg tier "$BOM_TIER" \
     --argjson t "$(jq '[.vulnerabilities[]?] | length' "$final")" \
-    '. + [{name:$n, version:$v, vulnerabilities:$t}]' <<<"$SCANNED")
+    '. + [{name:$n, version:$v, vulnerabilities:$t,
+           # Which kind of document this scan rests on. A staging-tier bundle is the right
+           # document when a pre-release tag is what got deployed, but the record has to say
+           # so rather than leaving a reader to assume it was the release bundle.
+           sbom_tier:$tier}]' <<<"$SCANNED")
 done < <(jq -r '.[] | "\(.name)\t\(.version)\t\(.sbom)"' <<<"$TARGETS")
 
 # --- 2b. lifecycle -----------------------------------------------------------

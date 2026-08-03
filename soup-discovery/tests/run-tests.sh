@@ -241,6 +241,46 @@ test_discover_flags_templated_image_as_unresolvable() {
   assert "$(jq -r '[.candidates[]|select(.resolvable==false)]|length' "$TMP/cand.json")" "1"
 }
 
+# The tier decides whether a document is the controlled record. It used to be derived from
+# github.ref_type, which is 'tag' for v1.0.15-qa4 exactly as for v1.0.15 — so every staging
+# build was marked as a release and nothing caught it. These are the cases that were wrong.
+test_tier_release_for_a_clean_semver_tag() {
+  assert "$(bash "$S/resolve-tier.sh" tag v1.0.15)" "release" || return 1
+  assert "$(bash "$S/resolve-tier.sh" tag 1.0.15)" "release"
+}
+
+test_tier_staging_for_a_prerelease_tag() {
+  assert "$(bash "$S/resolve-tier.sh" tag v1.0.15-qa4)" "staging" || return 1
+  assert "$(bash "$S/resolve-tier.sh" tag v1.0.8-qa36)" "staging" || return 1
+  assert "$(bash "$S/resolve-tier.sh" tag v2.0.0-rc1)" "staging"
+}
+
+test_tier_branch_without_a_tag() {
+  assert "$(bash "$S/resolve-tier.sh" branch main)" "branch" || return 1
+  assert "$(bash "$S/resolve-tier.sh" tag "")" "branch"
+}
+
+# A project that redefines which tags are production redefines this at the same time, so the
+# two cannot drift apart.
+test_tier_follows_the_projects_tag_pattern() {
+  printf 'production_release:
+  tag_pattern: "^release-[0-9]+$"
+' > "$TMP/pol.yml"
+  assert "$(bash "$S/resolve-tier.sh" tag release-42 "$TMP/pol.yml")" "release" || return 1
+  # under this project's convention a clean semver tag is NOT a production release
+  assert "$(bash "$S/resolve-tier.sh" tag v1.0.15 "$TMP/pol.yml")" "staging"
+}
+
+# A broken pattern matches nothing, which would demote every production release to staging —
+# the release would carry an unmarked bundle. Failing loudly is the only safe answer.
+test_tier_rejects_a_broken_tag_pattern() {
+  printf 'production_release:
+  tag_pattern: "^v[0-9+"
+' > "$TMP/badpol.yml"
+  bash "$S/resolve-tier.sh" tag v1.0.15 "$TMP/badpol.yml" >/dev/null 2>&1
+  assert "$?" "1"
+}
+
 mkchart() {
   mkrepo
   mkdir -p "$TMP/repo/deployment/charts/c/templates"

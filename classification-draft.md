@@ -280,22 +280,34 @@ exists. A dependency that appears for the first time at the release tag is disco
 `WI-006-03` to treat its arrival as a review event, and a pipeline that only runs at release is a
 pipeline that fails at release.
 
-But a staging document and a release document render identically, and that is the risk worth designing
-against: sooner or later one of them is forwarded to a customer or a notified body. So each document
-carries its tier (`quickbird:sbom:tier`), the PDF states it above everything else on page one, and two
-rules follow from it:
+But a staging document and a release document render identically, and that is the risk worth
+designing against: sooner or later one of them is forwarded to a customer or a notified body.
+What prevents that is the tier recorded **inside** the document (`quickbird:sbom:tier`), stated
+above everything else on page one of the PDF — not where the file is kept.
 
-| | release tier | staging / branch tier |
-|---|---|---|
-| Attached to a GitHub release | yes, this is the controlled record | refused by the pipeline |
-| Read by continuous monitoring | yes | refused — it describes a build nobody runs |
-| Retention | for the lifetime of the release | workflow artifact, short |
-| Timestamped | yes (`--release`) | no, so successive builds stay diffable |
+The tier follows the **tag shape**, which is the same signal §3.4 uses to decide which releases
+are production ones. A project that redefines `production_release.tag_pattern` redefines this at
+the same time, so the two cannot drift.
 
-The second rule is the one that matters. A staging SBOM that the monitor accepted would produce a dated
-scan record for a version that was never deployed, and the product would read as monitored when it is
-not. That is a worse failure than having no staging SBOM at all, and it is why the tier is in the
-document rather than in the file name.
+| | release tier (`v1.0.15`) | staging tier (`v1.0.15-qa4`) | branch tier (no tag) |
+|---|---|---|---|
+| Attached to its own release | yes — the controlled record | yes, as `sbom-v1.0.15-qa4.cdx.json` on the prerelease | refused: no version identity |
+| Read by continuous monitoring | yes | yes, **if that is what got deployed** | refused |
+| Recorded in the monitoring evidence | `sbom_tier: release` | `sbom_tier: staging` | n/a |
+| Timestamped | yes (`--release`) | no, so successive builds stay diffable | no |
+
+Staging bundles are attached to their own prerelease rather than kept only as a 90-day
+workflow artifact, because an artifact that has expired cannot be pulled when someone needs to
+know what a build contained. The asset name carries the tag, so the two are not confusable by
+name either.
+
+What the monitor requires is **not** a release-tier document but the document that describes
+the version actually deployed. If a product deploys a pre-release tag to production — and the
+release flags on Dermafy and Alvie suggest some do — then the staging-tier bundle is the
+correct document for what is running, and refusing it would break monitoring for exactly the
+products that most need it. A `branch` bundle is refused, because it carries no version
+identity and nothing could tie it to a deployment. The tier is written into the evidence
+record either way, so a reader is never left assuming which kind of document a scan rested on.
 
 ## 6. Dependency currency policy
 
