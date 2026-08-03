@@ -24,6 +24,14 @@ inputs:
     description: 'Pinned syft version. Not "latest" on purpose — the component list must not change because a scanner auto-updated between two runs of the same commit.'
     required: false
     default: '1.20.0'
+  tier:
+    description: >-
+      release | staging | branch. Stamped into the document and onto the PDF cover. Only a
+      release-tier bundle may be attached to a release or consumed by the monitor: a staging
+      SBOM describes a build nobody is running, and it renders identically to a release one.
+      Defaults to release on a tag and staging otherwise, so the common case needs no input.
+    required: false
+    default: ''
   keep-timestamp:
     description: 'Set true for the release tier, which needs metadata.timestamp. Leave false for a committable, diffable BOM.'
     required: false
@@ -111,6 +119,7 @@ runs:
       shell: bash
       env:
         RENDER_PDF: ${{ inputs.render-pdf }}
+        SBOM_TIER: ${{ inputs.tier != '' && inputs.tier || (github.ref_type == 'tag' && 'release' || 'staging') }}
         SBOM_OUT_DIR: ${{ inputs.output-dir }}
         SOUP_SCOPE_FILE: ${{ inputs.scope-file }}
         SYFT_VERSION: ${{ inputs.syft-version }}
@@ -148,9 +157,17 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.repo-token }}
       run: |
-        BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
-        PDF="${{ inputs.output-dir }}/bom/solution.cdx.pdf"
+        # the assessed bundle when a policy produced one, otherwise the component list
+        BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
+        [ -f "$BOM" ] || BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
+        PDF="${BOM%.json}.pdf"
         TAG="${{ github.ref_name }}"
+        TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
+        if [ "$TIER" != "release" ]; then
+          echo "::error::refusing to attach a '$TIER' bundle to release $TAG — a release asset is"
+          echo "::error::  a controlled record, and a non-release bundle describes a build that was not released"
+          exit 1
+        fi
         if [ -z "$GH_TOKEN" ]; then
           echo "::error::publish-to-release is on but repo-token is empty — the bundle would not be attached and the deployed version would have no resolvable SBOM"
           exit 1

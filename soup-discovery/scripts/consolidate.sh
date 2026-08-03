@@ -22,6 +22,10 @@ shift 3
 command -v jq >/dev/null 2>&1 || { echo "::error::jq required" >&2; exit 1; }
 
 KEEP_TIMESTAMP="${KEEP_TIMESTAMP:-0}"
+# release | staging | branch. Stamped into the document because a staging SBOM is a
+# debugging artifact and a release SBOM is a controlled record, and they are otherwise
+# indistinguishable — which is how one eventually reaches an auditor by accident.
+SBOM_TIER="${SBOM_TIER:-branch}"
 # Set to the list of in-scope candidates that could NOT be scanned (resolvable:false, or
 # a scan that was skipped). Drives quickbird:sbom:complete — a consolidated BOM must say
 # whether it is whole, because the incomplete case is easy to produce and hard to notice.
@@ -46,6 +50,7 @@ jq -n \
   --arg version "$VERSION" \
   --argjson keep_ts "$KEEP_TIMESTAMP" \
   --arg missing "$MISSING" \
+  --arg tier "$SBOM_TIER" \
   --slurpfile boms <(for b in "${INPUTS[@]}"; do jq -c '.' "$b"; done) \
   '
   ("quickbird:product:" + $product + "@" + $version) as $root
@@ -92,7 +97,8 @@ jq -n \
             version: $version
           },
           properties: (
-            [ { name: "quickbird:sbom:complete",
+            [ { name: "quickbird:sbom:tier", value: $tier },
+              { name: "quickbird:sbom:complete",
                 value: (if ($missing_list | length) == 0 then "true" else "false" end) },
               { name: "quickbird:sbom:artifact-count", value: ($artifacts | length | tostring) } ]
             + ( $missing_list | map({ name: "quickbird:sbom:missing", value: . }) )

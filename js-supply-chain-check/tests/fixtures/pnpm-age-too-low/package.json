@@ -1,7 +1,0 @@
-{
-  "name": "pnpm-age-too-low",
-  "version": "0.0.0",
-  "pnpm": {
-    "onlyBuiltDependencies": []
-  }
-}

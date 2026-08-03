@@ -93,6 +93,20 @@ def build(bundle, out_path):
 
     complete = mprops.get("quickbird:sbom:complete")
     gaps = prop_all(meta, "quickbird:sbom:missing")
+    tier = mprops.get("quickbird:sbom:tier", "unmarked")
+
+    # Before anything else. A staging or branch document renders identically to a release
+    # one, so the only thing stopping it from being handed on as evidence is saying what it
+    # is, first and unmissably.
+    if tier != "release":
+        el.append(Paragraph(
+            f'<font color="#b91c1c"><b>Not release evidence — this is a '
+            f'{esc(tier)} build.</b></font> Produced for inspection and for comparing '
+            f'component sets between builds. It describes a build that was not released, so '
+            f'it is not a controlled record and must not be supplied to a customer, an '
+            f'auditor or a notified body. The release document for a version is the one '
+            f'attached to that version\'s release.', body))
+        el.append(Spacer(1, 8))
 
     # Completeness first, before anything reassuring.
     if complete == "false":

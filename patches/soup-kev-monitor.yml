@@ -1,0 +1,77 @@
+# New reusable workflow for QuickBirdEng/workflows — DEV-197.
+#
+# Daily check of whether anything a product currently runs contains a vulnerability that is
+# known to be actively exploited. From 11 September 2026 that question carries a 24-hour
+# reporting clock for CRA-scoped products, and it is the only question this workflow asks.
+# Severity grading, deadlines and the finding lifecycle are DEV-191.
+
+name: SOUP - KEV monitor
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: 'Product name, used in the evidence record and the alert'
+        required: true
+        type: string
+      cra-scope:
+        description: >-
+          true | false | unknown. Whether this product is in scope of the Cyber Resilience Act.
+          Left at "unknown" the alert says so — assuming "false" is the one wrong answer with a
+          legal consequence attached.
+        required: false
+        type: string
+        default: 'unknown'
+      slack-channel-id:
+        description: 'Channel for alerts. Omitted, the run still writes its record; only the notification is skipped.'
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        description: 'Runner label(s). JSON array or a single label.'
+        required: false
+        type: string
+        default: '["self-hosted", "Linux"]'
+    secrets:
+      SLACK_BOT_TOKEN:
+        required: false
+      GH_API_TOKEN:
+        required: false
+
+  # Callers add their own schedule. A fixed one here would put every product on the same
+  # minute, and the KEV catalog is a single shared feed.
+  workflow_dispatch:
+
+jobs:
+  kev-check:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: KEV monitor
+        id: monitor
+        uses: QuickBirdEng/actions/kev-monitor@main
+        with:
+          product: ${{ inputs.product }}
+          cra-scope: ${{ inputs.cra-scope }}
+          slack-channel-id: ${{ inputs.slack-channel-id }}
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
+          gh-token: ${{ secrets.GH_API_TOKEN || github.token }}
+
+      # The job fails on a KEV finding so it is visible without reading Slack, and on an
+      # incomplete run so that "could not check" is never mistaken for "nothing found".
+      # An all-clear passes and leaves its dated record behind as the evidence of monitoring.
+      - name: Verdict
+        if: always()
+        shell: bash
+        run: |
+          case "${{ steps.monitor.outputs.verdict }}" in
+            all-clear)
+              echo "all clear — record retained as evidence that the product was monitored today" ;;
+            kev-findings)
+              echo "::error::actively exploited vulnerability present in the running version"; exit 1 ;;
+            incomplete)
+              echo "::error::the check could not be completed — this is not an all-clear"; exit 1 ;;
+            *)
+              echo "::error::no verdict produced"; exit 1 ;;
+          esac

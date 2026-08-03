@@ -277,6 +277,21 @@ test_consolidate_rejects_duplicate_bom_ref() {
   assert "$?" "1"
 }
 
+# A staging document renders identically to a release one, so the tier has to be in the
+# document. Without it, nothing downstream can tell them apart.
+test_consolidate_stamps_the_tier() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{"bom-ref":"b",name:"b",type:"application"}},components:[]}' > "$TMP/t1.json"
+  SBOM_TIER=staging bash "$S/consolidate.sh" p 1.0.0 "$TMP/tout.json" "$TMP/t1.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:sbom:tier")][0].value' "$TMP/tout.json")" "staging"
+}
+
+test_consolidate_defaults_the_tier_to_branch() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{"bom-ref":"b",name:"b",type:"application"}},components:[]}' > "$TMP/t2.json"
+  bash "$S/consolidate.sh" p 1.0.0 "$TMP/tout2.json" "$TMP/t2.json" >/dev/null 2>&1 || return 1
+  # never "release" by accident — that has to be asked for
+  assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:sbom:tier")][0].value' "$TMP/tout2.json")" "branch"
+}
+
 # ---------------------------------------------------------------- assessment
 soup_record() { # <package> <family> <input_version> [vex-json]
   jq -n --arg p "$1" --arg f "$2" --arg iv "$3" --argjson vex "${4:-null}" \

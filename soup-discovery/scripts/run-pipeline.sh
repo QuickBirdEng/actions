@@ -164,6 +164,7 @@ done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)"' "$PLAN")
 # --- 4. consolidate ---------------------------------------------------------
 SOLUTION="$OUT_DIR/bom/solution.cdx.json"
 SBOM_MISSING="$(IFS=,; echo "${GAPS[*]:-}")" \
+  SBOM_TIER="${SBOM_TIER:-branch}" \
   bash "$HERE/consolidate.sh" "$PRODUCT" "$VERSION" "$SOLUTION" "${BOMS[@]}" \
   || die "consolidation failed"
 

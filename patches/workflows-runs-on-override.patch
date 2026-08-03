@@ -1,0 +1,156 @@
+--- a/.github/workflows/soup-check-changes-and-generate.yml	2026-08-02 17:59:16
++++ b/.github/workflows/soup-check-changes-and-generate.yml	2026-08-02 17:59:16
+@@ -5,6 +5,11 @@
+ on:
+   workflow_call:
+     inputs:
++      runs-on:
++        description: 'Runner label(s) for this workflow. JSON array or a single label. Defaults to the current value so existing callers are unaffected.'
++        required: false
++        type: string
++        default: '["self-hosted", "Linux"]'
+       base-branch:
+         description: 'The base branch to compare changes against'
+         required: false
+@@ -18,7 +23,7 @@
+ jobs:
+   generate-missing:
+     if: ${{ !github.event.pull_request.draft }}
+-    runs-on: [self-hosted, Linux]
++    runs-on: ${{ fromJSON(inputs.runs-on) }}
+     steps:
+       - uses: QuickBirdEng/actions/checkout-ssh@main
+         with:
+--- a/.github/workflows/soup-cve-check-workflow.yml	2026-08-02 17:59:16
++++ b/.github/workflows/soup-cve-check-workflow.yml	2026-08-02 17:59:16
+@@ -2,6 +2,11 @@
+ on:
+   workflow_call:
+     inputs:
++      runs-on:
++        description: 'Runner label(s) for this workflow. JSON array or a single label. Defaults to the current value so existing callers are unaffected.'
++        required: false
++        type: string
++        default: '["self-hosted", "Linux"]'
+       type:
+         description: 'Type of package manager'
+         required: true
+@@ -19,7 +24,7 @@
+   check-cves:
+     env:
+       GH_API_TOKEN: ${{ secrets.GH_API_TOKEN }}
+-    runs-on: [self-hosted, Linux]
++    runs-on: ${{ fromJSON(inputs.runs-on) }}
+     steps:
+       - uses: QuickBirdEng/actions/checkout-ssh@main
+         with:
+--- a/.github/workflows/soup-generate-all-missing.yml	2026-08-02 17:59:16
++++ b/.github/workflows/soup-generate-all-missing.yml	2026-08-02 17:59:16
+@@ -5,6 +5,11 @@
+ on:
+   workflow_call:
+     inputs:
++      runs-on:
++        description: 'Runner label(s) for this workflow. JSON array or a single label. Defaults to the current value so existing callers are unaffected.'
++        required: false
++        type: string
++        default: '["self-hosted", "Linux"]'
+       base-branch:
+         description: 'The base branch to compare against (e.g., main)'
+         required: false
+@@ -17,7 +22,7 @@
+         default: ''
+ jobs:
+   generate-missing:
+-    runs-on: [self-hosted, Linux]
++    runs-on: ${{ fromJSON(inputs.runs-on) }}
+     steps:
+       - uses: QuickBirdEng/actions/checkout-ssh@main
+         with:
+--- a/.github/workflows/soup-packages-cve-check.yml	2026-08-02 17:59:16
++++ b/.github/workflows/soup-packages-cve-check.yml	2026-08-02 17:59:16
+@@ -2,10 +2,16 @@
+ 
+ on:
+   workflow_call:
++    inputs:
++      runs-on:
++        description: 'Runner label(s) for this workflow. JSON array or a single label. Defaults to the current value so existing callers are unaffected.'
++        required: false
++        type: string
++        default: '["self-hosted", "Linux"]'
+ 
+ jobs:
+   reports:
+-    runs-on: [self-hosted, Linux]
++    runs-on: ${{ fromJSON(inputs.runs-on) }}
+     steps:
+       - uses: QuickBirdEng/actions/checkout-ssh@main
+         with:
+--- a/.github/workflows/soup-temporary-approval-workflow.yml	2026-08-02 17:59:16
++++ b/.github/workflows/soup-temporary-approval-workflow.yml	2026-08-02 17:59:16
+@@ -5,6 +5,11 @@
+ on:
+   workflow_call:
+     inputs:
++      runs-on:
++        description: 'Runner label(s) for this workflow. JSON array or a single label. Defaults to the current value so existing callers are unaffected.'
++        required: false
++        type: string
++        default: '["self-hosted", "Linux"]'
+       approval-reason:
+         description: 'Reason for temporary approval'
+         required: true
+@@ -13,7 +18,7 @@
+ jobs:
+   temporary-approval:
+     if: github.ref_name != 'main' && contains(format(',{0},', vars.SOUP_APPROVERS), format(',{0},', github.triggering_actor))
+-    runs-on: [self-hosted, Linux]
++    runs-on: ${{ fromJSON(inputs.runs-on) }}
+     steps:
+       - uses: QuickBirdEng/actions/checkout-ssh@main
+         with:
+--- a/.github/workflows/soup-version-check.yml	2026-08-02 17:59:16
++++ b/.github/workflows/soup-version-check.yml	2026-08-02 17:59:16
+@@ -6,6 +6,11 @@
+ on:
+   workflow_call:
+     inputs:
++      runs-on:
++        description: 'Runner label(s) for this workflow. JSON array or a single label. Defaults to the current value so existing callers are unaffected.'
++        required: false
++        type: string
++        default: '["self-hosted", "Linux"]'
+       flutter:
+         description: 'Web Working directory for action'
+         type: boolean
+@@ -16,7 +21,7 @@
+         default: false
+ jobs:
+   version_check:
+-    runs-on: [self-hosted, Linux]
++    runs-on: ${{ fromJSON(inputs.runs-on) }}
+     steps:
+       - uses: actions/checkout@v3
+       - name: Install yq
+--- a/.github/workflows/soups-generate-reports.yml	2026-08-02 17:59:16
++++ b/.github/workflows/soups-generate-reports.yml	2026-08-02 17:59:16
+@@ -3,12 +3,17 @@
+ on:
+   workflow_call:
+     inputs:
++      runs-on:
++        description: 'Runner label(s) for this workflow. JSON array or a single label. Defaults to the current value so existing callers are unaffected.'
++        required: false
++        type: string
++        default: '["self-hosted", "Linux"]'
+       generate-pdfs:
+         description: 'Set to true to generate PDFs for approved SOUPs'
+         type: boolean
+ jobs:
+   reports:
+-    runs-on: [self-hosted, Linux]
++    runs-on: ${{ fromJSON(inputs.runs-on) }}
+     steps:
+       - uses: QuickBirdEng/actions/checkout-ssh@main
+         with:

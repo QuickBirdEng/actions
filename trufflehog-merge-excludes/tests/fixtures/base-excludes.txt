@@ -1,2 +1,0 @@
-legacy/exclude/**
-old-fixtures/*.txt

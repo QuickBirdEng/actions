@@ -105,6 +105,20 @@ while IFS=$'\t' read -r name version sbom_url; do
   else
     curl -sSL --fail --max-time 180 "$sbom_url" -o "$bom" 2>/dev/null || true
   fi
+  # A staging or branch SBOM describes a build nobody is running. Scanning one and writing
+  # the result to the evidence store would produce a dated record that reads as monitoring
+  # of the live product and is not. The tier is stamped into the document by consolidate.sh
+  # precisely so this check is possible.
+  if [[ -s "$bom" ]]; then
+    BOM_TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$bom" 2>/dev/null)
+    if [[ "$BOM_TIER" != "release" ]]; then
+      log "::error::$name: the SBOM at that location is tier '$BOM_TIER', not 'release'"
+      UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" --arg t "$BOM_TIER" \
+        '. + [{name:$n, version:$v, why:("the SBOM found for this version is tier \($t), not release — a non-release SBOM describes a build nobody is running and must not become monitoring evidence")}]' <<<"$UNSCANNABLE")
+      continue
+    fi
+  fi
+
   if [[ ! -s "$bom" ]]; then
     UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" \
       '. + [{name:$n, version:$v, why:"SBOM asset could not be downloaded"}]' <<<"$UNSCANNABLE")
