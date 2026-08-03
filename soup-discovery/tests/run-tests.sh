@@ -784,6 +784,68 @@ test_currency_stale_and_current_needs_no_upgrade() {
 
 # Which releases count as production decides the cadence, and the cadence decides every
 # Track 3/4 deadline. Three signals answer it and they disagree by ten months on alvie.
+# A breach on a finding that happens not to be in KEV used to produce no alert at all: the
+# whole escalation block sat inside the KEV branch. §3.3 step 1 was therefore a process step
+# that silently did not happen.
+mkalert() {
+  rm -rf "$TMP/mon"; mkdir -p "$TMP/mon"
+  jq -n --arg v "${1:-all-clear}" \
+    '{schema:"quickbird.kev-monitor-run/v1",verdict:$v,kev_findings:[],
+      kev_membership_unknown:[],not_scanned:[],scanned:[{name:"x",version:"1"}]}' \
+    > "$TMP/mon/record.json"
+}
+
+test_monitor_alerts_a_breach_without_any_kev_finding() {
+  mkalert all-clear
+  jq -n '{summary:{by_level:{undecided:1},worst:"undecided"},
+          escalations:[{id:"CVE-2026-1",level:"undecided",track:"expedited",
+                        detail:["remediation breached 9 working days ago, no decision recorded"]}]}' \
+    > "$TMP/mon/esc.json"
+  PRODUCT=p CRA_SCOPE=unknown bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$TMP/mon/alert.txt" "$TMP/mon/esc.json" "" >/dev/null 2>&1 || return 1
+  grep -q "missed remediation deadlines" "$TMP/mon/alert.txt" || return 1
+  grep -q "CVE-2026-1" "$TMP/mon/alert.txt"
+}
+
+# §3.2's release-required signal had the same problem.
+test_monitor_alerts_release_required_without_any_kev_finding() {
+  mkalert all-clear
+  jq -n '{summary:{release_required:1},
+          release_required:[{id:"CVE-2026-2",why:"fixed in main, not deployed"}]}' \
+    > "$TMP/mon/lc.json"
+  PRODUCT=p CRA_SCOPE=unknown bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$TMP/mon/alert.txt" "" "$TMP/mon/lc.json" >/dev/null 2>&1 || return 1
+  grep -q "out-of-band release is required" "$TMP/mon/alert.txt" || return 1
+  grep -q "CVE-2026-2" "$TMP/mon/alert.txt"
+}
+
+# An all-clear run with nothing outstanding must stay silent, or the alert becomes noise and
+# the dated record stops being read.
+test_monitor_stays_silent_when_there_is_nothing_to_say() {
+  mkalert all-clear
+  PRODUCT=p CRA_SCOPE=unknown bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$TMP/mon/alert.txt" "" "" >/dev/null 2>&1 || return 1
+  assert "$(wc -c < "$TMP/mon/alert.txt" | tr -d ' ')" "0"
+}
+
+# A KEV finding and a breach in the same run must produce one message containing both, not
+# one that overwrites the other.
+test_monitor_combines_kev_and_breach_in_one_message() {
+  rm -rf "$TMP/mon"; mkdir -p "$TMP/mon"
+  jq -n '{schema:"quickbird.kev-monitor-run/v1",verdict:"kev-findings",
+          kev_findings:[{cve:"CVE-2021-44228",target:"t",version:"1",components:["log4j"]}],
+          kev_membership_unknown:[],not_scanned:[],scanned:[{name:"x",version:"1"}]}' \
+    > "$TMP/mon/record.json"
+  jq -n '{summary:{by_level:{breached:1}},
+          escalations:[{id:"CVE-2026-3",level:"breached",detail:["mitigation breached"]}]}' \
+    > "$TMP/mon/esc.json"
+  PRODUCT=p CRA_SCOPE=true bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$TMP/mon/alert.txt" "$TMP/mon/esc.json" "" >/dev/null 2>&1 || return 1
+  grep -q "CVE-2021-44228" "$TMP/mon/alert.txt" || return 1
+  grep -q "CVE-2026-3" "$TMP/mon/alert.txt" || return 1
+  grep -q "within 24 hours" "$TMP/mon/alert.txt"
+}
+
 test_backstop_production_signals_disagree_visibly() {
   S="$S" python3 "$HERE/production-signal-logic.py"
 }

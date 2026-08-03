@@ -127,25 +127,6 @@ This is the load-bearing rule of the whole section. A merged fix is not a remedi
 deployed product is still vulnerable. It maps directly onto DEV-191's three finding states: `open` →
 `fix ready – release pending` (mitigation met, remediation still running) → `deployed / resolved`.
 
-### 3.4 What "next regular release" means
-
-Decided 2026-08-02: **each project declares its release cadence in its configuration**, and
-the Track 3/4 deadline is derived from it — next scheduled release plus a grace period.
-
-The alternative, a flat 90-day ceiling for everyone, was rejected as too blunt: a product
-shipping fortnightly and one shipping twice a year should not carry the same Track 3
-deadline.
-
-Two consequences that follow, and have to be handled rather than assumed away:
-
-- **A project without a declared cadence has no Track 3/4 deadline.** That must surface as
-  a configuration gap in the monitoring run, not as an absent deadline that quietly looks
-  like compliance. Same principle as the scope gate: unclassified fails loudly.
-- **A declared cadence can go stale.** If a project declares "monthly" and has not released
-  in five months, the derived deadline is fiction. The backstop report compares the declared
-  cadence against the actual release history and flags the divergence; that check is what
-  keeps this field honest.
-
 ### 3.2 Release-required signal
 
 A Track 1 finding in state `fix ready – release pending` whose **remediation** deadline falls before
@@ -174,6 +155,41 @@ A missed deadline is not silently absorbed. On breach:
    process already defined in the maintenance plan.
 5. For products in scope of the CRA (see §7), a KEV finding additionally triggers the 24 h
    actively-exploited reporting assessment.
+
+### 3.4 What "next regular release" means
+
+Decided 2026-08-02: **each project declares its release cadence in its configuration**, and
+the Track 3/4 deadline is derived from it — next scheduled release plus a grace period.
+
+The alternative, a flat 90-day ceiling for everyone, was rejected as too blunt: a product
+shipping fortnightly and one shipping twice a year should not carry the same Track 3
+deadline.
+
+Two consequences that follow, and have to be handled rather than assumed away:
+
+- **A project without a declared cadence has no Track 3/4 deadline.** That must surface as
+  a configuration gap in the monitoring run, not as an absent deadline that quietly looks
+  like compliance. Same principle as the scope gate: unclassified fails loudly.
+- **A declared cadence can go stale.** If a project declares "monthly" and has not released
+  in five months, the derived deadline is fiction. The backstop report compares the declared
+  cadence against the actual release history and flags the divergence; that check is what
+  keeps this field honest. Measured on 2026-08-03: Mindnet holds, Osteocoach, Dermafy and
+  Alvie do not.
+- **"Actual release history" is itself a per-project declaration.** A GitHub repo offers three
+  signals for "this release went to production" — the tag shape, the `prerelease` flag, and a
+  `-production` release asset — and across this portfolio they disagree by up to 315 days on
+  the same repo. Because Track 3 remediation *is* "next release", the choice of signal sets a
+  deadline, so each project declares it (`production_release.detect_by`) and the backstop
+  reports a disagreement between the three rather than silently picking one. This is also
+  what decides whether a build is a release or a staging document (§5.2), so a project cannot
+  redefine one without redefining the other.
+- **A project may have no releases at all.** Apellis deploys every merge by git SHA and has
+  neither tags nor releases. Declaring a cycle there would manufacture a deadline out of
+  releases that never happen, so the cadence is declared `continuous` and measured against the
+  *deploy* history with a ceiling on the gap rather than a cycle. Track 3's "next release"
+  then means the next deploy, which is stricter than any declared cycle, not looser. The first
+  measurement of this immediately found that none of Apellis's recorded deployments names a
+  production environment, so the check reports `unknown` rather than healthy.
 
 ---
 
@@ -253,7 +269,7 @@ not in KEV.
 
 ---
 
-## 5.1 Base images and their OS packages
+### 5.1 Base images and their OS packages
 
 Decided 2026-08-02: **the base image is the SOUP; its OS packages are not.**
 
@@ -272,7 +288,7 @@ What follows from it is the obligation the decision creates rather than removes:
 package is remediated by bumping the base image**, so base images must be pinned by digest and bumped
 deliberately. A base image pinned to a floating tag cannot be remediated in a way anyone can verify.
 
-## 5.2 Which SBOMs are records, and which are not
+### 5.2 Which SBOMs are records, and which are not
 
 An SBOM is produced for **every tagged build**, staging included. Nothing about that is a compliance
 requirement — it is generated because a component list is only useful for comparison if an earlier one
@@ -317,6 +333,20 @@ current.
 
 **Default policy, per semver level:** 0 major behind · 1 minor behind · unlimited patch behind.
 Configurable per project.
+
+**Upstream staleness is a second, separate test.** A component whose latest release is itself
+older than **12 months** is treated as no longer maintained. This is deliberately not the same
+finding as being behind, because it has a different answer: when we are behind, the answer is to
+upgrade; when upstream has stopped releasing, there is nothing to upgrade to and the answer is
+replacement or documented acceptance. A component can be perfectly current *and* stale — being
+on the newest version of an abandoned library is exactly the case the semver test cannot see.
+The 12-month window matches the analysis period the SOUP records already use in `grq-3` ("Is
+maintained and support is available").
+
+One measurement caveat, because it produced a wrong answer in testing: npm's `modified`
+timestamp is not a release date. For `request` it reads 2026-07-17 while the last actual
+release was 2020-02-11 — five and a half years apart. Staleness is therefore computed from the
+newest **version publish time**, never from registry metadata that any change touches.
 
 - A dependency outside policy is flagged in the **overview and the backstop report**. On its own it is
   **not** a Slack alert — it becomes urgent only when it coincides with an applicable CVE.
@@ -376,6 +406,16 @@ Decided 2026-08-02, each recorded in the section named:
 | Base-image OS packages | The image is the SOUP; packages are transitive | 5.1 |
 | EPSS thresholds | 0.10 / 0.50, configurable per project | 2.1 |
 
+Decided 2026-08-03:
+
+| Topic | Decision | § |
+| --- | --- | --- |
+| Which SBOMs are records | Tier in the document, from the tag shape; staging attached to its own prerelease | 5.2 |
+| What the monitor requires | The document describing the deployed version, not a release-tier one | 5.2 |
+| "Production release" | Per-project signal (`production_release.detect_by`); disagreement is reported | 3.4 |
+| Products without releases | `release_cadence: continuous`, measured against deploys with a gap ceiling | 3.4 |
+| Upstream staleness | 12 months without a release, tested separately from semver currency | 6 |
+
 ### Standing review items
 
 Not open questions — things that must be re-examined on a trigger rather than decided once:
@@ -396,3 +436,24 @@ Not open questions — things that must be re-examined on a trigger rather than 
    the PDF and the approval annotation are treated as controlled output.
 2. **Tier assignment per product** (Basic / Extended) drives the backstop cadence in §7 and is not
    recorded anywhere yet.
+3. **Track 3/4 remediation has no computed deadline yet.** §3.4 and §7 describe one; the
+   classifier currently writes the cadence and the ceiling into a *basis string* and leaves
+   `remediation_due` empty, so 210 of 521 findings on a real product carry no date and cannot
+   breach. Blocked on one decision: when a declared cadence is longer than the tier ceiling
+   (Dermafy declares biannual, tier Basic caps Track 3 at 90 d), which governs. Until that is
+   answered, §3.4 describes an intent rather than a control.
+4. **The first scan of a product starts every clock at once.** §3 starts both clocks at first
+   discovery, so onboarding a product with a backlog produces its whole backlog as
+   simultaneously-due findings — on Kontina that is 23 Track 1 findings with a 72 h mitigation
+   deadline on day one. No onboarding provision exists; without one, every product's first run
+   is a breach event.
+5. **§5.1 rewards leaving an image unpinned.** The section requires base images to be
+   digest-pinned so that bumping the image is a verifiable remediation. But an unpinned image
+   cannot be scanned reproducibly, so scope files exclude it — meaning pinning an image brings
+   its CVEs into scope while leaving it floating keeps them out. Currently affects 5 of 8
+   Apellis `FROM` lines and three `curl:latest` health-check cronjobs. The incentive needs
+   inverting: an unpinned in-scope image should be a finding, not an exclusion.
+6. **The regulatory claim in §7 needs an owner's confirmation.** "The Commission proposed in
+   December 2025 to remove the medical-device exemption" is the kind of statement an auditor
+   will test, and it should be verified by whoever holds regulatory accountability before this
+   becomes a controlled document.
