@@ -79,9 +79,13 @@ fi
 # different versions, so this is a list rather than a field.
 TARGETS=$(jq -c '
   [ (if .mobile != null and .mobile.sbom != null
-     then {name:"mobile", version:.mobile.live_version, sbom:.mobile.sbom} else empty end),
+     then {name:"mobile", version:.mobile.live_version, sbom:.mobile.sbom,
+           # When the live version reached users. This is the origin of the maintenance-window
+           # grid (§3.4): the last maintenance event, not a nominal release date.
+           live_since:(.mobile.published // null)} else empty end),
     ( .environments[]? | select(.sbom != null and (.environment | test("prod"; "i")))
-      | {name:.environment, version:.ref, sbom:.sbom} ) ]' "$DEPLOYED")
+      | {name:.environment, version:.ref, sbom:.sbom,
+         live_since:(.deployed_at // null)} ) ]' "$DEPLOYED")
 
 UNSCANNABLE=$(jq -c '[ .unresolvable[]? | {name:.environment, version:.ref, why:.why} ]' "$DEPLOYED")
 
@@ -96,7 +100,7 @@ LIFECYCLE_STATE="${MONITOR_LIFECYCLE_STATE:-$OUT_DIR/lifecycle-state.json}"
 DECISIONS_FILE="${SOUP_DECISIONS_FILE:-.soup-decisions.yml}"
 
 # --- 2. per target: scan, enrich, filter -------------------------------------
-while IFS=$'\t' read -r name version sbom_url; do
+while IFS=$'\t' read -r name version sbom_url live_since; do
   [[ -z "$name" ]] && continue
   log "  $name @ $version"
   bom="$OUT_DIR/$name.cdx.json"
@@ -142,6 +146,9 @@ while IFS=$'\t' read -r name version sbom_url; do
     else bash "$HERE/validate-policy.sh" "$HERE/../policy-defaults.yml" >"$POL_EFF" 2>/dev/null || true; fi
   fi
 
+  # The live version's publish date is the grid origin for the maintenance windows that give
+  # Track 3/4 their remediation deadline.
+  export MAINTENANCE_LAST_RELEASE="${live_since:-}"
   ASSESS=("$bom" "$POL_EFF" --out-dir "$OUT_DIR")
   [[ -d "$OUT_DIR/soups" ]] && ASSESS+=(--soups "$OUT_DIR/soups")
   [[ -f "$STATE_FILE" ]] && ASSESS+=(--state "$STATE_FILE")
@@ -183,7 +190,7 @@ while IFS=$'\t' read -r name version sbom_url; do
            # document when a pre-release tag is what got deployed, but the record has to say
            # so rather than leaving a reader to assume it was the release bundle.
            sbom_tier:$tier}]' <<<"$SCANNED")
-done < <(jq -r '.[] | "\(.name)\t\(.version)\t\(.sbom)"' <<<"$TARGETS")
+done < <(jq -r '.[] | "\(.name)\t\(.version)\t\(.sbom)\t\(.live_since // "")"' <<<"$TARGETS")
 
 # --- 2b. lifecycle -----------------------------------------------------------
 # The classifier says what a finding is; this says where it stands. Without it the monitor
@@ -224,6 +231,8 @@ jq -n \
   --argjson findings "$FINDINGS" --argjson suppressed "$SUPPRESSED" \
   --argjson unknown "$UNKNOWN" --argjson feeds "$FEEDS" --argjson synthetic "$SYNTHETIC" \
   --arg cadence "$(jq -r '.release_cadence // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
+  --arg interval "$(jq -r '.maintenance_interval // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
+  --arg onboarded "$(jq -r '.onboarded // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg tier "$(jq -r '.tier // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --argjson prodrel "$(jq -c '.production_release // null' <<<"${POLICY_JSON:-{\}}" 2>/dev/null || echo null)" \
   --argjson classified "$CLASSIFIED" \
@@ -235,6 +244,10 @@ jq -n \
      # Carried so the backstop can check the declared cadence against the actual release
      # history (§3.4) without needing the policy file of every project.
      release_cadence: ($cadence | select(. != "")),
+     # §3.4: the maintenance commitment. The backstop checks the windows against it, and the
+     # classifier lands every Track 3/4 finding on the next one.
+     maintenance_interval: ($interval | select(. != "")),
+     onboarded: ($onboarded | select(. != "")),
      tier: ($tier | select(. != "")),
      # Which releases this product counts as production. Three signals answer that and they
      # disagree on most of the portfolio, so the backstop must not pick one on its own —

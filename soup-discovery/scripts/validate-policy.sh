@@ -36,7 +36,7 @@ err() { echo "::error::$*" >&2; STATUS=1; }
 warn() { echo "::warning::$*" >&2; }
 
 # --- required fields ---------------------------------------------------------
-for f in product tier cra_scope release_cadence; do
+for f in product tier cra_scope maintenance_interval; do
   # `has` and an explicit null test, not `// ""`. jq's alternative operator treats `false`
   # as absent, so `cra_scope: false` — the value most products will set — would have been
   # reported as missing.
@@ -55,6 +55,45 @@ case "$CRA" in
   *) err "$POLICY: cra_scope must be true, false or unknown — got '$CRA'" ;;
 esac
 [[ "$CRA" == "unknown" ]] && warn "$POLICY: cra_scope is 'unknown'. Alerts will say so rather than assume. Determine it before 2026-09-11."
+
+# --- maintenance interval vs the tier cap ------------------------------------
+# A commitment looser than the tier allows is the one override that cannot be waived with a
+# reason: the tier *is* the statement about how often this product is maintained.
+to_days() {
+  case "$1" in
+    ""|null) echo "-1" ;;
+    *d)      echo "${1%d}" ;;
+    *m)      echo $(( ${1%m} * 30 )) ;;
+    *y)      echo $(( ${1%y} * 365 )) ;;
+    *[!0-9]*) echo "-99" ;;
+    *)       echo "$1" ;;
+  esac
+}
+MI=$(jq -r '.maintenance_interval // ""' <<<"$P")
+if [[ -n "$MI" ]]; then
+  MI_D=$(to_days "$MI")
+  if [[ "$MI_D" == "-99" || "$MI_D" -le 0 ]]; then
+    err "$POLICY: maintenance_interval '$MI' is not a duration (e.g. 90d, 3m)"
+  elif [[ -n "$TIER" ]]; then
+    CAP=$(jq -r --arg t "$TIER" '.tiers[$t].max_maintenance_interval // ""' <<<"$D")
+    CAP_D=$(to_days "$CAP")
+    if [[ "$CAP_D" -gt 0 && "$MI_D" -gt "$CAP_D" ]]; then
+      err "$POLICY: maintenance_interval $MI exceeds the cap for tier $TIER ($CAP). Either commit to maintenance at least every $CAP, or move the product to a tier whose cap it meets — this is not waivable with a reason, because the tier is the statement about how often the product is maintained."
+    fi
+  fi
+fi
+
+# release_cadence was the previous, observation-based field. It set a deadline from a rhythm
+# that had already lapsed on most products, so it is replaced rather than kept alongside:
+# two fields that approximately mean the same thing eventually disagree.
+if jq -e 'has("release_cadence")' <<<"$P" >/dev/null 2>&1; then
+  RC=$(jq -r '.release_cadence' <<<"$P")
+  if [[ "$RC" == "continuous" ]]; then
+    warn "$POLICY: release_cadence: continuous is retained for products that deploy every merge; the maintenance window still applies and is measured against deploys."
+  else
+    warn "$POLICY: release_cadence ('$RC') is superseded by maintenance_interval (§3.4) and is ignored for deadlines. Remove it once the interval is agreed."
+  fi
+fi
 
 # --- durations ---------------------------------------------------------------
 # to_hours: 72h -> 72, 21d -> 504, none/next-release -> sentinels
@@ -136,7 +175,7 @@ EFFECTIVE=$(jq -n --argjson d "$D" --argjson p "$P" '
            else .[$k] = $b[$k] end);
   deepmerge($d; $p)
   | . as $m
-  | .planned_remediation_ceiling = (($m.tiers[$m.tier].planned_remediation_ceiling) // null)
+  | .max_maintenance_interval = (($m.tiers[$m.tier].max_maintenance_interval) // null)
   | .backstop = (($m.tiers[$m.tier].backstop) // null)
   | del(.tiers)
   | . + {schema: "quickbird.soup-policy/v1"}')
@@ -144,7 +183,7 @@ EFFECTIVE=$(jq -n --argjson d "$D" --argjson p "$P" '
 echo "$EFFECTIVE"
 
 if [[ $STATUS -eq 0 ]]; then
-  jq -r '"policy ok: \(.product) · tier \(.tier) · CRA \(.cra_scope) · cadence \(.release_cadence) · backstop \(.backstop)"' <<<"$EFFECTIVE" >&2
+  jq -r '"policy ok: \(.product) · tier \(.tier) · CRA \(.cra_scope) · maintenance every \(.maintenance_interval) · backstop \(.backstop)"' <<<"$EFFECTIVE" >&2
 else
   echo "::error::policy validation failed — the effective policy above is what *would* apply; it must not be used until the errors are fixed" >&2
 fi

@@ -13,6 +13,7 @@ cra_scope: unknown
 # Measured from the clean-semver tags: v1.0.7 (2025-10-01), v1.0.4 (2025-06-23) — about a
 # quarter apart, and nothing since. Declared quarterly, this currently reads as broken
 # (~305 days since the last one).
+# Superseded by maintenance_interval (§3.4); kept as an observation only.
 release_cadence: quarterly
 
 # THIS NEEDS A DECISION, and it moves a deadline by ten months.
@@ -28,6 +29,16 @@ release_cadence: quarterly
 # is set to the signal the project actually maintains.
 production_release:
   detect_by: tag_pattern
+
+# §3.4 — the maintenance commitment. Not an observation of how often this product has
+# released, but a promise: a maintenance release happens at least this often. Every open
+# Track 3/4 finding lands on the next window, so a missed window is one decision about a
+# release rather than one per finding. The tier caps how loose this may be (Basic: 90d).
+maintenance_interval: 90d
+
+# Set when this product was first monitored. Windows that elapsed before that date are
+# recorded as history, not as breaches — nobody could have acted on them.
+onboarded: ""            # fill in on the first monitored run
 
 alerts:
   slack_channel: ""

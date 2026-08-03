@@ -37,6 +37,19 @@ breach:
   decision_within: 5d
   risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)
 
+# §3.4 — the maintenance release commitment.
+#
+# Track 3 remediation is "next regular release". Deriving that date from a product's *observed*
+# rhythm does not work: three of four products have a rhythm that has already lapsed, so the
+# derived date lands in the past and a finding is born overdue — Dermafy's would have been 109
+# days late on the day it was found.
+#
+# So a product declares a commitment instead: a maintenance release happens at least every
+# `maintenance_interval` days, and the remediation deadline is the next window on that grid.
+# Every open Track 3/4 finding shares that window, which is what makes a missed window one
+# breach about a release rather than one per finding (on Kontina: 1 instead of 196).
+maintenance_interval: 90d
+
 # §3.4 — which releases count as production.
 #
 # Track 3 remediation is "next release", so the cadence a deadline is derived from has to be
@@ -52,11 +65,6 @@ breach:
 #   production_asset  a release asset whose name contains "production" — mobile builds.
 production_release:
   detect_by: tag_pattern
-  # A product with `release_cadence: continuous` has no release cycle to measure — apellis
-  # deploys every merge by git SHA and has no tags at all. For those, cadence is measured
-  # against the deploy history and this is the ceiling: nothing deployed in this long means
-  # "continuous" is no longer true, and Track 3's "next release" has nothing to land on.
-  max_deploy_gap: 30
   tag_pattern: '^v?[0-9]+\.[0-9]+\.[0-9]+$'
 
 # §6 — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
@@ -75,10 +83,14 @@ dependency_currency:
 tiers:
   Basic:
     backstop: annual
-    planned_remediation_ceiling: 90d
+    # The tier caps the *commitment*, not each finding's deadline. A product may promise
+    # maintenance more often than this; it may not promise less often. Capping the commitment
+    # rather than the individual deadline is what stopped the old model from generating one
+    # risk acceptance per finding on any product that releases slowly.
+    max_maintenance_interval: 90d
   Extended:
     backstop: quarterly
-    planned_remediation_ceiling: 60d
+    max_maintenance_interval: 60d
 
 # Which findings reach Slack. Everything below the threshold goes to the report and the
 # overview only. KEV is unconditional and is not subject to this.

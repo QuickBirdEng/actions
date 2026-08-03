@@ -13,7 +13,9 @@ Usage: classify-findings.py <bom.cdx.json> <effective-policy.json> [--state prio
 """
 
 import argparse
+import importlib.util
 import json
+import os
 import math
 import sys
 from datetime import datetime, timedelta, timezone
@@ -154,6 +156,8 @@ def main():
     ap.add_argument("bom")
     ap.add_argument("policy")
     ap.add_argument("--state", help="previous run, for latching and clock starts")
+    ap.add_argument("--windows", help="maintenance-windows.py output; without it, Track 3/4 "
+                                      "remediation has no date and cannot breach")
     ap.add_argument("--out", default="-")
     ap.add_argument("--now", help="ISO timestamp, for reproducible tests")
     args = ap.parse_args()
@@ -171,6 +175,21 @@ def main():
     now = datetime.fromisoformat(args.now) if args.now else datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
+
+    # Loaded rather than reimplemented: the window arithmetic decides a deadline, and two
+    # copies of it would eventually disagree about which release a finding belongs to.
+    windows = None
+    if args.windows:
+        try:
+            windows = json.load(open(args.windows, encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"::error::could not read {args.windows}: {e}", file=sys.stderr)
+            return 1
+        spec = importlib.util.spec_from_file_location(
+            "mw", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "maintenance-windows.py"))
+        mw = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mw)
 
     threshold = BANDS.get(str(policy.get("alerts", {}).get("threshold", "high")).lower(), 1)
     findings, suppressed = [], []
@@ -224,9 +243,28 @@ def main():
                 out[f"{clock}_due"] = None
                 out[f"{clock}_basis"] = spec or "not set"
                 if spec == "next-release":
-                    out[f"{clock}_basis"] = (
-                        f"next regular release (cadence: {policy.get('release_cadence','undeclared')}, "
-                        f"ceiling {policy.get('planned_remediation_ceiling','none')})")
+                    # §3.4: the next maintenance window, not a date derived from an observed
+                    # rhythm. Every open Track 3/4 finding lands on the same window, so a
+                    # missed window is one breach about a release rather than one per finding.
+                    if windows:
+                        origin = mw.parse_ts(windows["grid_origin"])
+                        iv = int(windows["interval_days"])
+                        # Floor: a finding cannot be due for remediation before it is due for
+                        # mitigation. Track 4 has no mitigation deadline and rides Track 3's.
+                        mit = parse_duration(td.get("mitigation"))
+                        floor_days = (mit.days if mit
+                                      else mw.DEFAULT_MITIGATION_FLOOR_DAYS)
+                        due = mw.window_for(first_seen, floor_days, origin, iv)
+                        out[f"{clock}_due"] = due.isoformat()
+                        out[f"{clock}_overdue"] = now > due
+                        out[f"{clock}_basis"] = (
+                            f"maintenance window {due.date().isoformat()} "
+                            f"(every {iv}d; earliest window at least {floor_days}d after "
+                            f"discovery)")
+                    else:
+                        out[f"{clock}_basis"] = (
+                            "next regular release — NO DATE: no maintenance window was "
+                            "supplied, so this clock cannot breach")
             else:
                 due = first_seen + delta
                 out[f"{clock}_due"] = due.isoformat()

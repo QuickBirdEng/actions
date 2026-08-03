@@ -43,18 +43,12 @@ def load(path):
         return None
 
 
-CADENCE_DAYS = {"daily": 1, "weekly": 7, "fortnightly": 14, "biweekly": 14,
-                "monthly": 31, "quarterly": 92, "biannual": 183, "annual": 366}
 
-# A product that deploys every merge has no release cycle to measure, and apellis is one:
-# zero tags, zero releases, deployed by git SHA via `helm --set`. Declaring it monthly would
-# manufacture a Track 3 deadline out of releases that never happen; declaring nothing at all
-# would leave it unchecked. So `continuous` is measured against the deploy history instead of
-# the release history, and what it asserts is not a cycle but a ceiling: if nothing has
-# deployed in max_deploy_gap, then "continuous" has stopped being true and Track 3's
-# "next release" has no near-term meaning either.
+# Apellis has zero tags and zero releases: it deploys every merge by git SHA via
+# `helm --set`. Under the maintenance-window model it still declares an interval like anyone
+# else — what `continuous` changes is *where the evidence of a maintenance event lives*: the
+# deploy history rather than the release list.
 CONTINUOUS = "continuous"
-DEFAULT_MAX_DEPLOY_GAP = 30
 
 
 def deployment_dates(repo):
@@ -83,10 +77,6 @@ def deployment_dates(repo):
             f"all deployments — none of the recorded environments ({', '.join(envs[:5])}) "
             f"names production, so nothing here shows the product reaching users",
             False)
-# How far past the declared interval before the cadence counts as not holding. A release
-# cycle that slips by a third is normal; one that has slipped by half has stopped being a
-# cycle, and a deadline derived from it is no longer a deadline.
-TOLERANCE = 1.5
 
 
 DEFAULT_TAG_PATTERN = r"^v?[0-9]+\.[0-9]+\.[0-9]+$"
@@ -175,6 +165,35 @@ def release_dates(repo, production_only=True, policy=None):
             disagreement)
 
 
+def parse_interval_days(s, default=90):
+    """'90d' / '3m' / '90' -> days. Mirrors maintenance-windows.py."""
+    if not s:
+        return default
+    t = str(s).strip().lower()
+    try:
+        if t.endswith("d"):
+            return int(t[:-1])
+        if t.endswith("m"):
+            return int(t[:-1]) * 30
+        if t.endswith("y"):
+            return int(t[:-1]) * 365
+        return int(t)
+    except ValueError:
+        return default
+
+
+def window_grid(origin, interval_days, now):
+    """Elapsed windows and the next one. A missed window advances the grid from its own due
+    date rather than from a release that never happened — otherwise not releasing buys time."""
+    step = timedelta(days=interval_days)
+    due = origin + step
+    missed = []
+    while due < now:
+        missed.append(due)
+        due = due + step
+    return missed, due
+
+
 def parse_ts(s):
     try:
         d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
@@ -255,100 +274,84 @@ def main():
                          "gaps": gaps, "incomplete_runs": incomplete,
                          "last_verdict": last.get("verdict")})
 
-        # --- declared cadence vs. reality (§3.4) ---------------------------------
-        declared = last.get("release_cadence")
+        # --- the maintenance commitment vs. reality (§3.4) -----------------------
+        # Not "does the observed rhythm match a declared one" any more. A product commits to a
+        # maintenance release at least every `maintenance_interval`, every open Track 3/4
+        # finding targets the same window, and the question here is whether the windows were
+        # met. A missed window is one finding about a release — not one per CVE, which on
+        # Kontina would have been 196.
+        interval = last.get("maintenance_interval")
         repo = last.get("repo")
-        if not declared:
+        onboarded = parse_ts(last.get("onboarded"))
+        if not interval:
             cadence.append({"product": product, "status": "not-declared",
-                            "detail": "the policy declares no release_cadence, so Track 3/4 "
-                                      "deadlines have nothing to derive from"})
+                            "detail": "the policy declares no maintenance_interval, so Track 3/4 "
+                                      "findings have no window to land on and cannot breach"})
         elif not repo:
-            cadence.append({"product": product, "declared": declared, "status": "unknown",
+            cadence.append({"product": product, "declared": interval, "status": "unknown",
                             "detail": "the run record carries no repo, so releases cannot be read"})
-        elif str(declared).lower() == CONTINUOUS:
-            # No cycle to measure — a ceiling on the deploy gap instead.
-            gap = int((((last.get("policy") or {}).get("production_release") or {})
-                       .get("max_deploy_gap") or DEFAULT_MAX_DEPLOY_GAP))
-            dates, basis, prod_found = deployment_dates(repo)
-            if dates is None:
-                cadence.append({"product": product, "declared": declared, "status": "unknown",
-                                "detail": f"could not read deployments for {repo} — not knowing "
-                                          f"whether anything still deploys is not the same as it "
-                                          f"deploying"})
-            elif not dates:
-                cadence.append({"product": product, "declared": declared, "status": "broken",
-                                "detail": f"declared continuous deployment but {repo} has no "
-                                          f"deployment records at all, and no releases either — "
-                                          f"there is no evidence in GitHub of anything reaching "
-                                          f"users, so Track 3's 'next release' has nothing to "
-                                          f"resolve against",
-                                "counted": basis})
-            else:
-                newest = parse_ts(dates[0])
-                # A deploy timestamped later today reads as -1 days otherwise.
-                since = max(0, (now - newest).days) if newest else None
-                in_window = sum(1 for d in dates if (p_ := parse_ts(d)) and p_ >= since_dt)
-                if not prod_found:
-                    status, detail = "unknown", (
-                        f"declared continuous and {in_window} deploy(s) were recorded in "
-                        f"{args.window}d, but none of them is to a production environment — so "
-                        f"this cannot show that remediation reaches users, which is the only "
-                        f"thing a Track 3 deadline depends on")
-                elif since is not None and since > gap:
-                    status, detail = "broken", (
-                        f"declared continuous but the last deploy was {since}d ago, past the "
-                        f"{gap}d ceiling — continuous deployment is how Track 3 remediation "
-                        f"lands here, so this is a deadline problem, not a process detail")
-                else:
-                    status, detail = "holds", (
-                        f"declared continuous: {in_window} deploy(s) in {args.window}d, "
-                        f"last {since}d ago (ceiling {gap}d)")
-                cadence.append({"product": product, "declared": declared, "status": status,
-                                "detail": detail, "last_release": dates[0],
-                                "days_since_last_release": since,
-                                "releases_in_window": in_window, "counted": basis,
-                                "signal_disagreement": None})
         else:
-            dates, basis, disagreement = release_dates(
-                repo, policy=(last.get("policy") or {}))
-            expected = CADENCE_DAYS.get(str(declared).lower())
+            iv = parse_interval_days(interval)
+            # A product that deploys every merge has no releases to measure windows against —
+            # apellis has neither tags nor releases. Its maintenance events are deploys, so
+            # `release_cadence: continuous` survives the move to maintenance intervals as a
+            # statement about *where the evidence lives*, not as a deadline of its own.
+            if str(last.get("release_cadence") or "").lower() == CONTINUOUS:
+                dates, basis, prod_found = deployment_dates(repo)
+                disagreement = None
+                if dates and not prod_found:
+                    cadence.append({
+                        "product": product, "declared": interval, "status": "unknown",
+                        "detail": f"deploys continuously and {len(dates)} deployment(s) are "
+                                  f"recorded, but none is to a production environment — so "
+                                  f"nothing here shows a maintenance release reaching users, "
+                                  f"which is what a Track 3/4 window depends on",
+                        "counted": basis, "signal_disagreement": None})
+                    continue
+            else:
+                dates, basis, disagreement = release_dates(
+                    repo, policy=(last.get("policy") or {}))
             if dates is None:
-                cadence.append({"product": product, "declared": declared, "status": "unknown",
+                cadence.append({"product": product, "declared": interval, "status": "unknown",
                                 "detail": f"could not read releases for {repo} — not knowing "
-                                          f"whether the cadence holds is not the same as it holding"})
-            elif expected is None:
-                cadence.append({"product": product, "declared": declared, "status": "unknown",
-                                "detail": f"'{declared}' is not a cadence this can measure "
-                                          f"({', '.join(sorted(CADENCE_DAYS))})"})
+                                          f"whether the maintenance windows were met is not the "
+                                          f"same as them having been met"})
             elif not dates:
-                cadence.append({"product": product, "declared": declared, "status": "broken",
-                                "detail": f"declared {declared} but the repo has no releases at all"})
+                cadence.append({"product": product, "declared": interval, "status": "broken",
+                                "detail": f"commits to maintenance every {interval} but {repo} has "
+                                          f"no production releases at all, so no window has ever "
+                                          f"been met",
+                                "counted": basis, "signal_disagreement": disagreement})
             else:
                 newest = parse_ts(dates[0])
-                since = (now - newest).days if newest else None
-                in_window = sum(1 for d in dates
-                                if (p := parse_ts(d)) and p >= since_dt)
-                expected_in_window = max(1, int(args.window / expected))
-                if since is not None and since > expected * TOLERANCE:
+                origin = newest
+                origin_basis = "last production release"
+                if onboarded and newest and onboarded > newest:
+                    origin = onboarded
+                    origin_basis = ("onboarding date — windows that elapsed before monitoring "
+                                    "existed are history, not breaches")
+                missed, nxt = window_grid(origin, iv, now)
+                since = max(0, (now - newest).days) if newest else None
+                if missed:
                     status, detail = "broken", (
-                        f"declared {declared} (~{expected}d) but the last release was {since}d "
-                        f"ago — every Track 3/4 deadline derived from this cadence is fiction")
-                elif in_window < expected_in_window:
-                    status, detail = "lagging", (
-                        f"declared {declared}: expected ~{expected_in_window} release(s) in "
-                        f"{args.window}d, found {in_window}")
+                        f"commits to maintenance every {interval}; {len(missed)} window(s) "
+                        f"missed since {origin.date().isoformat()} (last was "
+                        f"{missed[-1].date().isoformat()}). One decision is required about the "
+                        f"release, not one per finding — every open Track 3/4 finding was due in "
+                        f"a window that did not happen")
                 else:
                     status, detail = "holds", (
-                        f"declared {declared}: {in_window} release(s) in {args.window}d, "
-                        f"last {since}d ago")
-                cadence.append({"product": product, "declared": declared, "status": status,
+                        f"commits to maintenance every {interval}: next window "
+                        f"{nxt.date().isoformat()} in {(nxt - now).days}d, last release "
+                        f"{since}d ago")
+                cadence.append({"product": product, "declared": interval, "status": status,
                                 "detail": detail, "last_release": dates[0],
                                 "days_since_last_release": since,
-                                "releases_in_window": in_window,
+                                "next_window": nxt.isoformat(),
+                                "missed_windows": [d.isoformat() for d in missed],
+                                "grid_origin": origin.isoformat(),
+                                "grid_origin_basis": origin_basis,
                                 "counted": basis,
-                                # Carried on the entry rather than folded into the status: a
-                                # cadence that "holds" by an unmaintained signal is not a
-                                # cadence that holds, and the reader needs to see both.
                                 "signal_disagreement": disagreement})
 
         esc = (last.get("escalation") or {})

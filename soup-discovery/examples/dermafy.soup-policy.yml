@@ -14,6 +14,7 @@ cra_scope: unknown
 # last one). Set this to the intended cycle rather than to whatever makes the check pass:
 # with Track 3 remediation defined as "next release", a declared cadence that nobody keeps
 # means Track 3 findings have no real deadline at all, and that is the thing worth seeing.
+# Superseded by maintenance_interval (§3.4); kept as an observation only.
 release_cadence: biannual
 
 # NEEDS A DECISION. Two signals disagree by about four months:
@@ -23,6 +24,16 @@ release_cadence: biannual
 #   production_asset  none         —              (this repo attaches no such artifact)
 production_release:
   detect_by: tag_pattern
+
+# §3.4 — the maintenance commitment. Not an observation of how often this product has
+# released, but a promise: a maintenance release happens at least this often. Every open
+# Track 3/4 finding lands on the next window, so a missed window is one decision about a
+# release rather than one per finding. The tier caps how loose this may be (Basic: 90d).
+maintenance_interval: 90d
+
+# Set when this product was first monitored. Windows that elapsed before that date are
+# recorded as history, not as breaches — nobody could have acted on them.
+onboarded: ""            # fill in on the first monitored run
 
 alerts:
   slack_channel: ""

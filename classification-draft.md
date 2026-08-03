@@ -158,38 +158,83 @@ A missed deadline is not silently absorbed. On breach:
 
 ### 3.4 What "next regular release" means
 
-Decided 2026-08-02: **each project declares its release cadence in its configuration**, and
-the Track 3/4 deadline is derived from it — next scheduled release plus a grace period.
+**Decided 2026-08-03, replacing the 2026-08-02 decision.** A project declares a **maintenance
+interval** — a commitment that a maintenance release happens at least every N days — and the
+Track 3/4 remediation deadline is the next window on that grid.
 
-The alternative, a flat 90-day ceiling for everyone, was rejected as too blunt: a product
-shipping fortnightly and one shipping twice a year should not carry the same Track 3
-deadline.
+The earlier decision derived the deadline from each project's *observed* release rhythm. That
+does not work, and the portfolio shows why. Three of four products have a rhythm that has
+already lapsed, so "last release + interval" lands in the past:
 
-Two consequences that follow, and have to be handled rather than assumed away:
+| Product | last production release | last + interval | verdict |
+| --- | --- | --- | --- |
+| Mindnet | 2026-07-21 | 2026-08-21 | in 18 days |
+| Osteocoach | 2026-05-07 | 2026-06-07 | 57 days overdue |
+| Alvie | 2025-10-01 | 2026-01-01 | 214 days overdue |
+| Dermafy | 2025-10-15 | 2026-04-16 | 109 days overdue |
 
-- **A project without a declared cadence has no Track 3/4 deadline.** That must surface as
-  a configuration gap in the monitoring run, not as an absent deadline that quietly looks
-  like compliance. Same principle as the scope gate: unclassified fails loudly.
-- **A declared cadence can go stale.** If a project declares "monthly" and has not released
-  in five months, the derived deadline is fiction. The backstop report compares the declared
-  cadence against the actual release history and flags the divergence; that check is what
-  keeps this field honest. Measured on 2026-08-03: Mindnet holds, Osteocoach, Dermafy and
-  Alvie do not.
-- **"Actual release history" is itself a per-project declaration.** A GitHub repo offers three
-  signals for "this release went to production" — the tag shape, the `prerelease` flag, and a
-  `-production` release asset — and across this portfolio they disagree by up to 315 days on
-  the same repo. Because Track 3 remediation *is* "next release", the choice of signal sets a
-  deadline, so each project declares it (`production_release.detect_by`) and the backstop
-  reports a disagreement between the three rather than silently picking one. This is also
-  what decides whether a build is a release or a staging document (§5.2), so a project cannot
-  redefine one without redefining the other.
-- **A project may have no releases at all.** Apellis deploys every merge by git SHA and has
-  neither tags nor releases. Declaring a cycle there would manufacture a deadline out of
-  releases that never happen, so the cadence is declared `continuous` and measured against the
-  *deploy* history with a ceiling on the gap rather than a cycle. Track 3's "next release"
-  then means the next deploy, which is stricter than any declared cycle, not looser. The first
-  measurement of this immediately found that none of Apellis's recorded deployments names a
-  production environment, so the check reports `unknown` rather than healthy.
+A finding discovered today at Dermafy would have been **109 days overdue on the day it was
+found**. That is not a control, it is a counter. And the obvious repair — "discovery +
+interval" — is worse in a different way: it makes the security deadline a function of how
+slowly a product releases, which is backwards.
+
+A declared commitment fixes both. It is a statement about the future, so it cannot be born
+overdue, and it does not inherit the release rhythm's inertia.
+
+**Three properties make it work:**
+
+1. **The deadline is shared.** Every open Track 3/4 finding targets the same window. A missed
+   window is therefore **one** breach — about a release — not one per finding. On Kontina that
+   is the difference between 1 recorded decision and 196. This is the property that matters
+   most: the previous model would have generated a risk acceptance per CVE on every
+   slow-releasing product, and a control that reliably produces hundreds of rubber stamps stops
+   being read.
+2. **A missed window does not move the grid.** It advances from its own due date, not from
+   whenever a release eventually happens. Otherwise not releasing buys time — the same receding
+   deadline that §2.2's latching exists to prevent.
+3. **An early release resets the grid.** The maintenance was done; the next window counts from
+   the actual release.
+
+**Which window a finding lands in.** The first one that is at least the finding's own
+**mitigation** period away. One cannot be obliged to remediate before being obliged to
+mitigate, and without this rule a finding discovered two days before a window would be due in
+two days. Osteocoach's next window is 2026-08-05; a Track 3 finding discovered on 2026-08-03
+therefore targets 2026-11-03, while one discovered on 2026-06-01 targets 2026-08-05. Track 4
+has no mitigation deadline of its own and uses Track 3's, because it rides the same release.
+
+**The tier caps the commitment, not the finding.** Basic ≤ 90 days, Extended ≤ 60 days (§7). A
+product may promise maintenance more often than its tier requires; it may not promise less
+often, and that is the one override that cannot be waived with a stated reason — the tier *is*
+the statement about how often the product is maintained. This is where the old
+`planned_remediation_ceiling` went, and moving it from the finding to the commitment is what
+removed the rubber-stamp problem.
+
+Four consequences that have to be handled rather than assumed away:
+
+- **A project without a declared interval has no Track 3/4 deadline.** It surfaces as a
+  configuration gap in the monitoring run, not as an absent deadline that looks like
+  compliance. Same principle as the scope gate: unclassified fails loudly.
+- **"Which releases count as production" is itself a per-project declaration.** A GitHub repo
+  offers three signals — the tag shape, the `prerelease` flag, and a `-production` release
+  asset — and across this portfolio they disagree by up to 315 days on the same repo. The grid
+  origin depends on the answer, so each project declares it
+  (`production_release.detect_by`) and the backstop reports a disagreement between the three
+  rather than silently picking one. The same signal decides whether a build produces a release
+  or a staging document (§5.2), so a project cannot redefine one without redefining the other.
+- **A product may have no releases at all.** Apellis deploys every merge by git SHA and has
+  neither tags nor releases. It declares an interval like anyone else; what
+  `release_cadence: continuous` changes is *where the evidence of a maintenance event lives* —
+  the deploy history rather than the release list. The first measurement of this found that
+  none of Apellis's recorded deployments names a production environment, so the check reports
+  `unknown` rather than healthy.
+- **Onboarding does not import history as breaches.** Windows that elapsed before a product was
+  monitored are recorded as history, not charged as violations — nobody could have acted on
+  them. Alvie and Dermafy each have three such windows. The grid starts at the onboarding date,
+  which is recorded in the policy so the choice is visible rather than implied.
+
+Measured on 2026-08-03 with a 90-day commitment: Mindnet holds (next window 2026-10-19),
+Osteocoach holds (2026-08-05), Alvie and Dermafy have three missed windows each, Apellis is
+unknown.
 
 ---
 
@@ -363,7 +408,7 @@ newest **version publish time**, never from registry metadata that any change to
 | --- | --- | --- |
 | Automated scan of deployed version | daily | daily |
 | Backstop reconciliation report | annual | quarterly |
-| Track 3 remediation ceiling | 90 d | 60 d |
+| Maximum maintenance interval | 90 d | 60 d |
 | Risk-acceptance re-review | at backstop | quarterly |
 
 The backstop exists because automation fails silently. It reconciles the evidence store against the
@@ -401,7 +446,7 @@ Decided 2026-08-02, each recorded in the section named:
 | --- | --- | --- |
 | Risk-acceptance sign-off | One approver, who may be the SOUP approver | 3.3 |
 | Clock start | At our discovery, not at CVE publication | 3 |
-| Track 3/4 deadline | Derived from a per-project release cadence | 3.4 |
+| Track 3/4 deadline | ~~Derived from a per-project release cadence~~ — superseded 2026-08-03 | 3.4 |
 | VEX authorship | Developer drafts, SOUP approver countersigns | 4 |
 | Base-image OS packages | The image is the SOUP; packages are transitive | 5.1 |
 | EPSS thresholds | 0.10 / 0.50, configurable per project | 2.1 |
@@ -415,6 +460,9 @@ Decided 2026-08-03:
 | "Production release" | Per-project signal (`production_release.detect_by`); disagreement is reported | 3.4 |
 | Products without releases | `release_cadence: continuous`, measured against deploys with a gap ceiling | 3.4 |
 | Upstream staleness | 12 months without a release, tested separately from semver currency | 6 |
+| Track 3/4 deadline | The next **maintenance window** from a declared per-product interval | 3.4 |
+| Where the tier binds | Caps the maintenance commitment, not each finding's deadline | 3.4, 7 |
+| Onboarding | Windows before the onboarding date are history, not breaches | 3.4 |
 
 ### Standing review items
 
@@ -436,17 +484,18 @@ Not open questions — things that must be re-examined on a trigger rather than 
    the PDF and the approval annotation are treated as controlled output.
 2. **Tier assignment per product** (Basic / Extended) drives the backstop cadence in §7 and is not
    recorded anywhere yet.
-3. **Track 3/4 remediation has no computed deadline yet.** §3.4 and §7 describe one; the
-   classifier currently writes the cadence and the ceiling into a *basis string* and leaves
-   `remediation_due` empty, so 210 of 521 findings on a real product carry no date and cannot
-   breach. Blocked on one decision: when a declared cadence is longer than the tier ceiling
-   (Dermafy declares biannual, tier Basic caps Track 3 at 90 d), which governs. Until that is
-   answered, §3.4 describes an intent rather than a control.
-4. **The first scan of a product starts every clock at once.** §3 starts both clocks at first
-   discovery, so onboarding a product with a backlog produces its whole backlog as
-   simultaneously-due findings — on Kontina that is 23 Track 1 findings with a 72 h mitigation
-   deadline on day one. No onboarding provision exists; without one, every product's first run
-   is a breach event.
+3. **The maintenance interval per product is not agreed yet.** 90 days is set as the starting
+   value for all products (60 for the Extended-tier on-prem example, which its tier requires).
+   Each project needs to confirm or tighten it, because it is a commitment rather than a
+   measurement — and Alvie and Dermafy currently miss it three times over.
+4. **The first scan of a product still starts every finding's clock at once.** §3.4 now handles
+   the *release* side of onboarding — windows before the onboarding date are history rather
+   than breaches — but Track 1 and 2 mitigation clocks still all start on day one. On Kontina
+   that is 23 Track 1 findings with a 72 h deadline. Worth noting what the measurement says
+   about how urgent they are: **0 of those 23 are in KEV.** All 23 are CVSS ≥ 9.0 with no
+   indication of exploitation, which is a much weaker case for a 72-hour emergency than the
+   number first suggests. A defensible rule would be that KEV starts immediately and everything
+   else joins a recorded baseline, but that is not decided.
 5. **§5.1 rewards leaving an image unpinned.** The section requires base images to be
    digest-pinned so that bumping the image is a verifiable remediation. But an unpinned image
    cannot be scanned reproducibly, so scope files exclude it — meaning pinning an image brings

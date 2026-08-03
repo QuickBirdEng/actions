@@ -17,11 +17,22 @@ cra_scope: unknown
 # monthly, the backstop will report this as broken while v1.1.0 is in QA; declared quarterly
 # it holds. Monthly is the honest declaration if monthly is the intent — the check exists to
 # surface the gap, not to be satisfied by lowering the bar.
+# Superseded by maintenance_interval (§3.4); kept as an observation only.
 release_cadence: monthly
 
 # All three production-release signals agree on v1.0.3 here, so the default is safe.
 production_release:
   detect_by: tag_pattern
+
+# §3.4 — the maintenance commitment. Not an observation of how often this product has
+# released, but a promise: a maintenance release happens at least this often. Every open
+# Track 3/4 finding lands on the next window, so a missed window is one decision about a
+# release rather than one per finding. The tier caps how loose this may be (Basic: 90d).
+maintenance_interval: 90d
+
+# Set when this product was first monitored. Windows that elapsed before that date are
+# recorded as history, not as breaches — nobody could have acted on them.
+onboarded: ""            # fill in on the first monitored run
 
 alerts:
   slack_channel: ""        # fill in — without it, runs record but nobody is notified

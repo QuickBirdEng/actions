@@ -93,7 +93,22 @@ else
 fi
 
 # --- 5. classify -------------------------------------------------------------
+# Maintenance windows (§3.4) are what give Track 3/4 a remediation date at all. Without them
+# the classifier says so explicitly rather than leaving an empty field that reads as "no
+# deadline yet" — 210 of Kontina's 521 findings used to sit in exactly that state.
+WINDOWS=""
+if [[ -n "${MAINTENANCE_LAST_RELEASE:-}" ]]; then
+  WINDOWS="$OUT_DIR/maintenance-windows.json"
+  MW_ARGS=(--last-release "$MAINTENANCE_LAST_RELEASE"
+           --interval "$(jq -r '.maintenance_interval // "90d"' "$POLICY" 2>/dev/null || echo 90d)"
+           --out "$WINDOWS")
+  ONB=$(jq -r '.onboarded // ""' "$POLICY" 2>/dev/null)
+  [[ -n "$ONB" && "$ONB" != "null" ]] && MW_ARGS+=(--onboarded "$ONB")
+  python3 "$HERE/maintenance-windows.py" "${MW_ARGS[@]}" >/dev/null 2>&1 || WINDOWS=""
+fi
+
 CLS_ARGS=("$ASSESSED" "$POLICY" --out "$FINDINGS")
+[[ -n "$WINDOWS" && -f "$WINDOWS" ]] && CLS_ARGS+=(--windows "$WINDOWS")
 [[ -n "$STATE" && -f "$STATE" ]] && CLS_ARGS+=(--state "$STATE")
 python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 classify   /' >&2 \
   || { echo "::error::classification failed" >&2; exit 1; }

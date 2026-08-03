@@ -9,6 +9,7 @@
 
 product: mindnet
 tier: Basic
+# Superseded by maintenance_interval (§3.4); kept as an observation only.
 release_cadence: monthly
 
 # Mindnet is a medical device under MDR, so it sits outside the CRA's product requirements
@@ -16,6 +17,16 @@ release_cadence: monthly
 # accountable for it, not inferred by tooling. Set to unknown until then: the alert will
 # say the scope is undetermined rather than claim there is no 24-hour obligation.
 cra_scope: unknown
+
+# §3.4 — the maintenance commitment. Not an observation of how often this product has
+# released, but a promise: a maintenance release happens at least this often. Every open
+# Track 3/4 finding lands on the next window, so a missed window is one decision about a
+# release rather than one per finding. The tier caps how loose this may be (Basic: 90d).
+maintenance_interval: 90d
+
+# Set when this product was first monitored. Windows that elapsed before that date are
+# recorded as history, not as breaches — nobody could have acted on them.
+onboarded: ""            # fill in on the first monitored run
 
 alerts:
   slack_channel: ""        # fill in — without it, runs record but nobody is notified

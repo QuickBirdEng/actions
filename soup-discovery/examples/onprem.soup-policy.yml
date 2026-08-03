@@ -6,6 +6,7 @@
 
 product: example-onprem
 tier: Extended
+# Superseded by maintenance_interval (§3.4); kept as an observation only.
 release_cadence: quarterly
 cra_scope: true
 
@@ -18,6 +19,18 @@ tracks:
       controls the deploy, so "fix live" is not ours to meet in 21 days. 60 d reflects the
       contractual maintenance window. Mitigation stays at 72 h because publishing the
       advisory and a compensating control is entirely within our control.
+
+# §3.4 — the maintenance commitment. Not an observation of how often this product has
+# released, but a promise: a maintenance release happens at least this often. Every open
+# Track 3/4 finding lands on the next window, so a missed window is one decision about a
+# release rather than one per finding. The tier caps how loose this may be (Basic: 90d).
+# Extended tier caps this at 60d, and on-prem is where that matters: a customer running an
+# older installation cannot be reached by our next deploy.
+maintenance_interval: 60d
+
+# Set when this product was first monitored. Windows that elapsed before that date are
+# recorded as history, not as breaches — nobody could have acted on them.
+onboarded: ""            # fill in on the first monitored run
 
 alerts:
   slack_channel: C0EXAMPLE

@@ -458,7 +458,7 @@ test_enrichment_records_feed_provenance() {
 }
 
 # ---------------------------------------------------------------- policy
-pol() { printf 'product: p\ntier: Basic\ncra_scope: %s\nrelease_cadence: monthly\n%s' "$1" "${2:-}" > "$TMP/pol.yml"; }
+pol() { printf 'product: p\ntier: Basic\ncra_scope: %s\nmaintenance_interval: 90d\n%s' "$1" "${2:-}" > "$TMP/pol.yml"; }
 
 # Regression: the required-field check used jq's `//`, which treats false as absent, so
 # `cra_scope: false` — the value most products will set — was reported as missing.
@@ -502,13 +502,13 @@ test_policy_resolves_tier_defaults() {
   pol "true"
   local out; out=$(bash "$S/validate-policy.sh" "$TMP/pol.yml" 2>/dev/null)
   assert "$(jq -r '.backstop' <<<"$out")" "annual" || return 1
-  assert "$(jq -r '.planned_remediation_ceiling' <<<"$out")" "90d"
+  assert "$(jq -r '.max_maintenance_interval' <<<"$out")" "90d"
 }
 
 # ---------------------------------------------------------------- classifier
 CLS() { python3 "$S/classify-findings.py" "$@"; }
 
-mkpolicy() { printf 'product: p\ntier: Basic\ncra_scope: false\nrelease_cadence: monthly\nalerts:\n  threshold: %s\n' "${1:-high}" > "$TMP/cp.yml"
+mkpolicy() { printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nalerts:\n  threshold: %s\n' "${1:-high}" > "$TMP/cp.yml"
              bash "$S/validate-policy.sh" "$TMP/cp.yml" 2>/dev/null > "$TMP/cp.json"; }
 
 mkvuln() { # <id> <cvss-vector|null> <kev|null> <epss|null> [vex-state] [justification]
@@ -846,6 +846,12 @@ test_monitor_combines_kev_and_breach_in_one_message() {
   grep -q "within 24 hours" "$TMP/mon/alert.txt"
 }
 
+# The window grid decides every Track 3/4 deadline, and the model exists because the previous
+# one produced dates in the past on three of four products.
+test_maintenance_window_grid() {
+  S="$S" python3 "$HERE/maintenance-window-logic.py"
+}
+
 test_backstop_production_signals_disagree_visibly() {
   S="$S" python3 "$HERE/production-signal-logic.py"
 }
@@ -928,7 +934,7 @@ test_backstop_clean_when_everything_is_current() {
 # What it does not check must be visible, not absent.
 mkrun_cadence() { jq -n --arg p "$1" --arg at "${2}T09:00:00+00:00" --arg r "$3" --arg c "$4" \
   '{schema:"quickbird.kev-monitor-run/v1",product:$p,repo:$r,run_at:$at,verdict:"all-clear",
-    synthetic:false,release_cadence:$c}' > "$TMP/ev/${2}-$1.json"; }
+    synthetic:false,maintenance_interval:$c}' > "$TMP/ev/${2}-$1.json"; }
 
 # A cadence that is not declared leaves Track 3/4 with nothing to derive a deadline from,
 # which must be visible rather than absent.
@@ -947,11 +953,19 @@ test_backstop_unreadable_releases_are_unknown_not_holding() {
   assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "unknown"
 }
 
-test_backstop_rejects_an_unmeasurable_cadence_word() {
-  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
-  mkrun_cadence p1 2026-08-02 QuickBirdEng/mindnet "whenever-we-feel-like-it"
-  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
-  assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "unknown"
+test_policy_rejects_a_non_duration_maintenance_interval() {
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: whenever\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
+  assert "$?" "1"
+}
+
+# The tier is the statement about how often a product is maintained, so a commitment looser
+# than the tier allows is the one override that cannot be waived with a reason.
+test_policy_rejects_an_interval_looser_than_the_tier_allows() {
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 180d\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1 && return 1
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 45d\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
 }
 
 # The distinction that flips the answer: alvie published six releases in 90 days and reads
@@ -987,7 +1001,7 @@ test_net_fix_or_vex_blocks_known_vulnerable_version() {
 }
 
 # ---------------------------------------------------------------- run
-printf 'product: t\ntier: Basic\ncra_scope: false\nrelease_cadence: monthly\n' > "$TMP/cpol.yml"
+printf 'product: t\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/cpol.yml"
 bash "$S/validate-policy.sh" "$TMP/cpol.yml" 2>/dev/null > "$TMP/cp.json"
 
 echo "SOUP pipeline tests${FILTER:+ (filter: $FILTER)}"
