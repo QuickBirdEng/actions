@@ -738,10 +738,44 @@ test_backstop_clean_when_everything_is_current() {
 }
 
 # What it does not check must be visible, not absent.
-test_backstop_states_what_it_does_not_check() {
-  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"; mkrun p1 2026-08-02 all-clear
-  python3 "$S/backstop-report.py" "$TMP/ev" --products p1 --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
-  [[ "$(jq -r '.not_checked|length' "$TMP/bs.json")" -gt 0 ]] || { echo "not_checked is empty"; return 1; }
+mkrun_cadence() { jq -n --arg p "$1" --arg at "${2}T09:00:00+00:00" --arg r "$3" --arg c "$4" \
+  '{schema:"quickbird.kev-monitor-run/v1",product:$p,repo:$r,run_at:$at,verdict:"all-clear",
+    synthetic:false,release_cadence:$c}' > "$TMP/ev/${2}-$1.json"; }
+
+# A cadence that is not declared leaves Track 3/4 with nothing to derive a deadline from,
+# which must be visible rather than absent.
+test_backstop_flags_an_undeclared_cadence() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun_cadence p1 2026-08-02 QuickBirdEng/nope ""
+  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "not-declared"
+}
+
+# Not being able to read the release history is not the same as the cadence holding.
+test_backstop_unreadable_releases_are_unknown_not_holding() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun_cadence p1 2026-08-02 QuickBirdEng/definitely-not-a-real-repo-xyz monthly
+  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "unknown"
+}
+
+test_backstop_rejects_an_unmeasurable_cadence_word() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun_cadence p1 2026-08-02 QuickBirdEng/mindnet "whenever-we-feel-like-it"
+  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "unknown"
+}
+
+# The distinction that flips the answer: alvie published six releases in 90 days and reads
+# as a product on a monthly cadence, but its last *production* release was over a year ago.
+# A Track 3/4 deadline is a remediation deadline, and remediation is satisfied on deploy.
+test_net_backstop_cadence_counts_production_releases_only() {
+  need_net || return 77
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  mkrun_cadence alvie 2026-08-02 QuickBirdEng/alvie monthly
+  python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.cadence[0].counted' "$TMP/bs.json")" "production releases" || return 1
+  assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "broken"
 }
 
 # ---------------------------------------------------------------- network
