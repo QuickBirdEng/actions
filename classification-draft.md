@@ -641,14 +641,12 @@ Not open questions — things that must be re-examined on a trigger rather than 
    started to invent one for the tier before this was clarified. The Basic/Extended vocabulary in
    §7 comes from the same place (`GDG-004-01`).
 
-   The consequence is that `.soup-policy.yml` holds *copies* of contractual facts, so the file
-   carries one `sla_reference` naming the contract and its version — one contract, one reference;
-   repeating it per value would only create three things that can disagree.
-   `validate-policy.sh` warns when it is missing (a warning, not an error: a missing reference
-   must not stop a run from producing evidence), and the backstop reports any of the four values
-   changing between runs. Neither prevents the copy drifting from the contract. Both make it
-   visible, which is the most the tooling can do when the authority lives in a document it cannot
-   read.
+   No reference field accompanies them. A pointer to a contract version held in a YAML file goes
+   stale the first time the SLA is amended, and then asserts a provenance that no longer holds —
+   worse than none, by the same argument this document applies everywhere else. The controls that
+   work here are the CODEOWNERS review on the file and the backstop reporting any of the three
+   changing between runs (`determination_drift`). Neither needs the values to describe their own
+   origin.
 
    What remains is the lookup itself, per product. Until it is done, `cra_scope` stays `unknown`
    — which is deliberate: the expensive mistake is not an unnecessary report, it is a missing one

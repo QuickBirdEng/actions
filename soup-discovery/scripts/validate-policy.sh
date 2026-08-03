@@ -49,26 +49,12 @@ if [[ -n "$TIER" ]] && ! jq -e --arg t "$TIER" '.tiers[$t]' <<<"$D" >/dev/null 2
   err "$POLICY: tier '$TIER' is not one of: $(jq -r '.tiers | keys | join(", ")' <<<"$D")"
 fi
 
-# Three values in this file are not determinations made here. They are agreed with the customer
-# in the SLA and then written down here:
-#
-#   tier                  how intensively the product is maintained (§7)
-#   cra_scope             whether the CRA's 24-hour reporting obligation applies (§7)
-#   maintenance_interval  the maintenance release commitment every Track 3/4 deadline hangs on
-#
-# One contract, so one reference — repeating it three times would only create three things that
-# can disagree. Requiring it does not stop the copy drifting from the SLA; it tells the next
-# reader where to check. The backstop reports any of the three changing between runs
-# (determination_drift), which is the other half of the same problem.
-SLA_REF=$(jq -r '.sla_reference // ""' <<<"$P")
-if [[ -z "$SLA_REF" || "$SLA_REF" == "null" ]]; then
-  for f in tier cra_scope maintenance_interval; do
-    if jq -e --arg f "$f" 'has($f) and .[$f] != null and .[$f] != ""' <<<"$P" >/dev/null 2>&1; then
-      warn "$POLICY: '$f' is set but no sla_reference is stated. tier, cra_scope and maintenance_interval are agreed with the customer in the SLA — name the contract and its version so the values here can be checked against it."
-      break
-    fi
-  done
-fi
+# tier, cra_scope and maintenance_interval are agreed with the customer in the SLA and written
+# here — they are not determined by this process. Deliberately NOT accompanied by a reference
+# field: a pointer to a contract version in a YAML file goes stale the first time the SLA is
+# amended, and then it asserts a provenance that no longer holds, which is worse than none. The
+# controls that actually work here are the CODEOWNERS review on this file and the backstop
+# reporting any of the three changing between runs.
 
 CRA=$(jq -r '.cra_scope // ""' <<<"$P")
 case "$CRA" in

@@ -255,7 +255,7 @@ def main():
         # Both values move a real obligation: tier caps the maintenance commitment and sets the
         # backstop interval, cra_scope decides whether a KEV alert says a 24-hour reporting
         # clock is running. A change is not necessarily wrong; going unnoticed is.
-        for field in ("tier", "cra_scope", "maintenance_interval", "sla_reference"):
+        for field in ("tier", "cra_scope", "maintenance_interval"):
             seen = []
             for at, rec, _ in rs:
                 val = rec.get(field)

@@ -8,9 +8,10 @@
 # DRAFT. tier and cra_scope are determinations, not guesses.
 
 product: osteocoach
-# tier, cra_scope and maintenance_interval below are all agreed with the customer in the SLA and
-# then written down here — they are not determined in this repo. One contract, one reference.
-sla_reference: ""        # e.g. "SLA <customer>, Anhang B, Stand 2026-06-01"
+# tier, cra_scope and maintenance_interval are agreed with the customer in the SLA and written
+# here. They are not determined in this repo — do not reason them out. Changing one of them
+# changes a real obligation, which is why this file is owned in CODEOWNERS and why the backstop
+# reports when any of them moves between runs.
 tier: Basic
 cra_scope: unknown
 

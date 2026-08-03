@@ -1171,19 +1171,6 @@ test_backstop_unreadable_releases_are_unknown_not_holding() {
   assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "unknown"
 }
 
-# tier, cra_scope and maintenance_interval are all agreed with the customer in the SLA and copied
-# here. A copy with no stated origin cannot be checked against what it copies.
-test_policy_warns_when_sla_determinations_have_no_source() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
-  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/pw.txt" || return 1
-  grep -q "no sla_reference is stated" "$TMP/pw.txt" || return 1
-  # a warning, not a failure: a missing reference must not block a monitoring run, because the
-  # run still produces the evidence that the product was looked at
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nsla_reference: "SLA X, Anhang B"\n' > "$TMP/pol.yml"
-  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/pw2.txt" || return 1
-  ! grep -q "no sla_reference is stated" "$TMP/pw2.txt"
-}
-
 # A changed maintenance_interval moves every Track 3/4 deadline, so it belongs in the same drift
 # detection as tier and cra_scope.
 test_backstop_detects_a_changed_maintenance_commitment() {
