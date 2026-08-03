@@ -260,9 +260,22 @@ Four consequences that have to be handled rather than assumed away:
   Two filters are load-bearing. A production deployment whose ref is not a tag is not an
   application release — Mindnet's newest such record is a branch ref from a content-migration
   workflow, and counting it would date the grid from a database migration. And a repo with no
-  production environment reports `unknown`, not `broken`: Osteocoach deploys to `Study` and
-  Kontina has no deployment records at all, which means this check cannot see them, not that they
-  never maintain themselves.
+  production-equivalent environment reports `unknown`, not `broken`: it means this check cannot
+  see the product, which is not the same as the product never maintaining itself.
+
+  `Study` counts as production. On these products a study environment is normally the same thing —
+  Osteocoach has no environment named `Production` at all, and matching only `prod` reported a live
+  product as unseeable. Measured with `Study` included, Osteocoach last deployed `v1.0.3` on
+  2026-05-12 and holds its window.
+
+  One product still reports `unknown`, and the reason is worth recording because it is fixable and
+  not a property of the product: **Kontina-Backend declares no GitHub environment.** It deploys to
+  Kubernetes through `k8s-deploy-prod.yml` -> `deploy.yml` with `K8S_CONTEXT: prod`, the same shape
+  as Mindnet; the difference is that Mindnet's deploy job carries `environment:` and Kontina's
+  passes `ENV: production` only as an input to the deploy script, which GitHub never sees. Two
+  lines fix it (`patches/kontina-declare-environment.patch`), and until they are added nothing in
+  GitHub records which version of Kontina is running — which is the fact the rest of this chain
+  depends on.
 
 - **A product may have no releases at all.** Apellis deploys every merge by git SHA and has
   neither tags nor releases. It declares an interval like anyone else; what

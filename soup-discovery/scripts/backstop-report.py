@@ -54,7 +54,12 @@ def load(path):
 # pattern said 2025-10-01, the prerelease flag 2026-05-04, the asset name 2025-06-23 — and the
 # production deployment record says v1.0.7 was deployed on 2026-04-21, six months after that tag
 # was published. A release date is not a deploy date.
-PRODUCTION_ENV_RX = re.compile(r"prod", re.I)
+# `Study` counts too. On these products a study environment is usually the same thing as
+# production — Osteocoach has no environment named Production at all and deploys `Study`, so
+# matching only /prod/ reported a live product as unseeable. Kept as a fixed list rather than a
+# per-project setting: the environment names are a fact about the pipeline, and a knob here would
+# be one more thing to get wrong.
+PRODUCTION_ENV_RX = re.compile(r"prod|study", re.I)
 # A deployment whose ref is not a tag is not an application release. mindnet's newest Production
 # record is a branch ref from a content-migration workflow; counting it would date the maintenance
 # grid from a database migration. Same rule as resolve-deployed.sh.

@@ -76,13 +76,20 @@ dates, basis, envs = with_api({
 eq("no tagged production deploy", dates, [])
 eq("and the reason names the ref", "'main'" in basis, True)
 
-# osteocoach defines no Production environment — it deploys to `Study`. That is a product this
-# check cannot see, not a product that never maintains itself.
+# osteocoach has no environment named Production — it deploys `Study`, which on these products is
+# normally the same thing. Matching only /prod/ reported a live product as unseeable.
 dates, basis, envs = with_api({
     "/environments": [{"name": "Development"}, {"name": "Staging"}, {"name": "Study"}],
+    "environment=Study": [{"at": "2026-05-12T10:00:00Z", "env": "Study", "ref": "v1.0.3"}],
 })
-eq("no production environment", dates, [])
-eq("the environments it does define are named", "Study" in basis, True)
+eq("Study counts as production", dates[0], "2026-05-12T10:00:00Z")
+
+# A repo with neither is genuinely unseeable — and that is `unknown`, not "never maintained".
+dates, basis, envs = with_api({
+    "/environments": [{"name": "Development"}, {"name": "Staging"}],
+})
+eq("no production-equivalent environment", dates, [])
+eq("the environments it does define are named", "Development" in basis, True)
 
 # Unreadable records are not the same as an absence of records, and must not read as one.
 dates, basis, envs = with_api({"/environments": None, "/deployments": None})
