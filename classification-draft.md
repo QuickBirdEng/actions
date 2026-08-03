@@ -628,8 +628,19 @@ Not open questions — things that must be re-examined on a trigger rather than 
    `approval.{date,by,condition}`; the approval workflow additionally writes `by_url`; DEV-190 assumes
    `is_temporary`. The tooling tolerates all three shapes, but the schema should be pinned down before
    the PDF and the approval annotation are treated as controlled output.
-2. **Tier assignment per product** (Basic / Extended) drives the backstop cadence in §7 and is not
-   recorded anywhere yet.
+2. **Tier assignment per product** — clarified 2026-08-03: **the tier follows from the customer's
+   SLA**, not from a rule applied here. The Basic/Extended vocabulary in §7 comes from the same
+   place (`GDG-004-01`), so assigning a tier is a lookup against the contract rather than a
+   determination. What remains is the mapping itself, product by product, and one consequence
+   worth stating: the value in `.soup-policy.yml` is a *copy* of a contractual fact. The file
+   therefore carries `tier_source` naming the contract it is taken from — validate-policy.sh
+   warns when it is missing, and the backstop reports a tier that changes between runs. Neither
+   prevents drift from the contract; both make it visible.
+
+   Note that the SLA is used twice, for two different things, and they should not be confused:
+   it sets **how intensively a product is maintained** (the tier, §7), and separately its TTR
+   table governs **first-party defect response** in service hours (§3). Vulnerability tracks are
+   calendar time and are a different obligation.
 3. **The maintenance interval per product is not agreed yet.** 90 days is set as the starting
    value for all products (60 for the Extended-tier on-prem example, which its tier requires).
    Each project needs to confirm or tighten it, because it is a commitment rather than a

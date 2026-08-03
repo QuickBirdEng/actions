@@ -6,6 +6,9 @@
 
 product: example-onprem
 tier: Extended
+# The tier is not set here — it follows from the customer SLA (GDG-004-01's Basic/Extended
+# vocabulary is the same one). Name the contract it comes from so the value can be traced.
+tier_source: ""          # e.g. "SLA <customer>, service level Basic" — fill in from the contract
 # Superseded by maintenance_interval (§3.4); kept as an observation only.
 release_cadence: quarterly
 cra_scope: true

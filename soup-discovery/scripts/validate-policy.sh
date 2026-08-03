@@ -49,6 +49,15 @@ if [[ -n "$TIER" ]] && ! jq -e --arg t "$TIER" '.tiers[$t]' <<<"$D" >/dev/null 2
   err "$POLICY: tier '$TIER' is not one of: $(jq -r '.tiers | keys | join(", ")' <<<"$D")"
 fi
 
+# The tier is not a determination made here — it follows from the customer's SLA, which is also
+# where the Basic/Extended vocabulary comes from (GDG-004-01). That makes the value in this file
+# a *copy* of a contractual fact, and a copy with no stated origin cannot be checked against the
+# thing it copies. Requiring the reference does not stop it drifting; it tells the next reader
+# where to look. The backstop reports a tier that changes between runs (determination_drift).
+if [[ -n "$TIER" ]] && ! jq -e 'has("tier_source") and .tier_source != null and .tier_source != ""' <<<"$P" >/dev/null 2>&1; then
+  warn "$POLICY: tier is '$TIER' but no tier_source is stated. The tier follows from the customer SLA — name the contract or service level it is taken from, so the value can be traced to its source."
+fi
+
 CRA=$(jq -r '.cra_scope // ""' <<<"$P")
 case "$CRA" in
   true|false|unknown|"") ;;

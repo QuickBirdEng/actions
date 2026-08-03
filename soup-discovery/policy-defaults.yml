@@ -99,7 +99,13 @@ dependency_currency:
   # SOUP records already use in grq-3 ("Is maintained and support is available").
   stale_after: 12m
 
-# §7 — tier drives the backstop cadence.
+# §7 — tier drives the backstop cadence and caps the maintenance commitment.
+#
+# The tier is NOT decided here or in the project policy: it follows from the customer's SLA,
+# which is also where the Basic/Extended vocabulary comes from (GDG-004-01). The project file
+# therefore states `tier` together with `tier_source` — the contract or service level it is
+# copied from — so the value can be traced instead of standing on its own. validate-policy.sh
+# warns when the source is missing, and the backstop reports a tier that changes between runs.
 tiers:
   Basic:
     backstop: annual

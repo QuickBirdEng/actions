@@ -1171,6 +1171,18 @@ test_backstop_unreadable_releases_are_unknown_not_holding() {
   assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "unknown"
 }
 
+# The tier follows from the customer SLA, so the value in the policy file is a copy of a
+# contractual fact. A copy with no stated origin cannot be checked against what it copies.
+test_policy_warns_when_the_tier_has_no_stated_source() {
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/pw.txt" || return 1
+  grep -q "no tier_source is stated" "$TMP/pw.txt" || return 1
+  # ...and it is a warning, not a failure: a missing reference must not block a monitoring run
+  printf 'product: p\ntier: Basic\ntier_source: "SLA X, level Basic"\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/pw2.txt" || return 1
+  ! grep -q "no tier_source is stated" "$TMP/pw2.txt"
+}
+
 test_policy_rejects_a_non_duration_maintenance_interval() {
   printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: whenever\n' > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1

@@ -8,6 +8,9 @@
 
 product: alvie
 tier: Basic
+# The tier is not set here — it follows from the customer SLA (GDG-004-01's Basic/Extended
+# vocabulary is the same one). Name the contract it comes from so the value can be traced.
+tier_source: ""          # e.g. "SLA <customer>, service level Basic" — fill in from the contract
 cra_scope: unknown
 
 # Measured from the clean-semver tags: v1.0.7 (2025-10-01), v1.0.4 (2025-06-23) — about a
