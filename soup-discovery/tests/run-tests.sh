@@ -848,6 +848,85 @@ test_monitor_combines_kev_and_breach_in_one_message() {
 
 # The window grid decides every Track 3/4 deadline, and the model exists because the previous
 # one produced dates in the past on three of four products.
+# ---------------------------------------------------------------- remediation units
+mkunits() {
+  # <artifact-name> <purl> <fix-status> <track>
+  jq -n --arg art "$1" --arg purl "$2" --arg fx "$3" \
+    '{bomFormat:"CycloneDX",specVersion:"1.6",
+      metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+      components:[{"bom-ref":"c1",type:"library",name:"lib",version:"1.0",purl:$purl,
+                   properties:[{name:"quickbird:component:artifact",value:$art}]}],
+      vulnerabilities:[{id:"CVE-2026-1",affects:[{ref:"c1"}],
+                        properties:[{name:"quickbird:vuln:fix",value:$fx}]}]}' > "$TMP/ru-bom.json"
+  jq -n --arg t "$4" '{findings:[{id:"CVE-2026-1",track:$t,kev:false,
+                                  mitigation_due:"2026-08-06T00:00:00+00:00",
+                                  remediation_due:"2026-11-03T00:00:00+00:00"}]}' > "$TMP/ru-f.json"
+  python3 "$S/group-remediation.py" "$TMP/ru-f.json" "$TMP/ru-bom.json" --out "$TMP/ru.json" 2>/dev/null
+}
+
+# Inside an image we deploy but do not build, "upgrade <module>" is not an action anyone here
+# can perform. The first version of this grouping emitted ten such items for a third-party
+# WireGuard image.
+test_units_third_party_image_is_one_action() {
+  mkunits "quickbird:artifact:deployed-wireguard-1.0.20210914" \
+          "pkg:golang/golang.org/x/crypto@v0.1.0" available immediate || return 1
+  assert "$(jq -r '.units[0].kind' "$TMP/ru.json")" "third-party-image" || return 1
+  jq -re '.units[0].action | test("we do not build it")' "$TMP/ru.json" >/dev/null
+}
+
+# An OS package in an image we *do* build is a base-image bump (§5.1).
+test_units_our_own_os_package_is_a_base_image_bump() {
+  mkunits "quickbird:artifact:docker-production-image-12" \
+          "pkg:rpm/rhel/openssl@3.2.2?distro=rhel-9.7" available expedited || return 1
+  assert "$(jq -r '.units[0].kind' "$TMP/ru.json")" "base-image-bump"
+}
+
+# A direct dependency in our own code stays its own action — there the CVE is the unit of work.
+test_units_our_own_dependency_is_its_own_action() {
+  mkunits "quickbird:artifact:server" "pkg:maven/com.foo/bar@1.0" available planned || return 1
+  assert "$(jq -r '.units[0].kind' "$TMP/ru.json")" "dependency-upgrade"
+}
+
+# No published fix in our own code is a different action: a control or a VEX, not an upgrade.
+test_units_no_published_fix_is_not_an_upgrade() {
+  mkunits "quickbird:artifact:server" "pkg:maven/com.foo/bar@1.0" none-published expedited || return 1
+  assert "$(jq -r '.units[0].kind' "$TMP/ru.json")" "no-upgrade-path" || return 1
+  assert "$(jq -r '.units[0].findings_without_published_fix' "$TMP/ru.json")" "1"
+}
+
+# Grouping must never move a deadline outward: the unit takes the earliest of its members.
+test_units_take_the_worst_track_and_earliest_deadline() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[{"bom-ref":"c1",type:"library",name:"a",version:"1",purl:"pkg:rpm/rhel/a@1",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:deployed-img"}]},
+                      {"bom-ref":"c2",type:"library",name:"b",version:"1",purl:"pkg:rpm/rhel/b@1",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:deployed-img"}]}],
+          vulnerabilities:[{id:"CVE-A",affects:[{ref:"c1"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]},
+                           {id:"CVE-B",affects:[{ref:"c2"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]}]}' \
+    > "$TMP/ru-bom.json"
+  jq -n '{findings:[{id:"CVE-A",track:"planned",kev:false,mitigation_due:"2026-10-01T00:00:00+00:00"},
+                    {id:"CVE-B",track:"immediate",kev:true,mitigation_due:"2026-08-06T00:00:00+00:00"}]}' \
+    > "$TMP/ru-f.json"
+  python3 "$S/group-remediation.py" "$TMP/ru-f.json" "$TMP/ru-bom.json" --out "$TMP/ru.json" 2>/dev/null || return 1
+  assert "$(jq -r '.units | length' "$TMP/ru.json")" "1" || return 1
+  assert "$(jq -r '.units[0].track' "$TMP/ru.json")" "immediate" || return 1
+  assert "$(jq -r '.units[0].mitigation_due[0:10]' "$TMP/ru.json")" "2026-08-06" || return 1
+  # the KEV member is named, because it is why the whole unit is Track 1
+  assert "$(jq -r '.units[0].kev_findings | join(",")' "$TMP/ru.json")" "CVE-B"
+}
+
+# A finding the BOM cannot tie to a component must keep its own deadline rather than vanish.
+test_units_unplaceable_finding_is_reported_not_dropped() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[],vulnerabilities:[]}' > "$TMP/ru-bom.json"
+  jq -n '{findings:[{id:"CVE-X",track:"immediate",kev:false}]}' > "$TMP/ru-f.json"
+  python3 "$S/group-remediation.py" "$TMP/ru-f.json" "$TMP/ru-bom.json" --out "$TMP/ru.json" 2>/dev/null || return 1
+  assert "$(jq -r '.unplaced | length' "$TMP/ru.json")" "1" || return 1
+  assert "$(jq -r '.unplaced[0].id' "$TMP/ru.json")" "CVE-X"
+}
+
 test_maintenance_window_grid() {
   S="$S" python3 "$HERE/maintenance-window-logic.py"
 }

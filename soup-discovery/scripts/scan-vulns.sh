@@ -113,17 +113,63 @@ while IFS= read -r id; do
       summary: (.summary // ""),
       severity: $sev,
       db_severity: $dbsev,
-      severity_via: (if ($via == "" or ($sev | length) == 0) then null else $via end)}' "$f" >> "$TMP/vulns.jsonl"
+      severity_via: (if ($via == "" or ($sev | length) == 0) then null else $via end),
+      # Fix availability, per affected package. Without this a deadline can be set on a
+      # finding that has no fix to apply, which is not a deadline anyone can meet — the only
+      # routes there are a compensating control or a VEX statement, and they need to be
+      # distinguishable from "nobody has upgraded yet".
+      fixes: [ (.affected // [])[]
+               | { name: ((.package.name // "") | ascii_downcase),
+                   purl: ((.package.purl // "") | ascii_downcase),
+                   ecosystem: (.package.ecosystem // ""),
+                   fixed: [ (.ranges // [])[] | (.events // [])[] | .fixed // empty ],
+                   last_affected: [ (.ranges // [])[] | (.events // [])[] | .last_affected // empty ],
+                   # An advisory that lists a range but publishes no fixed event is stating
+                   # that no fix exists yet. That is a different fact from us not looking.
+                   has_range: (((.ranges // []) | length) > 0) } ]}' "$f" >> "$TMP/vulns.jsonl"
 done <<<"$IDS"
 
 jq -s -c '.' "$TMP/vulns.jsonl" > "$TMP/vulns.json"
 
 # affects[] per advisory, from the purl -> ref map
-awk -F'\t' '$3 != "" { n=split($3, ids, ","); for (i=1;i<=n;i++) print ids[i] "\t" $2 }' "$TMP/hits.tsv" \
-  | sort -u | jq -R -s -c 'split("\n") | map(select(length>0) | split("\t") | {id:.[0], ref:.[1]})' \
+awk -F'\t' '$3 != "" { n=split($3, ids, ","); for (i=1;i<=n;i++) print ids[i] "\t" $2 "\t" $1 }' "$TMP/hits.tsv" \
+  | sort -u | jq -R -s -c 'split("\n") | map(select(length>0) | split("\t") | {id:.[0], ref:.[1], purl:.[2]})' \
   > "$TMP/affects.json"
 
 jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
+  # A purl can name the same package in several shapes, and OSV is not consistent about which
+  # it publishes: golang uses the full module path, maven "group:artifact", rpm the bare name.
+  # Rather than guess one, generate the candidates and match on any of them.
+  def purl_keys($p):
+    ($p | ascii_downcase | sub("^pkg:";"") | split("?")[0] | split("@")[0]) as $body
+    | ($body | split("/")) as $seg
+    | [ $body,
+        ($seg[1:] | join("/")),
+        ($seg[1:] | join(":")),
+        ($seg[-1]) ]
+    | unique ;
+
+  def fix_for($adv; $purl):
+    (purl_keys($purl)) as $keys
+    | ($purl | ascii_downcase | split("?")[0] | split("@")[0]) as $mine
+    | ( [ $adv.fixes[]?
+          | . as $fx
+          | ($fx.purl | split("@")[0]) as $fp
+          | select( ($fp != "" and ($mine | startswith($fp)))
+                    or ($fx.name != "" and ($fx.name | IN($keys[]))) ) ] ) as $m
+    | if ($m | length) == 0 then
+        # Could not tie the advisory to this component. Reporting "no fix" here would be a
+        # claim we have not established.
+        {status:"unknown", fixed:[], why:"the advisory does not name this package in a shape that could be matched"}
+      elif ([$m[].fixed[]] | length) > 0 then
+        {status:"available", fixed:([$m[].fixed[]] | unique), why:null}
+      elif ([$m[] | select(.has_range)] | length) > 0 then
+        {status:"none-published", fixed:[],
+         why:"the advisory gives an affected range but publishes no fixed version — mitigation here is a compensating control or a VEX statement, not an upgrade"}
+      else
+        {status:"unknown", fixed:[], why:"the advisory carries no version ranges"}
+      end ;
+
   ($vulns[0]) as $v
   | ($affects[0]) as $a
   | .vulnerabilities = ( $v | map(
@@ -145,8 +191,26 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
                         + (if $adv.db_severity != null
                            then [{name:"quickbird:vuln:osv-severity", value:$adv.db_severity}] else [] end)
                         + (if $adv.severity_via != null
-                           then [{name:"quickbird:vuln:severity-source", value:$adv.severity_via}] else [] end) ),
-          affects: ( $a | map(select(.id == $adv.osv_id)) | map({ref: .ref}) ) }
+                           then [{name:"quickbird:vuln:severity-source", value:$adv.severity_via}] else [] end)
+                        + ( [ $a[] | select(.id == $adv.osv_id) | fix_for($adv; .purl) ] as $fx
+                            | ( if any($fx[]; .status == "available") then
+                                  [ {name:"quickbird:vuln:fix", value:"available"},
+                                    {name:"quickbird:vuln:fix-versions",
+                                     value: ([ $fx[] | select(.status=="available") | .fixed[] ] | unique | join(", "))} ]
+                                elif (($fx | length) > 0 and all($fx[]; .status == "none-published")) then
+                                  [ {name:"quickbird:vuln:fix", value:"none-published"},
+                                    {name:"quickbird:vuln:fix-note", value: ($fx[0].why // "")} ]
+                                else
+                                  [ {name:"quickbird:vuln:fix", value:"unknown"},
+                                    {name:"quickbird:vuln:fix-note",
+                                     value: (($fx[0].why) // "no affected package in the advisory matched this component")} ]
+                                end ) ) ),
+          affects: ( $a | map(select(.id == $adv.osv_id))
+                     | map( fix_for($adv; .purl) as $fx
+                            | { ref: .ref }
+                              + (if ($fx.fixed | length) > 0
+                                 then { versions: [ $fx.fixed[] | {version: ., status: "unaffected"} ] }
+                                 else {} end) ) ) }
     )
     # Deduplicate by id. Several databases describe the same CVE — golang.org/x/crypto
     # yielded both GHSA-v778-237x-gjrc and GO-2024-3321 for CVE-2024-45337, giving two

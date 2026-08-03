@@ -113,6 +113,15 @@ CLS_ARGS=("$ASSESSED" "$POLICY" --out "$FINDINGS")
 python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 classify   /' >&2 \
   || { echo "::error::classification failed" >&2; exit 1; }
 
+# --- 6. group by the action that resolves them (§3.5) ------------------------
+# A per-finding deadline treats a CVE as a unit of work. On kontina-backend the 521 findings
+# resolve through 2 actions, and neither is in code we write. Without this step the report
+# demands 311 mitigations in three weeks; with it, it names two images.
+UNITS="$OUT_DIR/$BASE.remediation-units.json"
+python3 "$HERE/group-remediation.py" "$FINDINGS" "$ASSESSED" --out "$UNITS" 2>&1 \
+  | sed 's/^/6\/6 group      /' >&2 \
+  || echo "::warning::could not group findings by remediation action — the per-finding deadlines still stand" >&2
+
 rm -f "$VULNS" "$OUT_DIR/$BASE.enriched.cdx.json"
 
 log ""

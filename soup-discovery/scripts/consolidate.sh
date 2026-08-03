@@ -70,10 +70,21 @@ jq -n \
           value: ("quickbird:artifact:" + (.metadata.component.name // "unknown")) }
       ) | from_entries ) as $remap
 
-  # union of every component, deduplicated by bom-ref
-  | ( [ $boms[] | .components[]? ]
+  # union of every component, deduplicated by bom-ref, each stamped with the artifact it
+  # came from.
+  #
+  # That stamp is what makes "which action fixes this finding" answerable. Without it, 492 of
+  # the 521 findings on kontina-backend are indistinguishable from 492 separate pieces of
+  # work, when one base-image bump resolves all of them. A component present in several
+  # artifacts keeps all of them, because bumping one image does not resolve the others.
+  | ( [ $boms[]
+        | ("quickbird:artifact:" + (.metadata.component.name // "unknown")) as $art
+        | .components[]? | . + {"quickbird:from": $art} ]
       | group_by(."bom-ref" // (.purl // (.name + "@" + (.version // ""))))
-      | map(.[0]) ) as $components
+      | map( .[0] + { properties: (( (.[0].properties // [])
+               + [ { name: "quickbird:component:artifact",
+                     value: (map(."quickbird:from") | unique | join(", ")) } ] )) }
+             | del(."quickbird:from") ) ) as $components
 
   | ( [ $boms[] | .dependencies[]? ]
       | map( .ref      |= ($remap[.] // .)

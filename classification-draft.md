@@ -236,6 +236,56 @@ Measured on 2026-08-03 with a 90-day commitment: Mindnet holds (next window 2026
 Osteocoach holds (2026-08-05), Alvie and Dermafy have three missed windows each, Apellis is
 unknown.
 
+### 3.5 What carries the deadline: the action, not the finding
+
+**Decided 2026-08-03.** A deadline is attached to the **action that resolves a finding**, not
+to the finding. Findings resolved by the same action form a *remediation unit*; the unit
+inherits the worst track among its members and the earliest of their deadlines.
+
+The reason is a measurement, not a preference. Under the per-finding model, kontina-backend
+required 23 mitigations within 72 hours and 288 more within 20 days. Grouped by what actually
+resolves them:
+
+| | |
+| --- | --- |
+| 521 findings | **2 actions** |
+| 422 of them | inside Oviva's ePA REST service image |
+| 99 of them | inside `linuxserver/wireguard:1.0.20210914` |
+| in code QuickBird writes | **none** |
+
+The per-finding deadlines were not unmeetable because of capacity. They were attached to
+something that is not a unit of work: nobody mitigates 492 RPM CVEs, someone bumps one image
+and they close together. This is the same error §3.4 removed from Track 3, and the same repair.
+
+**The four kinds of unit:**
+
+| Unit | When | The lever |
+| --- | --- | --- |
+| Third-party image | findings inside an image we deploy but do not build | a newer image from its vendor, a different image, or a documented compensating control |
+| Base-image bump | OS-package findings in an image we build | bump the image (§5.1) |
+| Dependency upgrade | a direct dependency in our own code | upgrade it — here the CVE is close to the unit of work |
+| No upgrade path | our own code, advisory publishes no fixed version | a compensating control or a VEX statement; an upgrade does not exist |
+
+The first row is load-bearing and was got wrong first time. Grouping a third-party image per
+package produced ten separate "upgrade `golang.org/x/crypto`" actions inside someone else's
+WireGuard image — none of which anyone here can perform. Inside an image we do not build there
+is exactly one lever, and pretending otherwise generates work items that cannot be closed.
+
+**What this does not do.** It does not soften a classification. Every finding keeps its track,
+both its clocks and its dates; the unit takes the *earliest* deadline among its members, so
+grouping can never move a deadline outward. A KEV finding in an OS package pulls its entire
+image bump to Track 1, which is correct — the image is what gets bumped either way, and the
+unit names the KEV member as the reason.
+
+What changes is that a missed deadline produces **one** decision instead of hundreds, and that
+the decision is about something a person can do.
+
+**Fix availability is part of this.** A deadline on a finding with no published fix is not a
+deadline anyone can meet, so `quickbird:vuln:fix` records `available` / `none-published` /
+`unknown` per finding, with the fixed versions in `affects[].versions`. Measured on
+kontina-backend: 514 of 521 have a published fix, 6 do not, 1 could not be determined. The
+earlier absence of this data was a gap in the tooling, not a property of the advisories.
+
 ---
 
 ## 4. Applicability — VEX rules
@@ -460,6 +510,7 @@ Decided 2026-08-03:
 | "Production release" | Per-project signal (`production_release.detect_by`); disagreement is reported | 3.4 |
 | Products without releases | `release_cadence: continuous`, measured against deploys with a gap ceiling | 3.4 |
 | Upstream staleness | 12 months without a release, tested separately from semver currency | 6 |
+| What carries a deadline | The remediation **action**, not the individual finding | 3.5 |
 | Track 3/4 deadline | The next **maintenance window** from a declared per-product interval | 3.4 |
 | Where the tier binds | Caps the maintenance commitment, not each finding's deadline | 3.4, 7 |
 | Onboarding | Windows before the onboarding date are history, not breaches | 3.4 |

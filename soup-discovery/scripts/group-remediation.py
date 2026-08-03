@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+"""Group findings by the action that resolves them (§3.5).
+
+A deadline on a CVE assumes the CVE is a unit of work. Usually it is not. Measured on
+kontina-backend, where the per-finding model demanded mitigation of 23 findings in 72 hours
+and 288 more in 20 days:
+
+    521 findings  ->  2 actions
+
+Both actions are "bump or replace a third-party image". 422 of the findings are inside
+Oviva's ePA REST service, 99 inside linuxserver/wireguard:1.0.20210914. **Not one of the 521
+is in code QuickBird writes.**
+
+That is why the per-finding deadlines could not be met, and it was never about capacity. The
+deadline was attached to the wrong thing. This is the same error §3.4 removed from Track 3,
+and the same repair applies: the deadline belongs to the action.
+
+A **remediation unit** is one action:
+
+    third-party image    every finding inside an image we deploy but do not build. There is
+                         exactly one lever — a newer image from its vendor, a different image,
+                         or a documented compensating control. Grouping these per package
+                         would produce actions nobody here can perform, which the first
+                         version of this script did: ten separate "upgrade <go module>" items
+                         inside someone else's WireGuard image.
+    base-image bump      OS-package findings in an image we do build. §5.1 already says a CVE
+                         in an OS package is remediated by bumping the image; this makes that
+                         operational.
+    dependency upgrade   one direct dependency in our own code. Here the CVE genuinely is
+                         close to the unit of work.
+    no upgrade path      findings in our own code whose advisory publishes no fixed version.
+                         Separate because an upgrade is not available: the routes are a
+                         compensating control or a VEX statement.
+
+The unit inherits the **worst track** of its members and the **earliest** deadline among them,
+so grouping can never move a deadline outward — only the number of decisions changes. A KEV
+finding in an OS package pulls its whole image bump to Track 1, which is correct: the image is
+what gets bumped either way.
+
+Nothing here softens a classification. Every finding keeps its track and its dates. What
+changes is that the deadline is attached to something a person can do, and that a missed
+deadline produces one decision instead of hundreds.
+
+Usage: group-remediation.py <classified-findings.json> <assessed-bom.cdx.json> [--out f]
+"""
+
+import argparse
+import json
+import re
+import sys
+from collections import defaultdict
+
+TRACK_ORDER = ["immediate", "expedited", "planned", "monitor"]
+
+# Package types that are OS packages, i.e. contents of a base image rather than something a
+# developer selected. Kept explicit rather than inferred from a `distro=` qualifier, because
+# a missing qualifier would silently reclassify a finding into its own unit.
+OS_PKG_TYPES = {"rpm", "deb", "apk"}
+
+
+def is_third_party_image(artifact):
+    """Is this an image we deploy but do not build?
+
+    discover.sh names those candidates `deployed-*` — they come from a registry reference in a
+    manifest rather than from a Dockerfile in our repo. The distinction decides what actions
+    exist at all: inside an image we do not build, "upgrade golang.org/x/crypto" is not
+    something anyone here can do. The only action is to bump or replace the image, or to ask
+    its vendor.
+
+    Getting this wrong is not cosmetic. On kontina-backend the first version of this grouping
+    produced ten separate "upgrade <module>" actions inside a third-party WireGuard image, none
+    of which QuickBird can perform.
+    """
+    return artifact.replace("quickbird:artifact:", "").startswith("deployed-")
+
+
+def props(obj):
+    return {p["name"]: p["value"] for p in obj.get("properties", []) or []}
+
+
+def purl_type(purl):
+    m = re.match(r"^pkg:([a-zA-Z0-9._-]+)/", purl or "")
+    return (m.group(1).lower() if m else "")
+
+
+def purl_name(purl):
+    """Readable package name: the last path segment before the version."""
+    body = (purl or "").split("?")[0].split("@")[0]
+    seg = [s for s in body.replace("pkg:", "", 1).split("/") if s]
+    return seg[-1] if len(seg) > 1 else (seg[0] if seg else "?")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("findings")
+    ap.add_argument("bom")
+    ap.add_argument("--out", default="-")
+    args = ap.parse_args()
+
+    doc = json.load(open(args.findings, encoding="utf-8"))
+    bom = json.load(open(args.bom, encoding="utf-8"))
+
+    # component ref -> what it is and where it came from
+    comp = {}
+    for c in bom.get("components", []) or []:
+        p = props(c)
+        comp[c.get("bom-ref")] = {
+            "purl": c.get("purl") or "",
+            "name": c.get("name") or "?",
+            "version": c.get("version") or "",
+            "artifact": p.get("quickbird:component:artifact", ""),
+        }
+
+    # finding id -> the refs it affects, and its published fix status
+    affects = defaultdict(list)
+    fix_status = {}
+    for v in bom.get("vulnerabilities", []) or []:
+        for a in v.get("affects", []) or []:
+            if a.get("ref"):
+                affects[v.get("id")].append(a["ref"])
+        fix_status[v.get("id")] = props(v).get("quickbird:vuln:fix", "unknown")
+
+    units = {}
+    unplaced = []
+    for f in doc.get("findings", []):
+        fid = f.get("id")
+        refs = affects.get(fid) or []
+        if not refs:
+            # A finding with no affected component cannot be assigned to an action. Reported
+            # rather than dropped: it still has a track and a deadline of its own.
+            unplaced.append({"id": fid, "track": f.get("track"),
+                             "why": "the BOM records no affected component for this finding"})
+            continue
+
+        for ref in refs:
+            c = comp.get(ref)
+            if not c:
+                unplaced.append({"id": fid, "track": f.get("track"),
+                                 "why": f"affected ref {ref} is not in the component list"})
+                continue
+
+            artifact = c["artifact"] or "unattributed"
+            ptype = purl_type(c["purl"])
+            fx = fix_status.get(fid, "unknown")
+
+            if is_third_party_image(artifact):
+                # One unit for the whole image, whatever the package type. We do not build it,
+                # so there is exactly one lever: a newer image, a different image, or a VEX.
+                key = ("third-party-image", artifact)
+                img = artifact.replace("quickbird:artifact:", "").replace("deployed-", "")
+                action = (f"bump or replace the third-party image {img} — we do not build it, "
+                          f"so nothing inside it can be upgraded here; the levers are a newer "
+                          f"image from its vendor, a different image, or a documented "
+                          f"compensating control")
+            elif fx == "none-published":
+                key = ("no-upgrade-path", artifact)
+                action = (f"no upgrade path in {artifact.replace('quickbird:artifact:', '')} — "
+                          f"the advisory publishes no fixed version, so this needs a "
+                          f"compensating control or a VEX statement, not a bump")
+            elif ptype in OS_PKG_TYPES:
+                key = ("base-image-bump", artifact)
+                action = (f"bump the base image of "
+                          f"{artifact.replace('quickbird:artifact:', '')}")
+            else:
+                key = ("dependency-upgrade", artifact, purl_name(c["purl"]))
+                action = (f"upgrade {purl_name(c['purl'])} in "
+                          f"{artifact.replace('quickbird:artifact:', '')}")
+
+            u = units.setdefault(key, {
+                "kind": key[0], "artifact": artifact, "action": action,
+                "findings": [], "components": set(), "fix_status": set(),
+                "no_fix": set(),
+            })
+            u["findings"].append(fid)
+            u["components"].add(f"{c['name']}@{c['version']}")
+            u["fix_status"].add(fx)
+            if fx == "none-published":
+                u["no_fix"].add(fid)
+
+    by_track = {f["id"]: f for f in doc.get("findings", [])}
+    out_units = []
+    for key, u in units.items():
+        members = sorted(set(u["findings"]))
+        tracks = [by_track[m].get("track") for m in members if m in by_track]
+        worst = min((TRACK_ORDER.index(t) for t in tracks if t in TRACK_ORDER),
+                    default=len(TRACK_ORDER) - 1)
+        worst_track = TRACK_ORDER[worst]
+        # The unit's deadline is the earliest deadline among its members, so grouping can
+        # never move a deadline outward — only the number of decisions changes.
+        def earliest(field):
+            vals = [by_track[m].get(field) for m in members
+                    if m in by_track and by_track[m].get(field)]
+            return min(vals) if vals else None
+
+        kev = [m for m in members
+               if m in by_track and by_track[m].get("kev") is True]
+        out_units.append({
+            "kind": u["kind"],
+            "artifact": u["artifact"],
+            "action": u["action"],
+            "track": worst_track,
+            "finding_count": len(members),
+            "findings": members,
+            "kev_findings": kev,
+            "component_count": len(u["components"]),
+            # Even a bump may not clear these: the advisory publishes no fixed version. Carried
+            # on the unit so it is visible without splitting the action in two.
+            "findings_without_published_fix": len(u["no_fix"]),
+            "mitigation_due": earliest("mitigation_due"),
+            "remediation_due": earliest("remediation_due"),
+            "fix_status": sorted(u["fix_status"]),
+        })
+
+    out_units.sort(key=lambda x: (TRACK_ORDER.index(x["track"]), -x["finding_count"]))
+
+    summary = {
+        "findings_total": len(doc.get("findings", [])),
+        "units_total": len(out_units),
+        "units_by_track": {},
+        "findings_by_track": {},
+    }
+    for u in out_units:
+        summary["units_by_track"][u["track"]] = summary["units_by_track"].get(u["track"], 0) + 1
+    for f in doc.get("findings", []):
+        t = f.get("track")
+        summary["findings_by_track"][t] = summary["findings_by_track"].get(t, 0) + 1
+
+    out = {
+        "schema": "quickbird.remediation-units/v1",
+        "summary": summary,
+        "units": out_units,
+        "unplaced": unplaced,
+    }
+    text = json.dumps(out, indent=2)
+    if args.out == "-":
+        print(text)
+    else:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+
+    print(f"remediation: {summary['findings_total']} finding(s) resolve through "
+          f"{summary['units_total']} action(s) — "
+          + ", ".join(f"{k} {v}" for k, v in sorted(summary["units_by_track"].items())),
+          file=sys.stderr)
+    if unplaced:
+        print(f"::warning::{len(unplaced)} finding(s) could not be tied to an action and keep "
+              f"their own deadline", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
