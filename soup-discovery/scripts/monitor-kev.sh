@@ -238,6 +238,7 @@ jq -n \
   --arg cadence "$(jq -r '.release_cadence // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg interval "$(jq -r '.maintenance_interval // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg onboarded "$(jq -r '.onboarded // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
+  --arg slaref "$(jq -r '.sla_reference // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg tier "$(jq -r '.tier // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --argjson prodrel "$(jq -c '.production_release // null' <<<"${POLICY_JSON:-{\}}" 2>/dev/null || echo null)" \
   --argjson classified "$CLASSIFIED" \
@@ -253,6 +254,9 @@ jq -n \
      # classifier lands every Track 3/4 finding on the next one.
      maintenance_interval: ($interval | select(. != "")),
      onboarded: ($onboarded | select(. != "")),
+     # The contract the tier, cra_scope and maintenance_interval above are copied from. Carried
+     # so the backstop can report a change to it, and so the evidence names its own authority.
+     sla_reference: ($slaref | select(. != "")),
      tier: ($tier | select(. != "")),
      # Which releases this product counts as production. Three signals answer that and they
      # disagree on most of the portfolio, so the backstop must not pick one on its own —

@@ -255,7 +255,7 @@ def main():
         # Both values move a real obligation: tier caps the maintenance commitment and sets the
         # backstop interval, cra_scope decides whether a KEV alert says a 24-hour reporting
         # clock is running. A change is not necessarily wrong; going unnoticed is.
-        for field in ("tier", "cra_scope"):
+        for field in ("tier", "cra_scope", "maintenance_interval", "sla_reference"):
             seen = []
             for at, rec, _ in rs:
                 val = rec.get(field)
@@ -270,8 +270,9 @@ def main():
                     "changes": [{"at": a.isoformat(), "to": str(v)} for a, v in seen],
                     "detail": (f"{field} changed during the window: "
                                + " -> ".join(f"{v} ({a.date().isoformat()})" for a, v in seen)
-                               + f". This is a QMS determination held in the product repo; "
-                                 f"confirm the change was reviewed and not made in passing."),
+                               + ". This value is agreed with the customer in the SLA and "
+                                 "copied into the product repo; confirm the change followed a "
+                                 "change to the contract and was reviewed."),
                 })
 
         # Gaps between consecutive runs. A daily monitor that silently stopped for three

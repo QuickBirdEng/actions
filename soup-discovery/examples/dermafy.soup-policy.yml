@@ -6,10 +6,10 @@
 # DRAFT. tier, cra_scope and production_release.detect_by need decisions.
 
 product: dermafy
+# tier, cra_scope and maintenance_interval below are all agreed with the customer in the SLA and
+# then written down here — they are not determined in this repo. One contract, one reference.
+sla_reference: ""        # e.g. "SLA <customer>, Anhang B, Stand 2026-06-01"
 tier: Basic
-# The tier is not set here — it follows from the customer SLA (GDG-004-01's Basic/Extended
-# vocabulary is the same one). Name the contract it comes from so the value can be traced.
-tier_source: ""          # e.g. "SLA <customer>, service level Basic" — fill in from the contract
 cra_scope: unknown
 
 # Measured from the clean-semver tags: v1.0.6 (2025-10-15) and v1.0.1 (2024-09-24) — about

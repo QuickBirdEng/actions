@@ -1171,16 +1171,33 @@ test_backstop_unreadable_releases_are_unknown_not_holding() {
   assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "unknown"
 }
 
-# The tier follows from the customer SLA, so the value in the policy file is a copy of a
-# contractual fact. A copy with no stated origin cannot be checked against what it copies.
-test_policy_warns_when_the_tier_has_no_stated_source() {
+# tier, cra_scope and maintenance_interval are all agreed with the customer in the SLA and copied
+# here. A copy with no stated origin cannot be checked against what it copies.
+test_policy_warns_when_sla_determinations_have_no_source() {
   printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/pw.txt" || return 1
-  grep -q "no tier_source is stated" "$TMP/pw.txt" || return 1
-  # ...and it is a warning, not a failure: a missing reference must not block a monitoring run
-  printf 'product: p\ntier: Basic\ntier_source: "SLA X, level Basic"\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
+  grep -q "no sla_reference is stated" "$TMP/pw.txt" || return 1
+  # a warning, not a failure: a missing reference must not block a monitoring run, because the
+  # run still produces the evidence that the product was looked at
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nsla_reference: "SLA X, Anhang B"\n' > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/pw2.txt" || return 1
-  ! grep -q "no tier_source is stated" "$TMP/pw2.txt"
+  ! grep -q "no sla_reference is stated" "$TMP/pw2.txt"
+}
+
+# A changed maintenance_interval moves every Track 3/4 deadline, so it belongs in the same drift
+# detection as tier and cra_scope.
+test_backstop_detects_a_changed_maintenance_commitment() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  for spec in 2026-07-01:60d 2026-08-01:90d; do
+    d="${spec%%:*}"
+    jq -n --arg d "${d}T06:00:00+00:00" --arg i "${spec##*:}" \
+      '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",run_at:$d,
+        tier:"Basic",cra_scope:"false",maintenance_interval:$i,synthetic:false,
+        scanned:[{name:"x",version:"1"}],not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-$d.json"
+  done
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
+    --now 2026-08-03T06:00:00+00:00 --out "$TMP/bd.json" >/dev/null 2>&1
+  assert "$(jq -r '[.determination_drift[].field] | join(",")' "$TMP/bd.json")" "maintenance_interval"
 }
 
 test_policy_rejects_a_non_duration_maintenance_interval() {

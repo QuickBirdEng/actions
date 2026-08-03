@@ -628,19 +628,36 @@ Not open questions — things that must be re-examined on a trigger rather than 
    `approval.{date,by,condition}`; the approval workflow additionally writes `by_url`; DEV-190 assumes
    `is_temporary`. The tooling tolerates all three shapes, but the schema should be pinned down before
    the PDF and the approval annotation are treated as controlled output.
-2. **Tier assignment per product** — clarified 2026-08-03: **the tier follows from the customer's
-   SLA**, not from a rule applied here. The Basic/Extended vocabulary in §7 comes from the same
-   place (`GDG-004-01`), so assigning a tier is a lookup against the contract rather than a
-   determination. What remains is the mapping itself, product by product, and one consequence
-   worth stating: the value in `.soup-policy.yml` is a *copy* of a contractual fact. The file
-   therefore carries `tier_source` naming the contract it is taken from — validate-policy.sh
-   warns when it is missing, and the backstop reports a tier that changes between runs. Neither
-   prevents drift from the contract; both make it visible.
+2. **Three values come from the SLA, not from this process** — clarified 2026-08-03:
 
-   Note that the SLA is used twice, for two different things, and they should not be confused:
-   it sets **how intensively a product is maintained** (the tier, §7), and separately its TTR
-   table governs **first-party defect response** in service hours (§3). Vulnerability tracks are
-   calendar time and are a different obligation.
+   | Value | What it governs |
+   | --- | --- |
+   | `tier` | how intensively the product is maintained (§7) |
+   | `cra_scope` | whether the CRA's 24-hour reporting obligation applies (§7) |
+   | `maintenance_interval` | the commitment every Track 3/4 deadline hangs on (§3.4) |
+
+   All three are **agreed with the customer in the SLA and then written into the project
+   config**. None of them is determined here, and none should be reasoned out from a rule — I
+   started to invent one for the tier before this was clarified. The Basic/Extended vocabulary in
+   §7 comes from the same place (`GDG-004-01`).
+
+   The consequence is that `.soup-policy.yml` holds *copies* of contractual facts, so the file
+   carries one `sla_reference` naming the contract and its version — one contract, one reference;
+   repeating it per value would only create three things that can disagree.
+   `validate-policy.sh` warns when it is missing (a warning, not an error: a missing reference
+   must not stop a run from producing evidence), and the backstop reports any of the four values
+   changing between runs. Neither prevents the copy drifting from the contract. Both make it
+   visible, which is the most the tooling can do when the authority lives in a document it cannot
+   read.
+
+   What remains is the lookup itself, per product. Until it is done, `cra_scope` stays `unknown`
+   — which is deliberate: the expensive mistake is not an unnecessary report, it is a missing one
+   because someone assumed the product was exempt.
+
+   Note that the SLA is used for two different kinds of thing, and they should not be confused:
+   the three values above, and separately its TTR table, which governs **first-party defect
+   response** in service hours (§3). Vulnerability tracks are calendar time and a different
+   obligation.
 3. **The maintenance interval per product is not agreed yet.** 90 days is set as the starting
    value for all products (60 for the Extended-tier on-prem example, which its tier requires).
    Each project needs to confirm or tighten it, because it is a commitment rather than a

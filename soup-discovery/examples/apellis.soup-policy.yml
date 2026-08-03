@@ -7,10 +7,10 @@
 # to read here rather than any of the field values.
 
 product: apellis
+# tier, cra_scope and maintenance_interval below are all agreed with the customer in the SLA and
+# then written down here — they are not determined in this repo. One contract, one reference.
+sla_reference: ""        # e.g. "SLA <customer>, Anhang B, Stand 2026-06-01"
 tier: Basic
-# The tier is not set here — it follows from the customer SLA (GDG-004-01's Basic/Extended
-# vocabulary is the same one). Name the contract it comes from so the value can be traced.
-tier_source: ""          # e.g. "SLA <customer>, service level Basic" — fill in from the contract
 cra_scope: unknown
 
 # THE TAG-KEYED MODEL DOES NOT APPLY TO THIS PRODUCT.
