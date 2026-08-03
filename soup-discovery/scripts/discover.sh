@@ -245,6 +245,55 @@ done <<<"$(grep -E '(^|/)Dockerfile[^/]*$' <<<"$FILES" || true)"
 # ---------------------------------------------------------------------------
 # Helm / k8s image references — images we deploy but do not build
 # ---------------------------------------------------------------------------
+
+# A Helm template never carries the image version; the chart's values.yaml does. So for a
+# manifest under <chart>/templates/ the concrete image *is* knowable from the repo — just
+# not from the line the reference appears on. Resolving it is what separates the two very
+# different cases that both look templated:
+#
+#   redis:7-alpine, epa4all-rest-service:v1.2.4, wireguard:1.0.20210914
+#       third-party images pinned in values.yaml. Nothing else in the repo covers them,
+#       so reporting them as unresolvable forces a scope file to exclude them, and the
+#       images whose CVEs nobody else is watching are the ones that fall out of scope.
+#
+#   qbsdocker/<product>-rest:<appVersion>
+#       our own image at the release version. Genuinely not knowable here (DEV-196), but
+#       naming the repository is what lets a scope rule say which build candidate covers it.
+resolve_helm_ref() {
+  local img="$1" file="$2" chart values expr key val out rest
+  case "$file" in */templates/*) ;; *) printf '%s' "$img"; return ;; esac
+  chart="${file%%/templates/*}"
+  values="$chart/values.yaml"
+  [[ -f "$chart/Chart.yaml" && -f "$values" ]] || { printf '%s' "$img"; return; }
+
+  out=""; rest="$img"
+  while [[ "$rest" == *'{{'* ]]; do
+    out+="${rest%%\{\{*}"
+    rest="${rest#*\{\{}"
+    expr="${rest%%\}\}*}"
+    rest="${rest#*\}\}}"
+    # The first .Values reference in the expression is the one that supplies the value;
+    # anything after it is a `| default` fallback. `.*\.Values\.` would be greedy and pick
+    # the LAST one — which resolved every image to the chart's default `version: 1.0.0`
+    # via `| default .Values.version`, silently replacing epa4all's real v1.2.4.
+    key=$(grep -oE '\.Values\.[A-Za-z0-9_.]+' <<<"$expr" | head -1 | sed -E 's/^\.Values\.//; s/\.$//')
+    if [[ -z "$key" ]]; then out+="@unresolved"; continue; fi
+    val=$(yq -r ".${key}" "$values" 2>/dev/null)
+    if [[ -z "$val" || "$val" == "null" ]]; then
+      # An empty `tag:` that falls back to the chart appVersion or --set version is our
+      # own image at the release version. Distinguish it from a value we simply cannot find.
+      if [[ "$expr" == *AppVersion* || "$expr" == *".Values.version"* ]]; then
+        out+="@appVersion"
+      else
+        out+="@unresolved"
+      fi
+    else
+      out+="$val"
+    fi
+  done
+  printf '%s' "$out$rest"
+}
+
 while IFS= read -r ref; do
   [[ -z "$ref" ]] && continue
   # Normalise the leading ./ that grep -r emits. Without this, markers from this block
@@ -252,8 +301,19 @@ while IFS= read -r ref; do
   # silently fail to match — the exact class of silent failure this pipeline exists to
   # prevent. Caught by the scope gate on the first real repo.
   file=$(cut -d: -f1 <<<"$ref" | sed 's|^\./||')
-  img=$(sed -E 's/.*image:[[:space:]]*["'\'']?([^"'\''[:space:]]+).*/\1/' <<<"$ref")
+
+  # A templated reference contains spaces inside {{ }}, so taking the first whitespace-
+  # delimited token truncates it to "{{" — which is why every chart image collapsed onto
+  # a filename-derived id. Take the whole quoted value when it is quoted.
+  img=$(sed -E 's/.*image:[[:space:]]*//' <<<"$ref")
+  case "$img" in
+    \"*) img="${img#\"}"; img="${img%%\"*}" ;;
+    \'*) img="${img#\'}"; img="${img%%\'*}" ;;
+    *)   img="${img%%[[:space:]]*}"; img="${img%%#*}" ;;
+  esac
   [[ -z "$img" ]] && continue
+
+  [[ "$img" == *'{{'* ]] && img=$(resolve_helm_ref "$img" "$file")
 
   # `image:` is not a container-only key. Flutter's flutter_native_splash.yaml, theme
   # files and countless other configs use it for asset paths — mindnet yielded
@@ -266,7 +326,13 @@ while IFS= read -r ref; do
   # problem, so record it as unresolvable rather than dropping it or pretending it scans.
   resolvable=true
   note="referenced in a deployment manifest — built elsewhere, so its contents are out of our control but in our CVE scope"
-  if [[ "$img" == *'{{'* || "$img" == *'<'*'>'* || "$img" == *'${'* || "$img" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+  if [[ "$img" == *'@appVersion'* ]]; then
+    # The repository resolved, only the tag comes from the release. Naming the repository
+    # is the difference between a scope rule that can say what covers this and one that
+    # can only say "some templated thing in this file".
+    resolvable=false
+    note="OUR OWN IMAGE, RELEASE-VERSIONED — repository resolved from the chart values as ${img%%:*}, but the tag is the chart appVersion / --set version, so the concrete version comes from the deploy record (DEV-196). Its contents are covered by the Dockerfile candidate that builds it."
+  elif [[ "$img" == *'@unresolved'* || "$img" == *'{{'* || "$img" == *'<'*'>'* || "$img" == *'${'* || "$img" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
     resolvable=false
     note="TEMPLATED REFERENCE — the concrete version is substituted at deploy time and is not knowable from the repo. Its components cannot be enumerated here; resolving it needs the deploy record (DEV-196)."
   fi
@@ -278,7 +344,31 @@ while IFS= read -r ref; do
 
   # id from the image's last path segment, so it is readable:
   # nvcr.io/nvidia/k8s-device-plugin:v0.17.1 -> deployed-k8s-device-plugin-v0.17.1
-  slug=$(sed -E 's|.*/||; s|[:@]|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|^-||; s|-$||' <<<"$img")
+  # @appVersion / @unresolved are our own markers, not part of the reference — spell them
+  # out in the id so the candidate reads as what it is.
+  slug_src=$(sed -E 's|@appVersion|appversion|g; s|@unresolved|templated|g' <<<"$img")
+
+  # A ref that is still templated has no version to name it by, and slugging the raw
+  # Jinja gives ids like `superset.postgres.image_name-superset.postgres.image_tag`. Name
+  # it after whatever *is* concrete: the literal prefix if the repository is spelled out
+  # (`qbsdocker/dermafy-rest:{{ image.TAG }}`), otherwise the variable path that stands in
+  # for it, minus its uninformative leaf.
+  if [[ "$slug_src" == *'{{'* ]]; then
+    literal="${slug_src%%\{\{*}"
+    literal="${literal%:}"
+    if [[ -n "${literal//[:\/ ]/}" ]]; then
+      slug_src="$literal-templated"
+    else
+      var=$(grep -oE '\{\{[^}]*\}\}' <<<"$slug_src" | head -1 \
+            | sed -E 's/[{}]//g; s/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]*\|.*//' \
+            | sed -E 's/\.(image_name|image_tag|repository|image|name|tag)$//')
+      slug_src="${var:-unknown}-templated"
+    fi
+    # A version like 1.37 needs its dot, a variable path does not.
+    slug_src="${slug_src//./-}"
+  fi
+
+  slug=$(sed -E 's|.*/||; s|[:@]|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|^-||; s|-$||' <<<"$slug_src")
   # A fully templated ref ({{ .Values.image }}) strips to nothing. Falling back to the
   # manifest filename keeps the candidate addressable by a scope rule instead of
   # collapsing every such ref onto one unusable id.

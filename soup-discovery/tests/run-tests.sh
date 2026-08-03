@@ -241,6 +241,71 @@ test_discover_flags_templated_image_as_unresolvable() {
   assert "$(jq -r '[.candidates[]|select(.resolvable==false)]|length' "$TMP/cand.json")" "1"
 }
 
+mkchart() {
+  mkrepo
+  mkdir -p "$TMP/repo/deployment/charts/c/templates"
+  printf 'apiVersion: v2\nname: c\nappVersion: 0.1.0\n' > "$TMP/repo/deployment/charts/c/Chart.yaml"
+  cat > "$TMP/repo/deployment/charts/c/values.yaml" <<'YML'
+version: 1.0.0
+epa:
+  image:
+    repository: ghcr.io/oviva-ag/epa4all-rest-service
+    tag: "v1.2.4"
+rest:
+  image:
+    repository: qbsdocker/app-rest
+    tag: ""
+YML
+}
+
+# A third-party image pinned in values.yaml is knowable from the repo. Reporting it as
+# unresolvable pushes it out of scope, and these are the images nobody else is watching.
+test_discover_resolves_helm_values_for_third_party_image() {
+  mkchart
+  printf 'spec:\n  containers:\n  - image: "{{ .Values.epa.image.repository }}:{{ .Values.epa.image.tag }}"\n' \
+    > "$TMP/repo/deployment/charts/c/templates/epa.yaml"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].id' "$TMP/cand.json")" \
+         "deployed-epa4all-rest-service-v1.2.4" || return 1
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].resolvable' "$TMP/cand.json")" "true"
+}
+
+# `| default .Values.version` made a greedy match pick the chart's default 1.0.0 for every
+# image in the chart, silently replacing the real pinned tag with a plausible wrong one.
+test_discover_helm_prefers_first_values_ref_over_default_chain() {
+  mkchart
+  printf 'spec:\n  containers:\n  - image: "{{ .Values.epa.image.repository }}:{{ .Values.epa.image.tag | default .Values.version | default .Chart.AppVersion }}"\n' \
+    > "$TMP/repo/deployment/charts/c/templates/epa.yaml"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].id' "$TMP/cand.json")" \
+         "deployed-epa4all-rest-service-v1.2.4"
+}
+
+# An empty tag falling back to the release version is our own image: still unresolvable,
+# but the repository is known, which is what lets a scope rule say what covers it.
+test_discover_helm_names_repository_when_tag_is_release_versioned() {
+  mkchart
+  printf 'spec:\n  containers:\n  - image: "{{ .Values.rest.image.repository }}:{{ .Values.rest.image.tag | default .Values.version }}"\n' \
+    > "$TMP/repo/deployment/charts/c/templates/rest.yaml"
+  discover
+  c=$(jq -r '[.candidates[]|select(.ecosystem=="container")][0]' "$TMP/cand.json")
+  assert "$(jq -r .id <<<"$c")" "deployed-app-rest-appversion" || return 1
+  assert "$(jq -r .resolvable <<<"$c")" "false" || return 1
+  # the note must name the repository, otherwise the candidate is no more useful than before
+  jq -re '.note | test("qbsdocker/app-rest")' <<<"$c" >/dev/null
+}
+
+# Outside a chart there is nothing to resolve against, and the ref must stay unresolvable
+# rather than silently picking up values from an unrelated chart.
+test_discover_does_not_resolve_outside_a_chart() {
+  mkchart
+  mkdir -p "$TMP/repo/k8s"
+  printf 'spec:\n  containers:\n  - image: "{{ .Values.epa.image.repository }}:{{ .Values.epa.image.tag }}"\n' \
+    > "$TMP/repo/k8s/epa.yaml"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].resolvable' "$TMP/cand.json")" "false"
+}
+
 # ---------------------------------------------------------------- consolidate
 test_consolidate_loses_no_component() {
   for i in 1 2; do
