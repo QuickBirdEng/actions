@@ -608,6 +608,22 @@ Not open questions — things that must be re-examined on a trigger rather than 
 
 ### Still genuinely open
 
+0. **Where the configuration lives — decided 2026-08-03.** All three files stay in the product
+   repo: `.soup-scope.yml`, `.soup-policy.yml`, `.soup-decisions.yml`. Scope has to be there,
+   because it describes the repo and must change in the same PR that adds a Dockerfile. The two
+   QMS determinations in the policy file — `tier` and `cra_scope` — are protected by CODEOWNERS
+   rather than by a central registry.
+
+   What that leaves, stated rather than hidden: `validate-policy.sh` can check that these values
+   are *valid*, not that they are the ones QM determined, because it has no second source to
+   compare against. The review is the control, and CODEOWNERS is decoration unless branch
+   protection requires code-owner review — that has to be checked per repo. As a compensating
+   detection, the backstop now reports when `tier` or `cra_scope` changed between runs
+   (`determination_drift`): a change is not necessarily wrong, but going unnoticed is.
+
+   The monitored-product list has no per-repo home by construction — a product that was never
+   scanned cannot report itself — so it lives in the scheduled workflow that runs the backstop.
+
 1. **The approval field schema is inconsistent.** Records in `qb-soups` carry
    `approval.{date,by,condition}`; the approval workflow additionally writes `by_url`; DEV-190 assumes
    `is_temporary`. The tooling tolerates all three shapes, but the schema should be pinned down before

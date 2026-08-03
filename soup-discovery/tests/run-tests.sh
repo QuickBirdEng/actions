@@ -1033,6 +1033,39 @@ test_vendor_escalation_is_per_action_not_per_finding() {
   assert "$(jq -r '.escalations[0].escalating_findings | length' "$TMP/ve.json")" "2"
 }
 
+# The 2026-08-03 decision keeps tier and cra_scope in the product repo behind CODEOWNERS. That
+# is a review control, and it is only as strong as the branch protection behind it — so a change
+# to either must also be detectable from the evidence store afterwards.
+test_backstop_detects_a_changed_determination() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  for spec in 2026-07-01:Extended:true 2026-08-01:Basic:false; do
+    d="${spec%%:*}"; r="${spec#*:}"
+    jq -n --arg d "${d}T06:00:00+00:00" --arg t "${r%%:*}" --arg c "${r##*:}" \
+      '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",run_at:$d,
+        tier:$t,cra_scope:$c,synthetic:false,scanned:[{name:"x",version:"1"}],
+        not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-$d.json"
+  done
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
+    --now 2026-08-03T06:00:00+00:00 --out "$TMP/bd.json" >/dev/null 2>&1
+  assert "$(jq -r '[.determination_drift[].field] | sort | join(",")' "$TMP/bd.json")" "cra_scope,tier" || return 1
+  # drift alone must make the verdict action-required
+  assert "$(jq -r '.verdict' "$TMP/bd.json")" "action-required"
+}
+
+# A product whose determinations never change must stay silent, or the check becomes noise.
+test_backstop_stable_determinations_are_silent() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  for d in 2026-07-01 2026-08-01; do
+    jq -n --arg d "${d}T06:00:00+00:00" \
+      '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",run_at:$d,
+        tier:"Basic",cra_scope:"false",synthetic:false,scanned:[{name:"x",version:"1"}],
+        not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-$d.json"
+  done
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
+    --now 2026-08-03T06:00:00+00:00 --out "$TMP/bd.json" >/dev/null 2>&1
+  assert "$(jq -r '.determination_drift | length' "$TMP/bd.json")" "0"
+}
+
 test_maintenance_window_grid() {
   S="$S" python3 "$HERE/maintenance-window-logic.py"
 }

@@ -235,6 +235,7 @@ def main():
     products = sorted(set(list(runs.keys()) + expected))
 
     coverage, open_breaches, expired, cadence = [], [], [], []
+    drift = []
 
     for product in products:
         rs = sorted(runs.get(product, []), key=lambda r: r[0])
@@ -246,6 +247,32 @@ def main():
 
         last_at, last, _ = rs[-1]
         days_since = (now - last_at).days
+
+        # --- QMS determinations that changed under us ----------------------------
+        # Decided 2026-08-03: tier and cra_scope stay in the product repo, protected by
+        # CODEOWNERS. That is a review control, and a review control is only as good as the
+        # branch protection behind it — so the evidence store gets a detection to go with it.
+        # Both values move a real obligation: tier caps the maintenance commitment and sets the
+        # backstop interval, cra_scope decides whether a KEV alert says a 24-hour reporting
+        # clock is running. A change is not necessarily wrong; going unnoticed is.
+        for field in ("tier", "cra_scope"):
+            seen = []
+            for at, rec, _ in rs:
+                val = rec.get(field)
+                if val is None or val == "":
+                    continue
+                if not seen or seen[-1][1] != val:
+                    seen.append((at, val))
+            if len(seen) > 1:
+                drift.append({
+                    "product": product,
+                    "field": field,
+                    "changes": [{"at": a.isoformat(), "to": str(v)} for a, v in seen],
+                    "detail": (f"{field} changed during the window: "
+                               + " -> ".join(f"{v} ({a.date().isoformat()})" for a, v in seen)
+                               + f". This is a QMS determination held in the product repo; "
+                                 f"confirm the change was reviewed and not made in passing."),
+                })
 
         # Gaps between consecutive runs. A daily monitor that silently stopped for three
         # weeks looks exactly like three weeks of all-clear.
@@ -382,17 +409,19 @@ def main():
             "cadence_broken": sum(1 for c in cadence if c["status"] == "broken"),
             "cadence_lagging": sum(1 for c in cadence if c["status"] == "lagging"),
             "cadence_unknown": sum(1 for c in cadence if c["status"] in ("unknown", "not-declared")),
+            "determination_drift": len(drift),
         },
         "coverage": coverage,
         "undecided_breaches": open_breaches,
         "expired_decisions": expired,
         "cadence": cadence,
+        "determination_drift": drift,
     }
 
     # The report is only worth anything if a bad result is visible without reading JSON.
     problems = (doc["summary"]["never_scanned"] + doc["summary"]["stale"]
                 + doc["summary"]["with_gaps"] + len(open_breaches) + len(expired)
-                + doc["summary"]["cadence_broken"])
+                + doc["summary"]["cadence_broken"] + len(drift))
     doc["verdict"] = "clean" if problems == 0 else "action-required"
 
     text = json.dumps(doc, indent=2)
