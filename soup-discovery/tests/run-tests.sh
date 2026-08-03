@@ -1210,12 +1210,11 @@ test_net_backstop_cadence_counts_production_releases_only() {
   rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
   mkrun_cadence alvie 2026-08-02 QuickBirdEng/alvie monthly
   python3 "$S/backstop-report.py" "$TMP/ev" --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
-  # The basis must name which signal was used, because on this repo the three disagree.
-  jq -re '.cadence[0].counted | test("production releases \\(by tag_pattern\\)")' "$TMP/bs.json" >/dev/null || return 1
+  # The basis must name the source, and the source is the deployment record.
+  jq -re '.cadence[0].counted | test("production deployments from a tag")' "$TMP/bs.json" >/dev/null || return 1
+  # alvie last deployed v1.0.7 to production on 2026-04-21, so a 90-day commitment is missed.
   assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "broken" || return 1
-  # alvie is the live case where the signals disagree — the report must say so rather than
-  # presenting one of the three answers as the measurement.
-  jq -re '.cadence[0].signal_disagreement.latest_by_signal | length == 3' "$TMP/bs.json" >/dev/null
+  jq -re '.cadence[0].last_release | startswith("2026-04-21")' "$TMP/bs.json" >/dev/null
 }
 
 # ---------------------------------------------------------------- network

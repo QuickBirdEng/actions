@@ -70,21 +70,18 @@ breach:
 # breach about a release rather than one per finding (on Kontina: 1 instead of 196).
 maintenance_interval: 90d
 
-# §3.4 — which releases count as production.
+# §5.2 — which tags are QA builds.
 #
-# Track 3 remediation is "next release", so the cadence a deadline is derived from has to be
-# the cadence at which things actually reach users. Three signals in a GitHub repo claim to
-# answer that, and across this portfolio they disagree — on alvie they name releases 315 days
-# apart. Whichever one a product actually maintains is a fact about that product, so it is
-# configured here rather than guessed, and the backstop reports a disagreement instead of
-# silently resolving it.
+# NOT "what counts as a production release" — that is not a property of a tag. Read from the
+# pipeline: a tag push triggers the *staging* workflow (both `v1.0.15` and `v1.0.15-qa4`), and
+# production is a manual `workflow_dispatch` of a separate workflow behind a named allow-list. So
+# what reached production is answered by the GitHub deployment record, not by a tag shape, and the
+# backstop reads it from there.
 #
-#   tag_pattern       the tag shape. A deploy runs from a tag, so where the convention is
-#                     kept this is the operational truth. The default.
-#   prerelease_flag   GitHub's prerelease checkbox. Reliable only if it is maintained.
-#   production_asset  a release asset whose name contains "production" — mobile builds.
+# This pattern is used for one narrower thing: deciding whether a build produces a release-tier
+# document or a staging-tier one (§5.2). A tag matching it is a candidate for production; a
+# `-qaN` tag never is.
 production_release:
-  detect_by: tag_pattern
   tag_pattern: '^v?[0-9]+\.[0-9]+\.[0-9]+$'
 
 # §6 — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
@@ -102,10 +99,11 @@ dependency_currency:
 # §7 — tier drives the backstop cadence and caps the maintenance commitment.
 #
 # The tier is NOT decided here or in the project policy: it follows from the customer's SLA,
-# which is also where the Basic/Extended vocabulary comes from (GDG-004-01). The project file
-# therefore states `tier` together with `tier_source` — the contract or service level it is
-# copied from — so the value can be traced instead of standing on its own. validate-policy.sh
-# warns when the source is missing, and the backstop reports a tier that changes between runs.
+# which is also where the Basic/Extended vocabulary comes from (GDG-004-01). Deliberately without
+# a companion reference field — a pointer to a contract version held in YAML goes stale the first
+# time the SLA is amended and then asserts a provenance that no longer holds. The controls are the
+# CODEOWNERS review on the project file and the backstop reporting a tier that changes between
+# runs.
 tiers:
   Basic:
     backstop: annual

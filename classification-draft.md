@@ -245,13 +245,25 @@ Four consequences that have to be handled rather than assumed away:
 - **A project without a declared interval has no Track 3/4 deadline.** It surfaces as a
   configuration gap in the monitoring run, not as an absent deadline that looks like
   compliance. Same principle as the scope gate: unclassified fails loudly.
-- **"Which releases count as production" is itself a per-project declaration.** A GitHub repo
-  offers three signals — the tag shape, the `prerelease` flag, and a `-production` release
-  asset — and across this portfolio they disagree by up to 315 days on the same repo. The grid
-  origin depends on the answer, so each project declares it
-  (`production_release.detect_by`) and the backstop reports a disagreement between the three
-  rather than silently picking one. The same signal decides whether a build produces a release
-  or a staging document (§5.2), so a project cannot redefine one without redefining the other.
+- **What reached production is read from the pipeline, not inferred from a tag.** In these repos a
+  tag push triggers the *staging* workflow — both `v1.0.15` and `v1.0.15-qa4` match its filter —
+  and production is a manual `workflow_dispatch` of a separate workflow behind a named allow-list.
+  So a tag never means production, and the grid origin is the **GitHub deployment record with a
+  production environment**, which is the same source that answers what is running (DEV-196).
+
+  Three tag- and release-based signals were tried before this and all three were wrong. On Alvie
+  they gave 2025-10-01 (tag shape), 2026-05-04 (`prerelease` flag) and 2025-06-23 (release asset);
+  the production deployment record says `v1.0.7` went live on **2026-04-21**, six months after
+  that tag was published. A release date is not a deploy date, and no amount of choosing between
+  proxies would have produced the right answer.
+
+  Two filters are load-bearing. A production deployment whose ref is not a tag is not an
+  application release — Mindnet's newest such record is a branch ref from a content-migration
+  workflow, and counting it would date the grid from a database migration. And a repo with no
+  production environment reports `unknown`, not `broken`: Osteocoach deploys to `Study` and
+  Kontina has no deployment records at all, which means this check cannot see them, not that they
+  never maintain themselves.
+
 - **A product may have no releases at all.** Apellis deploys every merge by git SHA and has
   neither tags nor releases. It declares an interval like anyone else; what
   `release_cadence: continuous` changes is *where the evidence of a maintenance event lives* —

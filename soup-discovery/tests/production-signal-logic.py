@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Offline checks of production-release detection (§3.4).
+"""Offline checks of "what reached production" (§3.4).
 
-Grounded in real portfolio data. alvie's three signals name releases 315 days apart, and
-whichever one the tooling picks becomes the basis for every Track 3/4 deadline — so the
-cases below are the actual release rows, not invented ones.
+Read from the pipeline rather than guessed: a tag push triggers the *staging* workflow — both
+`v1.0.15` and `v1.0.15-qa4` — and production is a manual `workflow_dispatch` of a separate
+workflow behind a named allow-list. So a tag never means production, and the authoritative record
+is the GitHub deployment with a production environment.
+
+Three signals were tried before this and all three were wrong. On alvie they said 2025-10-01
+(tag pattern), 2026-05-04 (prerelease flag) and 2025-06-23 (release asset). The production
+deployment record says v1.0.7 went live on 2026-04-21 — six months after that tag was published,
+because a release date is not a deploy date.
 """
 import importlib.util, json, os, subprocess, sys
 
@@ -17,98 +23,85 @@ def eq(label, got, want):
     if got != want:
         bad.append(f"{label}: expected {want}, got {got}")
 
-# alvie, as GitHub actually reports it.
-ALVIE = [
-    {"at": "2026-07-31T00:00:00Z", "tag": "v1.0.8-qa36", "pre": True,  "asset": False},
-    {"at": "2026-05-04T00:00:00Z", "tag": "v1.0.8-qa30", "pre": False, "asset": False},
-    {"at": "2025-10-01T00:00:00Z", "tag": "v1.0.7",      "pre": False, "asset": False},
-    {"at": "2025-06-23T00:00:00Z", "tag": "v1.0.4",      "pre": False, "asset": True},
-]
-P = bs.DEFAULT_TAG_PATTERN
-
-eq("tag pattern skips -qa builds",
-   bs._signal_dates(ALVIE, "tag_pattern", P)[0], "2025-10-01T00:00:00Z")
-# The flag is unmaintained here: a -qa30 build is marked as a full release.
-eq("prerelease flag picks the qa build",
-   bs._signal_dates(ALVIE, "prerelease_flag", P)[0], "2026-05-04T00:00:00Z")
-eq("asset signal picks the last mobile production build",
-   bs._signal_dates(ALVIE, "production_asset", P)[0], "2025-06-23T00:00:00Z")
-# Any of the three could be the honest answer; none can be derived from the repo. The
-# spread is the point — a silent pick would move a deadline by ten months.
-eq("three signals, three answers",
-   len({bs._signal_dates(ALVIE, s, P)[0] for s in bs.SIGNALS}), 3)
-
-def with_rows(rows, policy=None):
+def with_api(responses):
+    """Stub `gh api` by matching a substring of the endpoint."""
     real = subprocess.run
-    def fake(*a, **k):
-        return subprocess.CompletedProcess(
-            a[0], 0, "\n".join(json.dumps(r) for r in rows), "")
+    def fake(argv, **k):
+        endpoint = argv[2] if len(argv) > 2 else ""
+        for needle, rows in responses.items():
+            if needle in endpoint:
+                if rows is None:
+                    raise subprocess.CalledProcessError(1, argv)
+                return subprocess.CompletedProcess(
+                    argv, 0, "\n".join(json.dumps(r) for r in rows), "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
     subprocess.run = fake
     try:
-        return bs.release_dates("QuickBirdEng/x", policy=policy)
+        return bs.production_deploys("QuickBirdEng/x")
     finally:
         subprocess.run = real
 
-dates, basis, dis = with_rows(ALVIE)
-eq("default signal is the tag pattern", dates[0], "2025-10-01T00:00:00Z")
-eq("basis names the signal used", "tag_pattern" in basis, True)
-eq("disagreement reported", dis is not None, True)
-eq("disagreement names all three", len(dis["latest_by_signal"]), 3)
+ENVS = [{"name": "Development"}, {"name": "Staging"}, {"name": "Production"}]
 
-# Configuring the maintained signal changes the measurement — that is the whole point of
-# making it configurable rather than clever.
-dates, basis, dis = with_rows(ALVIE, {"production_release": {"detect_by": "prerelease_flag"}})
-eq("configured signal wins", dates[0], "2026-05-04T00:00:00Z")
-eq("still reports the disagreement", dis is not None, True)
+# The straightforward case: production deploys exist and the newest came from a tag.
+dates, basis, envs = with_api({
+    "/environments": ENVS,
+    "environment=Production": [
+        {"at": "2026-04-21T10:00:00Z", "env": "Production", "ref": "v1.0.7"},
+        {"at": "2025-06-23T10:00:00Z", "env": "Production", "ref": "v1.0.4"},
+    ],
+})
+eq("newest production deploy", dates[0], "2026-04-21T10:00:00Z")
+eq("basis names the source", "production deployments from a tag" in basis, True)
 
-# mindnet: all three agree, so there is nothing to report and the run stays quiet.
-MINDNET = [
-    {"at": "2026-07-21T00:00:00Z", "tag": "v1.0.15", "pre": False, "asset": True},
-    {"at": "2026-07-01T00:00:00Z", "tag": "v1.0.15-qa4", "pre": True, "asset": False},
-]
-dates, basis, dis = with_rows(MINDNET)
-eq("agreement is silent", dis, None)
-eq("agreed date", dates[0], "2026-07-21T00:00:00Z")
+# mindnet's newest production record is a branch ref from a content-migration workflow. Counting
+# it would date the maintenance grid from a database migration.
+dates, basis, envs = with_api({
+    "/environments": ENVS,
+    "environment=Production": [
+        {"at": "2026-07-29T10:00:00Z", "env": "Production", "ref": "temp-disable-cms-transfer"},
+        {"at": "2026-07-27T10:00:00Z", "env": "Production", "ref": "v1.0.15"},
+    ],
+})
+eq("non-tag production refs are skipped", dates[0], "2026-07-27T10:00:00Z")
+eq("and the count of skipped ones is stated", "1 non-tag" in basis, True)
 
-# kontina-backend has no clean semver tag at all. Falling back to counting every release is
-# survivable; claiming it never released is not — but the fallback must say what it did.
-KONTINA = [{"at": "2025-06-17T00:00:00Z", "tag": "v1.9.0-qa10", "pre": False, "asset": False}]
-dates, basis, dis = with_rows(KONTINA)
-eq("falls back rather than reporting no releases", dates[0], "2025-06-17T00:00:00Z")
-eq("fallback is stated in the basis", "may overstate" in basis, True)
-eq("fallback still flags the disagreement", dis is not None, True)
+# A production environment with nothing but branch refs must not read as "never deployed".
+dates, basis, envs = with_api({
+    "/environments": ENVS,
+    "environment=Production": [
+        {"at": "2026-07-29T10:00:00Z", "env": "Production", "ref": "main"},
+    ],
+})
+eq("no tagged production deploy", dates, [])
+eq("and the reason names the ref", "'main'" in basis, True)
 
-# --- continuous deployment ---------------------------------------------------------
-# apellis has no tags and no releases; a cycle cannot be measured, and declaring one would
-# invent a Track 3 deadline out of releases that never happen.
-def with_deploys(rows):
-    real = subprocess.run
-    def fake(*a, **k):
-        return subprocess.CompletedProcess(
-            a[0], 0, "\n".join(json.dumps(r) for r in rows), "")
-    subprocess.run = fake
-    try:
-        return bs.deployment_dates("QuickBirdEng/x")
-    finally:
-        subprocess.run = real
+# osteocoach defines no Production environment — it deploys to `Study`. That is a product this
+# check cannot see, not a product that never maintains itself.
+dates, basis, envs = with_api({
+    "/environments": [{"name": "Development"}, {"name": "Staging"}, {"name": "Study"}],
+})
+eq("no production environment", dates, [])
+eq("the environments it does define are named", "Study" in basis, True)
 
-# apellis as it actually is: 100 deploys, every one of them to a development environment.
-dev_only = [{"at": "2026-08-01T00:00:00Z", "env": "development", "ref": "abc"},
-            {"at": "2026-07-30T00:00:00Z", "env": "appway-connector-development", "ref": "def"}]
-dates, basis, prod = with_deploys(dev_only)
-eq("dev-only deploys are counted", len(dates), 2)
-eq("but not claimed as production", prod, False)
-eq("basis says nothing reached users", "reaching users" in basis, True)
+# Unreadable records are not the same as an absence of records, and must not read as one.
+dates, basis, envs = with_api({"/environments": None, "/deployments": None})
+eq("unreadable stays unknown", dates, None)
 
-mixed = [{"at": "2026-08-01T00:00:00Z", "env": "development", "ref": "abc"},
-         {"at": "2026-07-20T00:00:00Z", "env": "production", "ref": "def"}]
-dates, basis, prod = with_deploys(mixed)
-eq("production deploys win when present", dates, ["2026-07-20T00:00:00Z"])
-eq("and are named as such", prod, True)
+# Regression: `--jq .environments[].name` emits bare strings, which are not JSON per line. The
+# parser returned None, the code fell into its fallback path, and products with hundreds of
+# production deploys were reported as having none. The env list must survive the round trip.
+dates, basis, envs = with_api({
+    "/environments": ENVS,
+    "environment=Production": [{"at": "2026-04-21T10:00:00Z", "env": "Production", "ref": "v1.0.7"}],
+})
+eq("environment names parsed", envs, ["Development", "Production", "Staging"])
 
-dates, basis, prod = with_deploys([])
-eq("no deployments is not an error", dates, [])
-eq("no deployments is not production", prod, False)
+# Tag-shaped refs that actually occur in these repos.
+for ref, want in [("v1.0.15", True), ("v1.0.8-qa30", True), ("1.0.7", True),
+                  ("v1.0.2.0.1", True), ("main", False), ("temp-disable-x", False),
+                  ("release/v1", False)]:
+    eq(f"tag ref {ref!r}", bool(bs.TAG_REF_RX.match(ref)), want)
 
 for b in bad:
     print("  " + b)

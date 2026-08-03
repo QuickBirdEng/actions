@@ -44,125 +44,89 @@ def load(path):
 
 
 
-# Apellis has zero tags and zero releases: it deploys every merge by git SHA via
-# `helm --set`. Under the maintenance-window model it still declares an interval like anyone
-# else — what `continuous` changes is *where the evidence of a maintenance event lives*: the
-# deploy history rather than the release list.
-CONTINUOUS = "continuous"
+# What counts as a production release is not a property of a tag. Read from the pipeline: a tag
+# push triggers the *staging* workflow (both plain and -qaN forms), and production is a manual
+# `workflow_dispatch` of a separate workflow, gated by a named allow-list. So the authoritative
+# record is the GitHub deployment with environment=Production — the same source resolve-deployed.sh
+# already uses to answer "what is running".
+#
+# The three signals this replaces were all proxies and all wrong. Measured on alvie: the tag
+# pattern said 2025-10-01, the prerelease flag 2026-05-04, the asset name 2025-06-23 — and the
+# production deployment record says v1.0.7 was deployed on 2026-04-21, six months after that tag
+# was published. A release date is not a deploy date.
+PRODUCTION_ENV_RX = re.compile(r"prod", re.I)
+# A deployment whose ref is not a tag is not an application release. mindnet's newest Production
+# record is a branch ref from a content-migration workflow; counting it would date the maintenance
+# grid from a database migration. Same rule as resolve-deployed.sh.
+TAG_REF_RX = re.compile(r"^v?[0-9]+(\.[0-9]+)*([.-][A-Za-z0-9.+-]+)?$")
 
 
-def deployment_dates(repo):
-    """Production deployment timestamps, newest first. None if they cannot be read."""
+def _gh_json(args, timeout=60):
     try:
-        r = subprocess.run(
-            ["gh", "api", f"repos/{repo}/deployments?per_page=100",
-             "--jq", '.[] | {at: .created_at, env: .environment, ref: .ref}'],
-            capture_output=True, text=True, timeout=60, check=True)
-        rows = [json.loads(l) for l in (r.stdout or "").splitlines() if l.strip()]
+        r = subprocess.run(["gh", "api"] + args, capture_output=True, text=True,
+                           timeout=timeout, check=True)
+        return [json.loads(l) for l in (r.stdout or "").splitlines() if l.strip()]
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
             FileNotFoundError, json.JSONDecodeError):
-        return None, None
-    if not rows:
-        return [], "no deployment records", False
-    prod = [x["at"] for x in rows
-            if x.get("at") and "prod" in str(x.get("env", "")).lower()]
-    if prod:
-        return prod, "production deployments", True
-    # Counting development deploys and calling the cadence healthy would be the same mistake
-    # as counting QA releases as production ones — measured on apellis, every recorded
-    # environment is a development one, so a "holds" here would assert that something reaches
-    # users when nothing in GitHub says so.
-    envs = sorted({str(x.get("env") or "?") for x in rows})
-    return ([x["at"] for x in rows if x.get("at")],
-            f"all deployments — none of the recorded environments ({', '.join(envs[:5])}) "
-            f"names production, so nothing here shows the product reaching users",
-            False)
+        return None
 
 
-DEFAULT_TAG_PATTERN = r"^v?[0-9]+\.[0-9]+\.[0-9]+$"
+def production_deploys(repo):
+    """Production deployment timestamps with a tag ref, newest first.
 
-# The three ways a repo can say "this release went to production", in the order the default
-# policy trusts them. Which one is right is a per-product fact, not something the tooling
-# can derive — measured across the portfolio they disagree by up to 315 days on the same
-# repo, and cadence is what a Track 3/4 remediation deadline is derived from.
-SIGNALS = ("tag_pattern", "prerelease_flag", "production_asset")
+    Returns (dates, basis, environments_seen). `dates` is None only if the records could not be
+    read — which is not the same as a product that never deployed and must not read as one.
 
-
-def _signal_dates(rows, signal, tag_pattern):
-    if signal == "tag_pattern":
-        rx = re.compile(tag_pattern)
-        return [x["at"] for x in rows if x.get("at") and rx.match(x.get("tag") or "")]
-    if signal == "prerelease_flag":
-        return [x["at"] for x in rows if x.get("at") and not x.get("pre")]
-    return [x["at"] for x in rows if x.get("at") and x.get("asset")]
-
-
-def release_dates(repo, production_only=True, policy=None):
-    """Published dates of a repo's production releases, newest first.
-
-    Returns (dates, basis, disagreement). A Track 3/4 deadline is a *remediation* deadline
-    and remediation is only satisfied on deploy, so the cadence that can carry such a
-    deadline is the cadence at which things actually reach users — which makes "did this
-    release go to production" a load-bearing question rather than a cosmetic one.
-
-    Three signals answer it, and on this portfolio they do not agree:
-
-        alvie   tag pattern    v1.0.7       2025-10-01
-                prerelease     v1.0.8-qa30  2026-05-04
-                asset name     v1.0.4       2025-06-23     <- 315 days apart
-
-    Any single one of them is a guess that reads as a measurement. So the signal is
-    configurable per product, and a disagreement between them is *reported* rather than
-    resolved: it means at least one is unmaintained, and until someone says which, the
-    measured cadence is not trustworthy.
+    Filtered server-side by environment. Paginating the whole deployment history does not work at
+    this scale: mindnet has ~25,000 records across its environments and the unfiltered walk timed
+    out, reporting a product with 1059 production deploys as unknown. Filtered, the same answer
+    takes under a second.
     """
-    policy = policy or {}
-    cfg = policy.get("production_release") or {}
-    signal = cfg.get("detect_by") or SIGNALS[0]
-    tag_pattern = cfg.get("tag_pattern") or DEFAULT_TAG_PATTERN
-    try:
-        r = subprocess.run(
-            ["gh", "api", f"repos/{repo}/releases?per_page=100",
-             "--jq", '.[] | {at: .published_at, tag: .tag_name, pre: .prerelease, '
-                     'asset: ([.assets[].name] | any(test("production";"i")))}'],
-            capture_output=True, text=True, timeout=60, check=True)
-        rows = [json.loads(l) for l in (r.stdout or "").splitlines() if l.strip()]
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-            FileNotFoundError, json.JSONDecodeError, re.error):
-        return None, None, None
-    if not rows:
-        return [], "no releases", None
+    # `--jq .environments[].name` emits bare strings, which are not JSON per line — the parser
+    # returned None and the whole thing fell into the fallback path, silently reporting products
+    # with hundreds of production deploys as having none. Ask for objects.
+    envs_doc = _gh_json([f"repos/{repo}/environments", "--jq",
+                         '.environments[] | {name: .name}'])
+    if envs_doc is None:
+        # Fall back to one unfiltered page rather than giving up: better a partial answer that
+        # says so than none.
+        rows = _gh_json([f"repos/{repo}/deployments?per_page=100", "--jq",
+                         '.[] | {at: .created_at, env: .environment, ref: .ref}'])
+        if rows is None:
+            return None, None, []
+        envs = sorted({str(x.get("env") or "?") for x in rows})
+        prod_rows = [x for x in rows if PRODUCTION_ENV_RX.search(str(x.get("env") or ""))]
+        suffix = " (environment list unavailable; read from the newest 100 records only)"
+    else:
+        envs = sorted(str(e.get("name")) for e in envs_doc if e.get("name"))
+        prod_envs = [e for e in envs if PRODUCTION_ENV_RX.search(e)]
+        if not prod_envs:
+            return ([], f"no production environment among the ones this repo defines "
+                        f"({', '.join(envs[:6]) or 'none'})", envs)
+        prod_rows = []
+        for e in prod_envs:
+            got = _gh_json([f"repos/{repo}/deployments?environment={e}&per_page=100", "--jq",
+                            '.[] | {at: .created_at, env: .environment, ref: .ref}'])
+            if got:
+                prod_rows.extend(got)
+        suffix = ""
 
-    if not production_only:
-        return [x["at"] for x in rows if x.get("at")], "all releases", None
+    if not prod_rows:
+        return ([], f"no deployment records at all{suffix}"
+                    if not envs else f"no production deployment records{suffix}", envs)
 
-    per_signal = {s: _signal_dates(rows, s, tag_pattern) for s in SIGNALS}
-
-    # Disagreement is about which release is the most recent production one, because that is
-    # what the staleness check acts on. Two signals that pick the same latest release agree
-    # for this purpose even if they differ further back in history.
-    latest = {s: (d[0] if d else None) for s, d in per_signal.items()}
-    disagreement = None
-    if len({v for v in latest.values() if v}) > 1 or (
-            latest[signal] is None and any(latest.values())):
-        disagreement = {
-            "configured_signal": signal,
-            "latest_by_signal": {s: (latest[s] or "none") for s in SIGNALS},
-            "why_it_matters":
-                "the three ways this repo can mark a production release name different "
-                "releases, so at least one of them is not maintained. Cadence — and the "
-                "Track 3/4 remediation deadline derived from it — is measured from whichever "
-                f"one is configured (currently {signal}). Set production_release.detect_by "
-                "in .soup-policy.yml to the signal this product actually maintains.",
-        }
-
-    dates = per_signal[signal]
-    if dates:
-        return dates, f"production releases (by {signal})", disagreement
-    return ([x["at"] for x in rows if x.get("at")],
-            f"all releases — no release matches the configured {signal} signal, so this "
-            "counts every release and may overstate how often the product reaches users",
-            disagreement)
+    prod_rows.sort(key=lambda x: str(x.get("at") or ""), reverse=True)
+    tagged = [x["at"] for x in prod_rows
+              if x.get("at") and TAG_REF_RX.match(str(x.get("ref") or ""))]
+    if not tagged:
+        return ([], f"{len(prod_rows)} production deployment(s), none from a tag — the newest ref "
+                    f"is {prod_rows[0].get('ref')!r}, which is not an application release{suffix}",
+                envs)
+    dropped = len(prod_rows) - len(tagged)
+    basis = f"production deployments from a tag{suffix}"
+    if dropped:
+        basis += f" ({dropped} non-tag production record(s) ignored — not application releases)"
+    return tagged, basis, envs
 
 
 def parse_interval_days(s, default=90):
@@ -320,40 +284,32 @@ def main():
                             "detail": "the run record carries no repo, so releases cannot be read"})
         else:
             iv = parse_interval_days(interval)
-            # A product that deploys every merge has no releases to measure windows against —
-            # apellis has neither tags nor releases. Its maintenance events are deploys, so
-            # `release_cadence: continuous` survives the move to maintenance intervals as a
-            # statement about *where the evidence lives*, not as a deadline of its own.
-            if str(last.get("release_cadence") or "").lower() == CONTINUOUS:
-                dates, basis, prod_found = deployment_dates(repo)
-                disagreement = None
-                if dates and not prod_found:
-                    cadence.append({
-                        "product": product, "declared": interval, "status": "unknown",
-                        "detail": f"deploys continuously and {len(dates)} deployment(s) are "
-                                  f"recorded, but none is to a production environment — so "
-                                  f"nothing here shows a maintenance release reaching users, "
-                                  f"which is what a Track 3/4 window depends on",
-                        "counted": basis, "signal_disagreement": None})
-                    continue
-            else:
-                dates, basis, disagreement = release_dates(
-                    repo, policy=(last.get("policy") or {}))
+            dates, basis, envs = production_deploys(repo)
             if dates is None:
                 cadence.append({"product": product, "declared": interval, "status": "unknown",
-                                "detail": f"could not read releases for {repo} — not knowing "
-                                          f"whether the maintenance windows were met is not the "
-                                          f"same as them having been met"})
+                                "detail": f"could not read the deployment records for {repo} — "
+                                          f"not knowing whether the maintenance windows were met "
+                                          f"is not the same as them having been met",
+                                "environments": envs})
             elif not dates:
-                cadence.append({"product": product, "declared": interval, "status": "broken",
-                                "detail": f"commits to maintenance every {interval} but {repo} has "
-                                          f"no production releases at all, so no window has ever "
-                                          f"been met",
-                                "counted": basis, "signal_disagreement": disagreement})
+                # Deliberately `unknown`, not `broken`. A repo with no production environment is
+                # not a product that never maintains itself — it is a product this check cannot
+                # see, and saying otherwise would put a wrong finding in front of someone.
+                # Measured: osteocoach deploys to `Study`, kontina-backend has no deployment
+                # records at all.
+                cadence.append({"product": product, "declared": interval, "status": "unknown",
+                                "detail": f"commits to maintenance every {interval}, but the "
+                                          f"deployment records do not show a production release: "
+                                          f"{basis}. Either this product deploys under a different "
+                                          f"environment name, or its production deploys are not "
+                                          f"recorded as GitHub deployments — both are worth fixing, "
+                                          f"because this is the same record that answers what is "
+                                          f"running.",
+                                "counted": basis, "environments": envs})
             else:
                 newest = parse_ts(dates[0])
                 origin = newest
-                origin_basis = "last production release"
+                origin_basis = "last production deployment from a tag"
                 if onboarded and newest and onboarded > newest:
                     origin = onboarded
                     origin_basis = ("onboarding date — windows that elapsed before monitoring "
@@ -370,8 +326,8 @@ def main():
                 else:
                     status, detail = "holds", (
                         f"commits to maintenance every {interval}: next window "
-                        f"{nxt.date().isoformat()} in {(nxt - now).days}d, last release "
-                        f"{since}d ago")
+                        f"{nxt.date().isoformat()} in {(nxt - now).days}d, last "
+                        f"production deploy {since}d ago")
                 cadence.append({"product": product, "declared": interval, "status": status,
                                 "detail": detail, "last_release": dates[0],
                                 "days_since_last_release": since,
@@ -380,7 +336,7 @@ def main():
                                 "grid_origin": origin.isoformat(),
                                 "grid_origin_basis": origin_basis,
                                 "counted": basis,
-                                "signal_disagreement": disagreement})
+                                "environments": envs})
 
         esc = (last.get("escalation") or {})
         for e in esc.get("escalations", []) or []:
