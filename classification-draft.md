@@ -654,14 +654,47 @@ The backstop exists because automation fails silently. It reconciles the evidenc
 released versions and confirms that every product was actually scanned, that every open finding has a
 current disposition, and that time-limited risk acceptances have not quietly expired.
 
-**Regulatory scope note.** Products regulated as medical devices under MDR/IVDR are currently outside
-the CRA's product requirements (CRA Art. 2). This does **not** make the CRA irrelevant here:
-body-worn wearables are in scope; companion apps, cloud services and update infrastructure that are
-not themselves MDR devices are in scope; and the Commission proposed in December 2025 to remove the
-medical-device exemption. From **11 September 2026**, in-scope products must report *actively
-exploited* vulnerabilities within **24 hours** — which is why KEV membership is Track 1 unconditionally
-and why the scan target is the deployed version. Per-product CRA scope is determined once and recorded
-in the project configuration.
+**Regulatory scope note.** Products regulated as medical devices under MDR/IVDR are excluded from
+the CRA by **CRA Art. 2(2)**. That is current law and it is not what makes the CRA irrelevant here.
+
+Two things follow. First, plenty of what a medtech software house builds is **not** itself an
+MDR/IVDR device and is therefore in CRA scope on its own: body-worn wearables that are not devices,
+companion apps, cloud services and update infrastructure. Which of our products that applies to is
+the `cra_scope` determination, and it is a determination per system boundary rather than per
+product name.
+
+Second, the dates. From **11 September 2026** the CRA reporting obligations apply, on this schedule:
+
+| Deadline | What |
+| --- | --- |
+| 24 hours | early warning, from becoming aware of an actively exploited vulnerability or severe incident |
+| 72 hours | complete notification, with corrective or mitigating measures |
+| 14 days | final report once resolved |
+
+Notifications go to ENISA and the relevant national CSIRT. Full application of the remaining
+provisions follows on **11 December 2027**. This is why KEV membership is Track 1 unconditionally
+and why the scan target is the deployed version: a reporting obligation is measured against what is
+running, not against `main`.
+
+**Corrected 2026-08-04, and the correction matters.** An earlier version of this section said the
+Commission had proposed in December 2025 to *remove* the medical-device exemption. That is wrong,
+and wrong in a way that would have led us to the opposite conclusion. What the Commission proposed
+on **16 December 2025**, in the MDR/IVDR simplification package, is to leave the exemption in place
+and instead:
+
+- **incorporate cybersecurity explicitly into the general safety and performance requirements** of
+  Annex I to the MDR and IVDR, and
+- **oblige manufacturers to report actively exploited vulnerabilities and severe incidents "as
+  referred to in the Cyber Resilience Act"** to national CSIRTs and to ENISA.
+
+So the reporting duty would reach MDR devices **through the MDR itself**, not by losing the CRA
+exemption. The practical consequence for this process: **`cra_scope: false` must not be read as "no
+reporting obligation".** It means "not obliged *under the CRA*", and for an MDR device the same duty
+may arrive by the other route. The alert wording says exactly that rather than reassuring.
+
+Status as of May 2026: the proposal is still pending formal adoption, so this is a watch item and
+not yet law. It should be re-checked before this document is released, and again when the package is
+adopted — the trigger is in the standing review items.
 
 ---
 
@@ -717,8 +750,13 @@ Not open questions — things that must be re-examined on a trigger rather than 
    of data.
 2. **Declared release cadences** must be compared against actual release history at each backstop.
    A cadence that no longer matches reality turns every Track 3 deadline into fiction (§3.4).
-3. **Base images must stay digest-pinned.** §5.1 makes bumping the image the remediation route for an
-   OS-package CVE; a floating tag makes that unverifiable.
+3. **Base images must stay pinned enough to be verifiable.** §5.1 makes bumping the image the
+   remediation route for an OS-package CVE. A version tag is sufficient for that; a floating tag is
+   not, and the four that exist are named in §5.1.
+4. **The MDR/IVDR cybersecurity proposal of 2025-12-16 must be re-checked** before this document is
+   released and again when the package is adopted. It would put actively-exploited-vulnerability
+   reporting into MDR/IVDR Annex I, which changes what `cra_scope: false` means for a device
+   (§7). Status as of May 2026: pending formal adoption.
 
 ### Still genuinely open
 
@@ -784,7 +822,10 @@ Not open questions — things that must be re-examined on a trigger rather than 
    its CVEs into scope while leaving it floating keeps them out. Currently affects 5 of 8
    Apellis `FROM` lines and three `curl:latest` health-check cronjobs. The incentive needs
    inverting: an unpinned in-scope image should be a finding, not an exclusion.
-6. **The regulatory claim in §7 needs an owner's confirmation.** "The Commission proposed in
-   December 2025 to remove the medical-device exemption" is the kind of statement an auditor
-   will test, and it should be verified by whoever holds regulatory accountability before this
-   becomes a controlled document.
+6. **§7 has been corrected and still wants a regulatory owner's sign-off.** The earlier claim
+   ("the Commission proposed to remove the medical-device exemption") was wrong: the 2025-12-16
+   proposal leaves CRA Art. 2(2) intact and instead moves the reporting duty into MDR/IVDR
+   Annex I. The section now states that, with the CRA dates verified (24 h / 72 h / 14 d from
+   2026-09-11, full application 2027-12-11). A regulatory owner should still confirm it, because
+   the conclusion it drives — what `cra_scope: false` does and does not mean — is one nobody
+   should take from tooling documentation.

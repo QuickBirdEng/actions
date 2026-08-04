@@ -984,6 +984,22 @@ test_monitor_alerts_release_required_without_any_kev_finding() {
 
 # An all-clear run with nothing outstanding must stay silent, or the alert becomes noise and
 # the dated record stops being read.
+# `cra_scope: false` must not tell someone at 3am that nothing is reportable. CRA Art. 2(2) exempts
+# MDR/IVDR devices, but MDR Art. 87 vigilance applies on its own terms and the 2025-12-16 MDR/IVDR
+# proposal would add the same actively-exploited-vulnerability reporting through MDR Annex I.
+test_monitor_out_of_cra_scope_does_not_claim_nothing_is_reportable() {
+  jq -n '{schema:"quickbird.kev-monitor-run/v1",verdict:"kev-findings",
+          kev_findings:[{cve:"CVE-2021-44228",target:"t",version:"1",components:["log4j"]}],
+          kev_membership_unknown:[],not_scanned:[],scanned:[{name:"x",version:"1"}]}' \
+    > "$TMP/cra-rec.json"
+  PRODUCT=p CRA_SCOPE=false bash "$S/compose-alert.sh" \
+    "$TMP/cra-rec.json" "$TMP/cra-alert.txt" "" "" >/dev/null 2>&1 || return 1
+  grep -q "the same as nothing being reportable" "$TMP/cra-alert.txt" || return 1
+  grep -q "Art. 87" "$TMP/cra-alert.txt" || return 1
+  # and it must still say to act
+  grep -q "act immediately" "$TMP/cra-alert.txt"
+}
+
 test_monitor_stays_silent_when_there_is_nothing_to_say() {
   mkalert all-clear
   PRODUCT=p CRA_SCOPE=unknown bash "$S/compose-alert.sh" \

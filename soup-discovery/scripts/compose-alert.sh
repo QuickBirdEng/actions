@@ -44,7 +44,12 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
     if [[ "$CRA_SCOPE" == "true" ]]; then
       echo ":warning: This product is in CRA scope. An actively exploited vulnerability is reportable *within 24 hours*."
     elif [[ "$CRA_SCOPE" == "false" ]]; then
-      echo "_Not in CRA scope — no 24-hour reporting obligation. Still Track 1 under the classification: act immediately._"
+      # Deliberately not "no reporting obligation". CRA Art. 2(2) exempts MDR/IVDR devices, but
+      # the Commission proposal of 2025-12-16 would put the same actively-exploited-vulnerability
+      # reporting duty into MDR/IVDR Annex I instead — reaching the device through the MDR rather
+      # than through the CRA. Telling someone at 3am that nothing is reportable would be the one
+      # wrong answer with a legal consequence.
+      echo "_Not in CRA scope, so no CRA reporting deadline. That is *not* the same as nothing being reportable: MDR Art. 87 vigilance applies on its own terms, and the MDR/IVDR proposal of 2025-12-16 would add the same actively-exploited-vulnerability reporting via MDR Annex I. Check the product's reporting obligations rather than assuming there are none. Still Track 1: act immediately._"
     else
       echo ":question: *CRA scope for this product is not recorded.* Determine it before assuming the 24-hour clock does not apply."
     fi
