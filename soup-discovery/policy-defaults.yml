@@ -70,6 +70,20 @@ breach:
 # breach about a release rather than one per finding (on Kontina: 1 instead of 196).
 maintenance_interval: 90d
 
+# §3.6 — the onboarding baseline.
+#
+# Deliberately without defaults. Both dates are per-product facts, and a default here would hand a
+# product a baseline nobody agreed to. Absent `baseline_clocks_start`, every pre-existing finding
+# runs from its first scan — correct for a product already under monitoring, and on the first day
+# of a product with a backlog it means the whole backlog is due at once.
+#
+#   onboarded              the date monitoring began for this product
+#   baseline_clocks_start  the date the pre-existing backlog becomes due
+#
+# KEV is never baselined: active exploitation is not something a plan can defer. Measured on
+# kontina-backend, 0 of its 23 Critical findings were in KEV, so the exemption keeps the case that
+# matters sharp without holding up the other 520.
+
 # §5.2 — which tags are QA builds.
 #
 # NOT "what counts as a production release" — that is not a property of a tag. Read from the

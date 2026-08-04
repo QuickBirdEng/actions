@@ -43,6 +43,12 @@ maintenance_interval: 90d
 # Set when this product was first monitored. Windows that elapsed before that date are
 # recorded as history, not as breaches — nobody could have acted on them.
 onboarded: ""            # fill in on the first monitored run
+# §3.6 — the onboarding baseline. Findings already present when monitoring started run their
+# clocks from `baseline_clocks_start` instead of from the first scan, because nobody could have
+# acted on them earlier. KEV is always exempt. Leaving baseline_clocks_start empty means there is
+# no baseline: the whole existing backlog becomes due at once, which on kontina-backend was 23
+# Critical findings inside two weeks.
+baseline_clocks_start: ""   # the date the pre-existing backlog becomes due; agree it with the plan
 
 alerts:
   slack_channel: ""

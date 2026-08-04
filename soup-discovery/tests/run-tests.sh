@@ -549,6 +549,68 @@ test_classify_kev_and_critical_have_different_clocks() {
 
 # A Medium has no mitigation clock any more. It stood at 30d across 196 findings on one
 # product and meant "write a document"; Track 3 rides the maintenance window instead.
+# ---------------------------------------------------------------- onboarding baseline
+# Starting every clock at first discovery is right for a monitored product and wrong on the day
+# monitoring begins: the accumulated backlog is all dated the same day. On kontina-backend that
+# was 23 Critical findings due in 14 days, none of which anyone could have acted on before there
+# was a scan.
+mkbase() {  # <onboarded> <baseline_start|""> <kev>
+  mkpolicy
+  jq --arg o "$1" --arg b "$2" \
+    'if $o != "" then . + {onboarded:$o} else . end
+     | if $b != "" then . + {baseline_clocks_start:$b} else . end' \
+    "$TMP/cp.json" > "$TMP/cpb.json"
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" "$3" null
+  CLS "$TMP/cv.json" "$TMP/cpb.json" --out "$TMP/cb.json" --now 2026-01-01T00:00:00+00:00 \
+    >/dev/null 2>&1
+}
+
+test_baseline_moves_preexisting_clocks_to_the_agreed_date() {
+  mkbase 2026-01-01 2026-02-01 false || return 1
+  assert "$(jq -r '.findings[0].clock_start[0:10]' "$TMP/cb.json")" "2026-02-01" || return 1
+  # Critical mitigation is 14d, so from the baseline date rather than from discovery
+  assert "$(jq -r '.findings[0].mitigation_due[0:10]' "$TMP/cb.json")" "2026-02-15" || return 1
+  # recorded, not waived: the finding keeps its track and says why its clock moved
+  assert "$(jq -r '.findings[0].track' "$TMP/cb.json")" "immediate" || return 1
+  jq -re '.findings[0].baseline.why | test("Recorded, not waived")' "$TMP/cb.json" >/dev/null
+}
+
+# Active exploitation is not something a plan can defer.
+test_baseline_never_applies_to_kev() {
+  mkbase 2026-01-01 2026-02-01 true || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/cb.json")" "kev" || return 1
+  assert "$(jq -r '.findings[0].clock_start[0:10]' "$TMP/cb.json")" "2026-01-01" || return 1
+  assert "$(jq -r '.findings[0].baseline // "none"' "$TMP/cb.json")" "none"
+}
+
+# A missing baseline date must not become a silent amnesty for a whole backlog.
+test_baseline_absent_means_no_baseline() {
+  mkbase 2026-01-01 "" false || return 1
+  assert "$(jq -r '.findings[0].clock_start[0:10]' "$TMP/cb.json")" "2026-01-01" || return 1
+  assert "$(jq -r '.findings[0].baseline // "none"' "$TMP/cb.json")" "none"
+}
+
+# ...and it says so, because the consequence is a whole backlog due at once.
+test_baseline_warns_when_onboarded_without_a_start_date() {
+  mkpolicy
+  jq '. + {onboarded:"2026-01-01"}' "$TMP/cp.json" > "$TMP/cpb.json"
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" false null
+  CLS "$TMP/cv.json" "$TMP/cpb.json" --out "$TMP/cb.json" --now 2026-01-01T00:00:00+00:00 \
+    2>"$TMP/cbw.txt" >/dev/null || return 1
+  grep -q "baseline_clocks_start is not" "$TMP/cbw.txt"
+}
+
+# A finding that appears after onboarding runs normally — the baseline is not permanent.
+test_baseline_does_not_cover_later_findings() {
+  mkpolicy
+  jq '. + {onboarded:"2026-01-01", baseline_clocks_start:"2026-02-01"}' "$TMP/cp.json" > "$TMP/cpb.json"
+  mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" false null
+  CLS "$TMP/cv.json" "$TMP/cpb.json" --out "$TMP/cb.json" --now 2026-03-01T00:00:00+00:00 \
+    >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].clock_start[0:10]' "$TMP/cb.json")" "2026-03-01" || return 1
+  assert "$(jq -r '.findings[0].baseline // "none"' "$TMP/cb.json")" "none"
+}
+
 test_classify_medium_has_no_mitigation_clock() {
   mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N" false null
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1

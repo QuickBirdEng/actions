@@ -386,6 +386,42 @@ deadline anyone can meet, so `quickbird:vuln:fix` records `available` / `none-pu
 kontina-backend: 514 of 521 have a published fix, 6 do not, 1 could not be determined. The
 earlier absence of this data was a gap in the tooling, not a property of the advisories.
 
+
+### 3.6 The first scan of a product
+
+§3 starts both clocks when a finding is first reported by a scan. That is right for a product
+already under monitoring and wrong on the day monitoring begins, because the entire accumulated
+backlog is dated the same day. On Kontina-Backend the first run produces 23 Critical findings with
+a 14-day mitigation deadline and 288 more at 30 days — none of which anyone could have acted on
+before there was a scan.
+
+**Decided 2026-08-04.** A product states two dates:
+
+| Field | Meaning |
+| --- | --- |
+| `onboarded` | the date monitoring began for this product |
+| `baseline_clocks_start` | the date the pre-existing backlog becomes due |
+
+Findings already present at onboarding run their clocks from the second date. Anything found
+afterwards runs normally — the baseline is a one-time transition, not a standing discount, and a
+finding that appears the following week gets its ordinary deadline.
+
+Three properties keep this from being an amnesty:
+
+- **KEV is never baselined.** Active exploitation is not something a plan can defer. The exemption
+  is close to free here: measured, **0 of Kontina's 23 Critical findings were in KEV**, so the one
+  case where 72 hours is justified stays sharp while the other 520 wait for the agreed date.
+- **The finding keeps its track, its rule and its reasons.** Only the clock start moves, and each
+  baselined finding records that it moved and why. Nothing is reclassified downward.
+- **No stated date means no baseline.** A missing `baseline_clocks_start` leaves every clock at
+  first discovery, and the run warns that it will. A missing field must not become a silent
+  amnesty for a whole backlog — that is the one way this mechanism could do real harm.
+
+What the baseline date should be is a project decision and belongs with the remediation plan: it
+is the date by which the backlog has been triaged, not an arbitrary grace period. Measured with a
+30-day baseline on Kontina, findings due within a fortnight drop from 23 to 0, and the Track 1
+mitigation deadline moves from 2026-08-18 to 2026-09-17.
+
 ---
 
 ## 4. Applicability — VEX rules
@@ -699,14 +735,10 @@ Not open questions — things that must be re-examined on a trigger rather than 
    value for all products (60 for the Extended-tier on-prem example, which its tier requires).
    Each project needs to confirm or tighten it, because it is a commitment rather than a
    measurement — and Alvie and Dermafy currently miss it three times over.
-4. **The first scan of a product still starts every finding's clock at once.** §3.4 now handles
-   the *release* side of onboarding — windows before the onboarding date are history rather
-   than breaches — but Track 1 and 2 mitigation clocks still all start on day one. On Kontina
-   that is 23 Track 1 findings with a 72 h deadline. Worth noting what the measurement says
-   about how urgent they are: **0 of those 23 are in KEV.** All 23 are CVSS ≥ 9.0 with no
-   indication of exploitation, which is a much weaker case for a 72-hour emergency than the
-   number first suggests. A defensible rule would be that KEV starts immediately and everything
-   else joins a recorded baseline, but that is not decided.
+4. **The onboarding baseline dates themselves** — resolved in mechanism (§3.6, decided
+   2026-08-04) but not in values. Every product carries `onboarded` and `baseline_clocks_start`
+   as empty strings, and until they are filled in the first monitored run will start every clock
+   at once. The date belongs with each product's remediation plan.
 5. **§5.1 rewards leaving an image unpinned.** The section requires base images to be
    digest-pinned so that bumping the image is a verifiable remediation. But an unpinned image
    cannot be scanned reproducibly, so scope files exclude it — meaning pinning an image brings

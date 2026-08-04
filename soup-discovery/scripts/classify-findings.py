@@ -199,6 +199,20 @@ def main():
         spec.loader.exec_module(mw)
 
     threshold = BANDS.get(str(policy.get("alerts", {}).get("threshold", "high")).lower(), 1)
+
+    def _date(v):
+        try:
+            d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return None
+
+    onboarded = _date(policy.get("onboarded"))
+    baseline_start = _date(policy.get("baseline_clocks_start"))
+    if onboarded and not baseline_start:
+        print("::warning::onboarded is set but baseline_clocks_start is not — every pre-existing "
+              "finding will run from its first scan, which on a product with a backlog means the "
+              "whole backlog is due at once", file=sys.stderr)
     findings, suppressed = [], []
 
     for v in bom.get("vulnerabilities", []) or []:
@@ -224,6 +238,27 @@ def main():
         escalated = bool(was and was.get("track") != track and latched_from is None)
         first_seen = now if (not was or escalated) else datetime.fromisoformat(was["first_seen"])
 
+        # --- onboarding baseline (§3.6) --------------------------------------
+        # Starting every clock at first discovery is right for a product already under
+        # monitoring, and wrong on the day monitoring begins: the whole accumulated backlog is
+        # dated the same day. On kontina-backend that is 23 Critical findings with a 14-day
+        # mitigation deadline and 288 more at 30 days, none of which anyone could have acted on
+        # before there was a scan.
+        #
+        # So a product states an onboarding date and the date its baseline clocks start. Findings
+        # already present at onboarding run from the later date; anything found afterwards runs
+        # normally. KEV is exempt — active exploitation is not something a plan can defer, and
+        # measured, 0 of those 23 Critical findings were in KEV, so the exemption costs nothing
+        # here while keeping the one case that matters sharp.
+        #
+        # Absent a stated baseline date there is no baseline. A missing field must not become a
+        # silent amnesty for a whole backlog.
+        clock_start = first_seen
+        baseline = False
+        if track != "kev" and onboarded and baseline_start and first_seen <= onboarded:
+            clock_start = baseline_start
+            baseline = True
+
         td = policy["tracks"].get(track, {})
         out = {
             "id": vid,
@@ -234,9 +269,18 @@ def main():
             "epss": epss_of(v),
             "kev": props(v).get("quickbird:vuln:kev"),
             "first_seen": first_seen.isoformat(),
+            "clock_start": clock_start.isoformat(),
             "affects": [a.get("ref") for a in (v.get("affects") or [])],
             "vex_state": (v.get("analysis") or {}).get("state"),
         }
+        if baseline:
+            out["baseline"] = {
+                "onboarded": onboarded.date().isoformat(),
+                "clocks_start": baseline_start.date().isoformat(),
+                "why": ("present when monitoring began, so its deadlines run from the agreed "
+                        "baseline date rather than from the first scan (§3.6). Recorded, not "
+                        "waived — the finding keeps its track."),
+            }
         if latched_from:
             out["latched"] = {"from": latched_from, "held_at": track,
                               "why": "a track may only move up (§2.2)"}
@@ -261,7 +305,7 @@ def main():
                         mit = parse_duration(td.get("mitigation"))
                         floor_days = (mit.days if mit
                                       else mw.DEFAULT_MITIGATION_FLOOR_DAYS)
-                        due = mw.window_for(first_seen, floor_days, origin, iv)
+                        due = mw.window_for(clock_start, floor_days, origin, iv)
                         out[f"{clock}_due"] = due.isoformat()
                         out[f"{clock}_overdue"] = now > due
                         out[f"{clock}_basis"] = (
@@ -273,7 +317,7 @@ def main():
                             "next regular release — NO DATE: no maintenance window was "
                             "supplied, so this clock cannot breach")
             else:
-                due = first_seen + delta
+                due = clock_start + delta
                 out[f"{clock}_due"] = due.isoformat()
                 out[f"{clock}_overdue"] = now > due
                 out[f"{clock}_basis"] = spec
@@ -289,6 +333,11 @@ def main():
         "schema": "quickbird.classified-findings/v1",
         "classified_at": now.isoformat(),
         "product": policy.get("product"),
+        "baseline": ({"onboarded": onboarded.date().isoformat(),
+                      "clocks_start": baseline_start.date().isoformat(),
+                      "findings": sum(1 for f in findings if f.get("baseline")),
+                      "kev_exempt": sum(1 for f in findings if f.get("track") == "kev")}
+                     if onboarded and baseline_start else None),
         "policy": {
             "process_version": policy.get("process_version"),
             "epss": policy["epss"],
