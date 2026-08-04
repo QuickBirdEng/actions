@@ -195,6 +195,9 @@ def main():
     ap.add_argument("policy")
     ap.add_argument("--soups")
     ap.add_argument("--out", default="-")
+    # Every other script in the pipeline takes --now for the same reason: an age check without a
+    # fixed clock cannot be tested deterministically, and the expected values would drift.
+    ap.add_argument("--now", help="ISO timestamp, for reproducible tests")
     ap.add_argument("--jobs", type=int, default=8)
     args = ap.parse_args()
 
@@ -205,7 +208,12 @@ def main():
     max_major = limits.get("major", 0)
     max_minor = limits.get("minor", 1)
     stale_days = parse_window(cur_policy.get("stale_after", "12m"))
-    now = datetime.now(timezone.utc)
+    if args.now:
+        now = datetime.fromisoformat(str(args.now).replace("Z", "+00:00"))
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = datetime.now(timezone.utc)
     reasons = load_soup_reasons(args.soups) if args.soups else {}
 
     # Direct dependencies only. A component is direct if a SOUP record exists for it — that
@@ -229,6 +237,17 @@ def main():
     def is_os_pkg(c):
         purl = c.get("purl") or ""
         return any(purl.startswith(f"pkg:{t}/") for t in OS_PKG_TYPES)
+
+    # Container images are checked separately. They have no purl and no registry that answers
+    # "what is the latest version", but they carry a build date, so the obsolescence test applies
+    # to them directly. This is where §5.1 lands: the image is the SOUP, so the currency policy
+    # applies to the image rather than to the packages inside it. Excluding the OS packages
+    # without checking the image would have removed the signal altogether.
+    images = []
+    for c in bom.get("components", []) or []:
+        cp = {q["name"]: q["value"] for q in (c.get("properties") or [])}
+        if cp.get("quickbird:scan:image-created"):
+            images.append((c, cp))
 
     skipped_os = sum(1 for c in direct if is_os_pkg(c))
     direct = [c for c in direct if c.get("purl") and not is_os_pkg(c)]
@@ -292,6 +311,31 @@ def main():
                 entry["reason"] = reasons[name]
             results.append(entry)
 
+    # --- image obsolescence ---------------------------------------------------
+    # An image is a component in its own right and ages like any other. §5.1 makes the image the
+    # SOUP, so the currency policy applies to the image rather than to the packages inside it.
+    # Excluding the OS packages without checking the image would have removed the signal entirely.
+    stale_images = []
+    for c, cp in images:
+        built = cp["quickbird:scan:image-created"]
+        age = age_days(built, now)
+        if age is None:
+            unknown.append({"name": c.get("name"), "version": c.get("version"),
+                            "why": f"image build date {built!r} could not be parsed"})
+            continue
+        if age > stale_days:
+            stale_images.append({
+                "name": c.get("name"), "version": c.get("version"),
+                "kind": "container-image",
+                "image_digest": cp.get("quickbird:scan:image-digest", ""),
+                "built": built, "age_days": age,
+                "finding": "image not rebuilt within the staleness window",
+                "action": ("Rebuild or replace the image. This finding is about the image, not "
+                           "about the version of the software packaged in it. Those are separate "
+                           "questions: linuxserver/wireguard:1.0.20210914 is rebuilt regularly, "
+                           "and the 2021 in its tag is the WireGuard version inside it."),
+            })
+
     flagged = [r for r in results if not r.get("justified")]
     justified = [r for r in results if r.get("justified")]
 
@@ -305,14 +349,20 @@ def main():
             "stale_with_no_upgrade": len([r for r in flagged
                                           if r["finding"] == "upstream-stale-and-we-are-current"]),
             "justified": len(justified),
+            "stale_images": len(stale_images),
             "unknown": len(unknown),
         },
         # Report signal, not an alert. Named in the output so a caller cannot mistake it.
         "severity": "report-only",
         "beyond_policy": sorted(flagged, key=lambda r: (-r["behind"]["major"], -r["behind"]["minor"])),
         "justified": justified,
+        "stale_images": stale_images,
         "unknown": unknown,
     }
+
+    for e in stale_images:
+        print(f"::warning::{e['name']} {e['version']}: image last built {e['built'][:10]}, "
+              f"{e['age_days']} days ago. {e['action']}", file=sys.stderr)
 
     text = json.dumps(doc, indent=2)
     if args.out == "-":

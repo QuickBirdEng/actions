@@ -62,6 +62,13 @@ jq -n \
             type: ($subj.type // "application"),
             name: ($subj.name // "unknown"),
             version: ($subj.version // $version) }
+          # Carry the hashes and properties of the scanned subject across. Building a fresh object
+          # without them dropped the image digest and the image build date on the way in, so the
+          # consolidated bundle -- the document that is published as the release asset -- did not
+          # contain the identity of what was scanned. The per-target files had it, which is why the
+          # loss was not visible when those were checked.
+          + (if ($subj.hashes // []) != [] then {hashes: $subj.hashes} else {} end)
+          + (if ($subj.properties // []) != [] then {properties: $subj.properties} else {} end)
       ) ) as $artifacts
 
   # old subject ref -> new artifact ref, for edge remapping

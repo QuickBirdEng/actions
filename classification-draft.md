@@ -688,10 +688,19 @@ newest **version publish time**, never from registry metadata that any change to
 
 - A dependency outside policy is flagged in the overview and the backstop report. On its own it is
   not a Slack alert; it becomes urgent when it coincides with an applicable CVE.
-- **Operating-system packages are excluded from both tests.** Under §5.1 the base image is the SOUP
-  and its packages are updated with the image, so they are not individually subject to this policy.
-  Measured on kontina-backend: including them reported 343 of 386 components as "currency unknown",
-  because no registry answers for a distro package, and that buried the 55 real findings.
+- **Operating-system packages are excluded from both tests, and the image is tested instead.** Under
+  §5.1 the base image is the SOUP and its packages are updated with the image, so they are not
+  individually subject to this policy. Measured on kontina-backend: including them reported 343 of
+  386 components as "currency unknown", because no registry answers for a distro package, and that
+  buried the 55 real findings. Excluding them without testing the image would have removed the
+  signal, so a third test applies the same 12-month window to the **build date of the image**, read
+  from the OCI label `org.opencontainers.image.created` or the image config. No extra network call:
+  the date comes from the scan that already runs.
+- **Image build age and packaged software version are separate findings.** Corrected 2026-08-04:
+  `linuxserver/wireguard:1.0.20210914` was described in earlier drafts as an image from 2021. Its
+  build date is 2025-07-24; the 2021 in the tag is the WireGuard version inside it. The image age is
+  testable. Whether the packaged version is acceptable is not testable generically, because no
+  registry maps a vendor tag scheme to an upstream release.
 - A per-SOUP justification overrides the policy, recorded in the existing SOUP `reason` field. This is
   the mechanism behind the acceptance criterion "Remaining non-current dependencies are justified".
 - At release, the release gate checks direct production dependencies against the policy ("libs

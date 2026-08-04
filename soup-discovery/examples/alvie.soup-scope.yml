@@ -50,9 +50,11 @@ include:
       its contents are outside our control and squarely inside our CVE scope.
   - id: deployed-wireguard-1.0.20210914
     reason: >-
-      WireGuard sidecar carrying ePA traffic. Version dates from 2021 — expect this to
-      breach the dependency currency policy, which is the correct outcome rather than a
-      reason to exclude it.
+      WireGuard sidecar carrying ePA traffic. The tag names the WireGuard version from 2021, but
+      the image itself is rebuilt regularly: measured 2026-08-04, its build date is 2025-07-24.
+      Those are two separate findings. The image build age breaches the 12-month window and is
+      reported by the currency check. Whether the packaged WireGuard version is acceptable is a
+      judgement for the project, because no registry maps this tag scheme to an upstream release.
   - id: deployed-redis-7-alpine
     reason: Redis in production (chart values redis.image, 7-alpine).
   - id: deployed-qb-gid-server-0.1.10

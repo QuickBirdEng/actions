@@ -630,6 +630,65 @@ test_classify_kev_and_critical_have_different_clocks() {
 
 # A Medium has no mitigation clock any more. It stood at 30d across 196 findings on one
 # product and meant "write a document"; Track 3 rides the maintenance window instead.
+# ---------------------------------------------------------------- image age
+# An image is a component and ages like any other. §5.1 makes the image the SOUP, so excluding its
+# OS packages from the currency policy without checking the image itself removed the signal.
+mkimg() {  # <built-iso>
+  jq -n --arg b "$1" \
+    '{bomFormat:"CycloneDX",specVersion:"1.6",
+      metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+      components:[{"bom-ref":"a1",type:"container",name:"deployed-x",version:"1.0",
+                   properties:[{name:"quickbird:scan:image-created",value:$b},
+                               {name:"quickbird:scan:image-digest",value:"index.docker.io/x@sha256:abc"}]}]}' \
+    > "$TMP/ia-bom.json"
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/ia-pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/ia-pol.yml" 2>/dev/null > "$TMP/ia-pol.json"
+  python3 "$S/check-currency.py" "$TMP/ia-bom.json" "$TMP/ia-pol.json" --soups "$TMP/nosoups" \
+    --out "$TMP/ia.json" --now 2026-08-04T00:00:00+00:00 >/dev/null 2>&1 || return 1
+}
+
+test_image_older_than_the_window_is_a_finding() {
+  mkimg 2025-07-24T11:29:44+00:00 || return 1
+  assert "$(jq -r '.summary.stale_images' "$TMP/ia.json")" "1" || return 1
+  assert "$(jq -r '.stale_images[0].age_days' "$TMP/ia.json")" "375" || return 1
+  # the digest travels with the finding, so the reader knows which bytes were assessed
+  jq -re '.stale_images[0].image_digest | test("sha256:")' "$TMP/ia.json" >/dev/null || return 1
+  # and the finding distinguishes itself from the packaged software version
+  jq -re '.stale_images[0].action | test("not about the version of the software packaged")' "$TMP/ia.json" >/dev/null
+}
+
+test_a_recently_built_image_is_not_a_finding() {
+  mkimg 2026-07-24T00:00:00+00:00 || return 1
+  assert "$(jq -r '.summary.stale_images' "$TMP/ia.json")" "0"
+}
+
+# An unparsable build date must not read as recent.
+test_image_with_an_unusable_build_date_is_unknown() {
+  mkimg "not a date" || return 1
+  assert "$(jq -r '.summary.stale_images' "$TMP/ia.json")" "0" || return 1
+  jq -re '[.unknown[] | select(.why | test("build date"))] | length == 1' "$TMP/ia.json" >/dev/null
+}
+
+# Regression: consolidate.sh rebuilt the artifact component from scratch and dropped its hashes and
+# properties, so neither the image digest nor the build date reached the consolidated bundle. That
+# bundle is what gets published as the release asset, and the per-target files still had the data,
+# which is why checking those did not reveal the loss.
+test_consolidate_keeps_the_subject_hashes_and_properties() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{"bom-ref":"s",name:"deployed-x",version:"1.0",type:"container",
+                    hashes:[{alg:"SHA-256",content:"abc"}],
+                    properties:[{name:"quickbird:scan:image-created",value:"2025-07-24T00:00:00Z"},
+                                {name:"quickbird:scan:image-digest",value:"index.docker.io/x@sha256:abc"}]}},
+          components:[]}' > "$TMP/ck1.json"
+  bash "$S/consolidate.sh" p 1.0.0 "$TMP/ckout.json" "$TMP/ck1.json" >/dev/null 2>&1 || return 1
+  local a; a=$(jq -r '[.components[]|select(."bom-ref"=="quickbird:artifact:deployed-x")][0]' "$TMP/ckout.json")
+  assert "$(jq -r '[.properties[]|select(.name=="quickbird:scan:image-digest")][0].value' <<<"$a")" \
+         "index.docker.io/x@sha256:abc" || return 1
+  assert "$(jq -r '[.properties[]|select(.name=="quickbird:scan:image-created")][0].value' <<<"$a")" \
+         "2025-07-24T00:00:00Z" || return 1
+  assert "$(jq -r '[.hashes[]|select(.alg=="SHA-256")][0].content' <<<"$a")" "abc"
+}
+
 # ---------------------------------------------------------------- grq-4 vs reality
 # grq-4 ("no major or critical security issues") is evaluated once, at approval time, against
 # metadata.input_version. A patch move inside the approved family keeps the approval — correctly —

@@ -35,7 +35,7 @@ SUBJECT="${BOM_SUBJECT:-}"
 # or lockfile scan has no image digest, and a missing one must not fail the run.
 NATIVE="${SYFT_NATIVE:-}"
 TARGET="${SCAN_TARGET:-}"
-IMG_REF=""; IMG_ID=""
+IMG_REF=""; IMG_ID=""; IMG_CREATED=""
 if [[ -n "$NATIVE" && -f "$NATIVE" ]]; then
   IMG_REF=$(jq -r '(.source.metadata.repoDigests // [])[0] // ""' "$NATIVE" 2>/dev/null)
   [[ -z "$IMG_REF" || "$IMG_REF" == "null" ]] && \
@@ -43,6 +43,21 @@ if [[ -n "$NATIVE" && -f "$NATIVE" ]]; then
   IMG_ID=$(jq -r '.source.metadata.imageID // ""' "$NATIVE" 2>/dev/null)
   [[ "$IMG_REF" == "null" ]] && IMG_REF=""
   [[ "$IMG_ID" == "null" ]] && IMG_ID=""
+
+  # When the image was built. Needed because an image is a component in its own right and ages
+  # like any other: §5.1 makes the image the SOUP, so the currency policy applies to it rather
+  # than to the packages inside it. Two sources, in order:
+  #   the OCI standard label, which a well-behaved publisher sets, and
+  #   `created` in the image config, which is always present.
+  # Note what this does and does not say. linuxserver/wireguard:1.0.20210914 reports 2025-07-24:
+  # the image is rebuilt regularly, and the 2021 in the tag is the version of the WireGuard
+  # software inside it. Image age and packaged-software version are separate questions.
+  IMG_CREATED=$(jq -r '.source.metadata.labels["org.opencontainers.image.created"] // ""' "$NATIVE" 2>/dev/null)
+  if [[ -z "$IMG_CREATED" || "$IMG_CREATED" == "null" ]]; then
+    IMG_CREATED=$(jq -r '.source.metadata.config // ""' "$NATIVE" 2>/dev/null \
+                  | base64 -d 2>/dev/null | jq -r '.created // ""' 2>/dev/null)
+  fi
+  [[ "$IMG_CREATED" == "null" ]] && IMG_CREATED=""
 fi
 
 command -v jq >/dev/null 2>&1 || { echo "::error::jq required" >&2; exit 1; }
@@ -56,7 +71,8 @@ if [[ -z "$SUBJECT" ]]; then
 fi
 
 jq --argjson keep_ts "$KEEP_TIMESTAMP" --arg subject "$SUBJECT" \
-   --arg ref "$IMG_REF" --arg imgid "$IMG_ID" --arg target "$TARGET" '
+   --arg ref "$IMG_REF" --arg imgid "$IMG_ID" --arg target "$TARGET" \
+   --arg created "$IMG_CREATED" '
   # jar filename -> SHA-256, from the type:file components
   ( [ .components[]?
       | select(.type == "file")
@@ -109,6 +125,7 @@ jq --argjson keep_ts "$KEEP_TIMESTAMP" --arg subject "$SUBJECT" \
                + [ {name: "quickbird:scan:target", value: $target} ]
                + (if $ref != "" then [{name: "quickbird:scan:image-digest", value: $ref}] else [] end)
                + (if $imgid != "" then [{name: "quickbird:scan:image-id", value: $imgid}] else [] end)
+               + (if $created != "" then [{name: "quickbird:scan:image-created", value: $created}] else [] end)
                | unique_by(.name))
        else . end)
 ' "$IN" > "$OUT" || { echo "::error::normalisation failed" >&2; exit 1; }
