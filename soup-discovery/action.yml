@@ -63,6 +63,18 @@ inputs:
       resolve-deployed.sh looks for exactly this asset.
     required: false
     default: 'true'
+  do-access-key:
+    description: >-
+      DigitalOcean Spaces access key. With it, the bundle and the PDF are also written to the
+      quickbird-artifacts space, in addition to the release asset. The release asset covers a
+      tagged build; this covers every build, and it is where a bundle for a product without
+      releases has to live.
+    required: false
+    default: ''
+  do-secret-key:
+    description: 'DigitalOcean Spaces secret key'
+    required: false
+    default: ''
   repo-token:
     description: 'Token for attaching release assets. Required when publish-to-release is on and the run is on a tag.'
     required: false
@@ -207,6 +219,49 @@ runs:
         gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "" $PRE
         gh release upload "$TAG" "${args[@]}" --clobber
         echo "attached ${args[*]} to release $TAG (tier $TIER)"
+
+    # Same space and same action as the mobile build artifacts. Path:
+    # <repo>/soup-sbom/<tier>/<ref>/. The tier segment keeps candidate documents, which may become
+    # release evidence, apart from staging and branch documents, which cannot.
+    - name: Store the bundle durably
+      id: store
+      if: ${{ inputs.do-access-key != '' }}
+      shell: bash
+      run: |
+        BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
+        [ -f "$BOM" ] || BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
+        TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
+        REF="${{ github.ref_name }}"
+        [ -n "$REF" ] || REF="${{ github.sha }}"
+        DIR="${{ inputs.output-dir }}/store"
+        mkdir -p "$DIR"
+        # Named after the ref so the object identifies what it describes without opening it. A
+        # product that deploys by commit SHA and has no tags gets the SHA, which is the only
+        # durable location its bundle can have.
+        cp "$BOM" "$DIR/sbom-$REF.cdx.json"
+        PDF="${BOM%.json}.pdf"
+        [ -f "$PDF" ] && cp "$PDF" "$DIR/sbom-$REF.pdf"
+        {
+          echo "dir=$DIR"
+          echo "out-dir=${{ github.event.repository.name }}/soup-sbom/$TIER/$REF"
+        } >> "$GITHUB_OUTPUT"
+        echo "storing $(ls -1 "$DIR" | tr '\n' ' ')under soup-sbom/$TIER/$REF"
+
+    - name: Upload the bundle to the object store
+      if: ${{ inputs.do-access-key != '' && steps.store.outputs.dir != '' }}
+      # Pinned to an exact release: this action publishes no moving major tag, so `@v2` does not
+      # resolve. Its newest release is v2.0.146 from 2024-02-12, which is over two years old and
+      # would be an obsolescence finding under §11 if it were a product dependency. The existing
+      # upload-artifact-qb action in this repository uses `@latest` for the same upload, which is
+      # worth revisiting separately.
+      uses: BetaHuhn/do-spaces-action@v2.0.146
+      with:
+        access_key: ${{ inputs.do-access-key }}
+        secret_key: ${{ inputs.do-secret-key }}
+        space_name: quickbird-artifacts
+        space_region: fra1
+        source: ${{ steps.store.outputs.dir }}
+        out_dir: ${{ steps.store.outputs.out-dir }}
 
     - name: Upload SBOM
       if: ${{ inputs.upload-artifact == 'true' }}

@@ -33,6 +33,17 @@ inputs:
     description: 'Where the dated run record is written'
     required: false
     default: 'kev-monitor'
+  do-access-key:
+    description: >-
+      DigitalOcean Spaces access key. With it, the dated run record is also written to the
+      quickbird-artifacts space, which is what makes it a durable record: the workflow artifact
+      below is retained for 90 days, and an annual backstop has to reconcile 365.
+    required: false
+    default: ''
+  do-secret-key:
+    description: 'DigitalOcean Spaces secret key'
+    required: false
+    default: ''
   gh-token:
     description: 'Token for reading deployments and release assets'
     required: false
@@ -85,6 +96,43 @@ runs:
             -H 'Content-Type: application/json; charset=utf-8' \
             --data @- | jq -e '.ok' >/dev/null \
           || echo "::error::Slack post failed — the run record was still written"
+
+    # The durable copy. Written with the same action and into the same space as the mobile build
+    # artifacts, so the retention and access rules are the ones already in place. The workflow
+    # artifact below is kept for 90 days; an annual backstop has to reconcile 365, which is why
+    # this step exists.
+    #
+    # Path: <repo>/soup-evidence/<year>/. The year segment lets a yearly backstop sync one prefix
+    # rather than the whole history.
+    - name: Resolve the evidence path
+      id: evidence
+      if: ${{ always() && inputs.do-access-key != '' }}
+      shell: bash
+      run: |
+        REC=$(ls -1 "${{ inputs.evidence-dir }}"/[0-9]*-*.json 2>/dev/null | head -1)
+        if [ -z "$REC" ]; then
+          echo "::error::no dated run record to store — this run produced no evidence that"
+          echo "::error::  ${{ inputs.product }} was monitored, so it must not be treated as a clean run"
+          exit 1
+        fi
+        echo "record=$REC" >> "$GITHUB_OUTPUT"
+        echo "out-dir=${{ github.event.repository.name }}/soup-evidence/$(basename "$REC" | cut -d- -f1)" >> "$GITHUB_OUTPUT"
+
+    - name: Store the record durably
+      if: ${{ always() && inputs.do-access-key != '' && steps.evidence.outputs.record != '' }}
+      # Pinned to an exact release: this action publishes no moving major tag, so `@v2` does not
+      # resolve. Its newest release is v2.0.146 from 2024-02-12, which is over two years old and
+      # would be an obsolescence finding under §11 if it were a product dependency. The existing
+      # upload-artifact-qb action in this repository uses `@latest` for the same upload, which is
+      # worth revisiting separately.
+      uses: BetaHuhn/do-spaces-action@v2.0.146
+      with:
+        access_key: ${{ inputs.do-access-key }}
+        secret_key: ${{ inputs.do-secret-key }}
+        space_name: quickbird-artifacts
+        space_region: fra1
+        source: ${{ steps.evidence.outputs.record }}
+        out_dir: ${{ steps.evidence.outputs.out-dir }}
 
     - name: Keep the record
       if: always()

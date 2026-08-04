@@ -1,0 +1,98 @@
+# Periodic backstop reconciliation (WI §7).
+#
+# The one procedure that reads the whole evidence history rather than producing a record. It needs
+# the durable store, not the workflow artifacts: those are kept for 90 days, and an annual backstop
+# has to reconcile 365.
+#
+# The product list lives here on purpose. A product that was never scanned cannot report its own
+# absence, so the expectation has to come from outside the products.
+
+name: SOUP Backstop
+
+on:
+  workflow_call:
+    inputs:
+      products:
+        description: 'Comma-separated products that must have records. A product missing entirely is the finding this catches.'
+        required: true
+        type: string
+      window:
+        description: 'Days of history to reconcile. 366 for tier Basic, 92 for Extended.'
+        required: false
+        type: number
+        default: 366
+      runs-on:
+        description: 'Runner label(s). JSON array or a single label.'
+        required: false
+        type: string
+        default: '"ubuntu-latest"'
+    secrets:
+      DO_ACCESS_KEY:
+        required: true
+      DO_SECRET_KEY:
+        required: true
+
+jobs:
+  backstop:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the evidence history
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SECRET_KEY }}
+        run: |
+          mkdir -p evidence
+          # One prefix per product per year. Syncing the whole space would pull the mobile build
+          # artifacts as well, which are large and irrelevant here.
+          YEARS=$(python3 -c "
+          import datetime
+          d = datetime.date.today()
+          span = int(${{ inputs.window }}) // 365 + 2
+          print(' '.join(str(d.year - i) for i in range(span)))")
+          for product in $(echo '${{ inputs.products }}' | tr ',' ' '); do
+            for year in $YEARS; do
+              aws s3 sync \
+                "s3://quickbird-artifacts/$product/soup-evidence/$year/" "evidence/" \
+                --endpoint-url https://fra1.digitaloceanspaces.com \
+                --only-show-errors || true
+            done
+          done
+          echo "fetched $(ls -1 evidence | wc -l) run record(s)"
+
+      - name: Resolve the report path
+        id: path
+        run: echo "out-dir=${{ github.event.repository.name }}/soup-backstop/$(date +%Y)" >> "$GITHUB_OUTPUT"
+
+      - name: Reconcile
+        id: backstop
+        run: |
+          python3 .github/soup/backstop-report.py evidence \
+            --products '${{ inputs.products }}' \
+            --window '${{ inputs.window }}' \
+            --out backstop-report.json
+        continue-on-error: true
+
+      # The report is the record of the review, so it is stored like any other.
+      - name: Store the report
+        if: always()
+        uses: BetaHuhn/do-spaces-action@v2.0.146
+        with:
+          access_key: ${{ secrets.DO_ACCESS_KEY }}
+          secret_key: ${{ secrets.DO_SECRET_KEY }}
+          space_name: quickbird-artifacts
+          space_region: fra1
+          source: backstop-report.json
+          out_dir: ${{ steps.path.outputs.out-dir }}
+
+      - name: Fail on an action-required verdict
+        run: |
+          VERDICT=$(jq -r '.verdict' backstop-report.json)
+          jq -r '"backstop: " + (.summary | tostring)' backstop-report.json
+          if [ "$VERDICT" != "clean" ]; then
+            echo "::error::backstop verdict: $VERDICT — see backstop-report.json"
+            jq -r '.coverage[] | select(.status != "ok") | "  \(.product): \(.status) — \(.detail)"' backstop-report.json
+            jq -r '.determination_drift[]? | "  \(.product): \(.field) changed — \(.detail)"' backstop-report.json
+            exit 1
+          fi
