@@ -107,7 +107,7 @@ if [[ -n "${MAINTENANCE_LAST_RELEASE:-}" ]]; then
   python3 "$HERE/maintenance-windows.py" "${MW_ARGS[@]}" >/dev/null 2>&1 || WINDOWS=""
 fi
 
-CLS_ARGS=("$ASSESSED" "$POLICY" --out "$FINDINGS")
+CLS_ARGS=("$ASSESSED" "$POLICY" --out "$FINDINGS" --annotate-bom "$ASSESSED")
 [[ -n "$WINDOWS" && -f "$WINDOWS" ]] && CLS_ARGS+=(--windows "$WINDOWS")
 [[ -n "$STATE" && -f "$STATE" ]] && CLS_ARGS+=(--state "$STATE")
 python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 classify   /' >&2 \

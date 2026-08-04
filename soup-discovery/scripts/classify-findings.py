@@ -165,6 +165,10 @@ def main():
     ap.add_argument("--state", help="previous run, for latching and clock starts")
     ap.add_argument("--windows", help="maintenance-windows.py output; without it, Track 3/4 "
                                       "remediation has no date and cannot breach")
+    ap.add_argument("--annotate-bom", help="stamp the grq-4 contradiction back onto the assessed "
+                                           "BOM. The bundle is the evidence, so a record whose "
+                                           "snapshot no longer holds belongs in it — and the PDF "
+                                           "renders only what the bundle says, by design")
     ap.add_argument("--out", default="-")
     ap.add_argument("--now", help="ISO timestamp, for reproducible tests")
     args = ap.parse_args()
@@ -214,6 +218,46 @@ def main():
               "finding will run from its first scan, which on a product with a backlog means the "
               "whole backlog is due at once", file=sys.stderr)
     findings, suppressed = [], []
+
+    # --- SOUP records whose grq-4 snapshot no longer matches reality (§4.1) ------
+    # grq-4 ("Does not contain major or critical security issues") is evaluated once, against
+    # metadata.input_version, at approval time. A patch move inside the approved family keeps the
+    # approval — correctly — but the vulnerability picture can change underneath it. Nothing
+    # reconciled the two, so a record could keep asserting "no major or critical security issues"
+    # while the monitor reported a Critical in the same component. An auditor holding both
+    # documents side by side finds that in a minute.
+    #
+    # Keyed on the component, because that is the unit that gets re-checked. A library with 40
+    # High findings is one record to look at, not 40 alerts — the same reason §3.5 attaches
+    # deadlines to actions rather than findings.
+    comp_by_ref = {}
+    for c in bom.get("components", []) or []:
+        comp_by_ref[c.get("bom-ref")] = c
+    recheck = {}
+
+    def note_contradiction(v, cvss, kev):
+        """Record that a finding contradicts a grq-4 marked fulfilled."""
+        for a in v.get("affects", []) or []:
+            c = comp_by_ref.get(a.get("ref"))
+            if not c:
+                continue
+            cp = props(c)
+            if cp.get("quickbird:soup:req:grq-4:fulfilled") != "true":
+                # Either there is no record, or grq-4 is already recorded as unfulfilled with a
+                # stated reason. Neither is a contradiction.
+                continue
+            key = c.get("bom-ref")
+            e = recheck.setdefault(key, {
+                "component": c.get("name"),
+                "version": c.get("version"),
+                "record": cp.get("quickbird:soup:record", ""),
+                "approved_family": cp.get("quickbird:soup:approved-family", ""),
+                "approved_against_version": cp.get("quickbird:soup:checked-version", ""),
+                "approval_state": cp.get("quickbird:soup:approved", ""),
+                "grq4_claims": cp.get("quickbird:soup:req:grq-4:description", ""),
+                "contradicted_by": [],
+            })
+            e["contradicted_by"].append({"id": v.get("id"), "cvss": cvss, "kev": kev})
 
     for v in bom.get("vulnerabilities", []) or []:
         track, rule, why = classify(v, policy)
@@ -325,6 +369,28 @@ def main():
         out["alerts"] = TRACK_ORDER.index(track) <= threshold
         findings.append(out)
 
+        # Deliberately on severity, not on track. grq-4 says "major or critical", which is High
+        # and Critical; the `expedited` track also holds Medium findings escalated by EPSS and
+        # unscored ones, and pulling those in would blunt the signal. VEX-suppressed findings are
+        # already excluded above — a justified not_affected means the component is not exposed, so
+        # it does not contradict anything.
+        _cvss = cvss_of(v)
+        _kev = props(v).get("quickbird:vuln:kev") == "true"
+        if _kev or (_cvss is not None and _cvss >= 7.0):
+            note_contradiction(v, _cvss, _kev)
+
+    for e in recheck.values():
+        e["contradicted_by"].sort(key=lambda x: (not x["kev"], -(x["cvss"] or 0)))
+        n = len(e["contradicted_by"])
+        e["why"] = (
+            f"grq-4 is recorded as fulfilled"
+            + (f" against {e['approved_against_version']}" if e["approved_against_version"] else "")
+            + f", but the version in this bundle ({e['version']}) has {n} finding(s) at High or "
+              f"above that no VEX statement covers. The approval is not withdrawn by this — it "
+              f"needs re-checking, which WI-006-03 treats as a review event."
+            + (" Note the approval is itself temporary." if e["approval_state"] == "temporary" else ""))
+    recheck_list = sorted(recheck.values(), key=lambda e: -len(e["contradicted_by"]))
+
     findings.sort(key=lambda f: (TRACK_ORDER.index(f["track"]), -(f["cvss"] or 0)))
     overdue = [f for f in findings
                if f.get("mitigation_overdue") or f.get("remediation_overdue")]
@@ -333,6 +399,9 @@ def main():
         "schema": "quickbird.classified-findings/v1",
         "classified_at": now.isoformat(),
         "product": policy.get("product"),
+        # §4.1 — records whose grq-4 snapshot no longer matches what the scan finds. Not an
+        # incident and deliberately not in the alert: a review event.
+        "soup_records_to_recheck": recheck_list,
         "baseline": ({"onboarded": onboarded.date().isoformat(),
                       "clocks_start": baseline_start.date().isoformat(),
                       "findings": sum(1 for f in findings if f.get("baseline")),
@@ -351,10 +420,37 @@ def main():
             "alerting": sum(1 for f in findings if f["alerts"]),
             "overdue": len(overdue),
             "latched": sum(1 for f in findings if "latched" in f),
+            "soup_records_to_recheck": len(recheck_list),
         },
         "findings": findings,
         "suppressed": suppressed,
     }
+
+    # Stamp the contradiction onto the components in the bundle. Written in place so the PDF and
+    # any other consumer see it without a second input file — the alternative was passing the
+    # findings document to the renderer, which would break the property that the PDF is a pure
+    # function of the bundle and therefore cannot drift from it.
+    if args.annotate_bom and recheck_list:
+        try:
+            target = json.load(open(args.annotate_bom, encoding="utf-8"))
+            by_ref = {e_key: e for e_key, e in recheck.items()}
+            for c in target.get("components", []) or []:
+                e = by_ref.get(c.get("bom-ref"))
+                if not e:
+                    continue
+                c["properties"] = sorted(
+                    (c.get("properties") or []) + [
+                        {"name": "quickbird:soup:recheck", "value": "grq-4"},
+                        {"name": "quickbird:soup:recheck-findings",
+                         "value": str(len(e["contradicted_by"]))},
+                        {"name": "quickbird:soup:recheck-why", "value": e["why"]},
+                    ],
+                    key=lambda x: (x["name"], x.get("value") or ""))
+            with open(args.annotate_bom, "w", encoding="utf-8") as fh:
+                json.dump(target, fh, indent=2)
+                fh.write("\n")
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"::warning::could not annotate {args.annotate_bom}: {e}", file=sys.stderr)
 
     out = json.dumps(doc, indent=2)
     if args.out == "-":
@@ -368,6 +464,16 @@ def main():
           + ", ".join(f"{t} {s['by_track'][t]}" for t in TRACK_ORDER)
           + f" · {s['suppressed_by_vex']} VEX-suppressed · {s['alerting']} alerting"
           + f" · {s['overdue']} overdue · {s['latched']} latched", file=sys.stderr)
+
+    # One line per record, not per finding: the record is what gets re-checked.
+    for e in recheck_list:
+        print(f"::warning::SOUP record needs re-checking: {e['component']} {e['version']} — "
+              f"grq-4 recorded as fulfilled"
+              + (f" against {e['approved_against_version']}" if e["approved_against_version"] else "")
+              + f", but {len(e['contradicted_by'])} finding(s) at High or above are open"
+              + (f" (incl. KEV {e['contradicted_by'][0]['id']})"
+                 if e["contradicted_by"] and e["contradicted_by"][0]["kev"] else "")
+              + f". Record: {e['record'] or 'unknown'}", file=sys.stderr)
     return 0
 
 

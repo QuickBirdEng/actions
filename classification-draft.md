@@ -435,6 +435,60 @@ the claim; authority to accept it stays with the approvers. Because the statemen
 record, the countersign is enforced by the existing approval workflow rather than by a new rule — a
 developer cannot merge their own `not_affected`.
 
+### 4.1 When a SOUP record and today's scan disagree
+
+**Decided 2026-08-04.** A SOUP record carries seven requirements, two of which cover exactly the
+questions this process asks daily:
+
+| Requirement | Covers |
+| --- | --- |
+| `grq-4` | "Does not contain major or critical security issues" — with `vulnerabilities_count` in its metadata |
+| `version-check` | "Is within the latest stable semantic family" — how far behind the component is |
+
+There is **one** approval per record, for a library and a version family (`25.x.x`), evaluated
+against one concrete version (`metadata.input_version`). There is no separate per-version approval
+when there are CVEs: an unmet requirement is carried either by a written
+`reason_if_requirement_not_fulfilled` or by the temporary-approval path (§9 item 1).
+
+That makes `grq-4` a **snapshot**. A patch move inside the approved family keeps the approval —
+correctly, because the family is what was assessed — but the vulnerability picture can change
+underneath it. Nothing reconciled the record with the daily scan, so a record could keep asserting
+"no major or critical security issues" while the monitor reported a Critical in the same component.
+Two documents, and the discrepancy visible to anyone who lays them side by side.
+
+The classifier now reports it, per **record** rather than per finding — a library with forty High
+findings is one record to look at:
+
+> `SOUP record needs re-checking: linkerd 25.12.1 — grq-4 recorded as fulfilled against 25.10.6,
+> but 1 finding(s) at High or above are open.`
+
+Four conditions, all of which must hold:
+
+1. the component carries `grq-4` recorded as **fulfilled** — a requirement already recorded as
+   unmet, with its reason, contradicts nothing;
+2. the finding is **not** VEX-suppressed — a justified `not_affected` means the component is not
+   exposed;
+3. **CVSS ≥ 7.0, or KEV membership.** Deliberately on severity rather than on track: `grq-4` says
+   "major or critical", while the Expedited track also holds Medium findings escalated by EPSS and
+   unscored ones, and including those would blunt the signal;
+4. the component is in scope, so it is part of the evidence at all.
+
+**What it does not do.** It does not withdraw the approval — that is not a decision tooling makes.
+It does not change the finding's track: the same CVE carries the same deadline whether the record
+is current or not. And it is not an alert. It is a review event, which is what `WI-006-03` asks
+for, and it belongs in the review queue rather than in a 3am notification.
+
+The flag is stamped into the bundle (`quickbird:soup:recheck`) rather than kept in a side file,
+because the bundle is the evidence — and the PDF renders only what the bundle says, so the two
+cannot drift. The SOUP table shows it in the same cell as the requirement count, so a reader sees
+both facts together: what the record asserts, and what holds today.
+
+One caveat on coverage: across the 39 records in `qb-soups`, `grq-4` is `fulfilled: true` with
+`vulnerabilities_count: 0` in every one. Whether this fires in practice depends on those libraries
+appearing in a product SBOM — on Kontina all 521 findings sat in third-party images that have no
+SOUP record at all. It is tested against constructed data; a real hit awaits a run with a populated
+`.soups` directory.
+
 **States.** `not_affected` · `affected` · `fixed` · `under_investigation`.
 
 **Justification vocabulary** for `not_affected` — exactly one of, aligned to CSAF VEX 2.0 (and

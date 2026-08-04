@@ -630,6 +630,81 @@ test_classify_kev_and_critical_have_different_clocks() {
 
 # A Medium has no mitigation clock any more. It stood at 30d across 196 findings on one
 # product and meant "write a document"; Track 3 rides the maintenance window instead.
+# ---------------------------------------------------------------- grq-4 vs reality
+# grq-4 ("no major or critical security issues") is evaluated once, at approval time, against
+# metadata.input_version. A patch move inside the approved family keeps the approval — correctly —
+# but the vulnerability picture can change underneath it, and nothing reconciled the two. A record
+# could keep asserting "no major or critical security issues" while the monitor reported a Critical
+# in the same component.
+mkg4() {  # <grq4-fulfilled> <vector> [vex-state] [justification]
+  rm -rf "$TMP/g4"; mkdir -p "$TMP/g4/soups"
+  jq -n --argjson ful "$1" \
+    '{package:"linkerd",version:"25.x.x",
+      metadata:{input_version:"25.10.6",approval:{by:"a",date:"2025-11-04T00:00:00Z"}},
+      requirements:{"grq-4":{description:"Does not contain major or critical security issues.",
+                             fulfilled:$ful,
+                             reason_if_requirement_not_fulfilled:(if $ful then "" else "known, accepted" end),
+                             metadata:{vulnerabilities_count:0}}}}' > "$TMP/g4/soups/linkerd.json"
+  jq -n --arg vec "$2" --arg vs "${3:-}" --arg j "${4:-}" \
+    '{bomFormat:"CycloneDX",specVersion:"1.6",
+      metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+      components:[{"bom-ref":"c1",type:"library",name:"linkerd",version:"25.12.1",
+                   purl:"pkg:golang/linkerd@25.12.1"}],
+      vulnerabilities:[({id:"CVE-2026-1",affects:[{ref:"c1"}],
+                         ratings:[{source:{name:"OSV"},method:"CVSSv31",vector:$vec}]}
+                        + (if $vs != "" then {analysis:({state:$vs}
+                             + (if $j != "" then {justification:$j} else {} end))} else {} end))]}' \
+    > "$TMP/g4/in.json"
+  bash "$S/merge-assessment.sh" "$TMP/g4/in.json" "$TMP/g4/soups" "$TMP/g4/a.json" >/dev/null 2>&1 || return 1
+  mkpolicy
+  CLS "$TMP/g4/a.json" "$TMP/cp.json" --out "$TMP/g4/cl.json" --now 2026-01-01T00:00:00+00:00 \
+    >/dev/null 2>&1
+}
+
+test_grq4_a_critical_contradicts_a_fulfilled_record() {
+  mkg4 true "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" || return 1
+  assert "$(jq -r '.soup_records_to_recheck | length' "$TMP/g4/cl.json")" "1" || return 1
+  assert "$(jq -r '.soup_records_to_recheck[0].component' "$TMP/g4/cl.json")" "linkerd" || return 1
+  # the record is not treated as withdrawn — it is flagged for re-check
+  jq -re '.soup_records_to_recheck[0].why | test("not withdrawn")' "$TMP/g4/cl.json" >/dev/null
+}
+
+# grq-4 says "major or critical". A Medium does not contradict it, and pulling Medium findings in
+# via the expedited track would blunt the signal.
+test_grq4_a_medium_does_not_contradict() {
+  mkg4 true "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N" || return 1
+  assert "$(jq -r '.soup_records_to_recheck | length' "$TMP/g4/cl.json")" "0"
+}
+
+# A justified not_affected means the component is not exposed, so nothing is contradicted.
+test_grq4_vex_not_affected_does_not_contradict() {
+  mkg4 true "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" not_affected vulnerable_code_not_present || return 1
+  assert "$(jq -r '.soup_records_to_recheck | length' "$TMP/g4/cl.json")" "0"
+}
+
+# If grq-4 is already recorded as unfulfilled with a reason, the record says so — no contradiction.
+test_grq4_unfulfilled_record_is_not_contradicted() {
+  mkg4 false "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" || return 1
+  assert "$(jq -r '.soup_records_to_recheck | length' "$TMP/g4/cl.json")" "0"
+}
+
+# The finding keeps its own classification either way — this is a review event, not a reclassification.
+test_grq4_contradiction_does_not_change_the_track() {
+  mkg4 true "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/g4/cl.json")" "immediate"
+}
+
+# The bundle is the evidence, so the flag has to travel in it — the PDF renders only what the
+# bundle says, by design.
+test_grq4_contradiction_is_stamped_into_the_bundle() {
+  mkg4 true "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" || return 1
+  python3 "$S/classify-findings.py" "$TMP/g4/a.json" "$TMP/cp.json" \
+    --annotate-bom "$TMP/g4/a.json" --out "$TMP/g4/cl2.json" \
+    --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.components[0].properties[]|select(.name=="quickbird:soup:recheck")][0].value' "$TMP/g4/a.json")" "grq-4" || return 1
+  assert "$(jq -r '[.components[0].properties[]|select(.name=="quickbird:soup:recheck-findings")][0].value' "$TMP/g4/a.json")" "1"
+}
+
 # ---------------------------------------------------------------- onboarding baseline
 # Starting every clock at first discovery is right for a monitored product and wrong on the day
 # monitoring begins: the accumulated backlog is all dated the same day. On kontina-backend that

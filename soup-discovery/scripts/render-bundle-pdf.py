@@ -212,6 +212,14 @@ def build(bundle, out_path):
             reqtxt = f"{met}/{len(reqs)} met"
             if unmet:
                 reqtxt += f'<br/><font color="#b45309">open: {esc(", ".join(sorted(unmet)))}</font>'
+            # A requirement recorded as met that today's scan contradicts. Shown in the same cell
+            # as the requirement count, because the reader needs both facts together: what the
+            # record asserts and what holds now. Otherwise this is precisely the discrepancy an
+            # auditor assembles by hand from two documents.
+            if p.get("quickbird:soup:recheck") == "grq-4":
+                n = p.get("quickbird:soup:recheck-findings", "?")
+                reqtxt += (f'<br/><font color="#b45309"><b>grq-4 recorded met, but {esc(n)} '
+                           f'High+ finding(s) open today — re-check</b></font>')
             # A temporary approval is a provisional decision: an approver signed off an
             # unfulfilled requirement on a branch, with a recorded reason. Rendering it the same
             # as a full approval would put a provisional sign-off into the document an auditor
