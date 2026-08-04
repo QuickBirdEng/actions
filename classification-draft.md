@@ -516,8 +516,47 @@ SOUP evaluation per package would produce a thousand records that nobody reads, 
 attention that the ~30 direct dependencies actually deserve.
 
 What follows from it is the obligation the decision creates rather than removes: **a CVE in an OS
-package is remediated by bumping the base image**, so base images must be pinned by digest and bumped
-deliberately. A base image pinned to a floating tag cannot be remediated in a way anyone can verify.
+package is remediated by bumping the base image**, so base images must be bumped deliberately and
+the bump must be verifiable.
+
+**Corrected 2026-08-04.** An earlier version of this section required base images to be pinned *by
+digest*, and treated everything short of that as one problem. It is three, and only the last is a
+real hole:
+
+| | Example | Scannable | Reproducible |
+| --- | --- | --- | --- |
+| Digest | `eclipse-temurin:21-jre@sha256:2733…` | yes | yes, byte-identical |
+| Version tag | `alpine:3.20` | yes | no — the same tag yields different bytes months later |
+| Floating | `curlimages/curl:latest` | yes, but it names nothing | no |
+
+Measured across the portfolio: Apellis has six distinct `FROM` lines — two digest-pinned, four
+version-tagged, **none floating**. The genuinely floating references are four, all health-check
+containers: `curlimages/curl:latest` in Osteocoach, Alvie and Dermafy, and
+`osexp2000/ubuntu-with-utils:latest` in Mindnet.
+
+A version tag is not a problem this process needs to solve. It is in scope, a scan of it is
+meaningful, and remediation is a rebuild rather than a digest change.
+
+**The floating case had the incentive backwards.** The scope files excluded those four with the
+reason "pinned to `latest` and therefore not reproducible" — so pinning an image brought its CVEs
+into scope while leaving it floating kept them out, and the SBOM reported `complete: true` while a
+production container went unmonitored. The worse configuration produced the cleaner report.
+
+The fix is not to exclude them and not to look at the cluster. **The build already knows.** Syft's
+CycloneDX output records only the image name and tag, but its native output carries `repoDigests`
+— so the scan now records the digest it actually examined:
+
+```
+redis:8.8.1-alpine  ->  index.docker.io/library/redis@sha256:8096655e4377…
+```
+
+That goes into `metadata.component.hashes` (Component Hash is a CISA minimum element) and into
+`quickbird:scan:image-digest`. The document then states exactly which bytes were assessed whatever
+the tag does afterwards, floating images are simply in scope, and tag mutation on a *pinned* image
+becomes visible too: same tag, different digest between two runs.
+
+Pinning remains the right thing to do — it is what makes the scanned bytes and the deployed bytes
+the same — but declining to scan was never the way to ask for it.
 
 ### 5.2 Which SBOMs are records, and which are not
 

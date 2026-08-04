@@ -31,6 +31,19 @@ KEEP_TIMESTAMP="${KEEP_TIMESTAMP:-0}"   # 1 for the release tier, which needs a 
 # though the scanned content is identical. Found by running the determinism check itself;
 # it is invisible to a components-only inspection.
 SUBJECT="${BOM_SUBJECT:-}"
+# The digest of what was actually scanned, read from syft's native output. Optional: a directory
+# or lockfile scan has no image digest, and a missing one must not fail the run.
+NATIVE="${SYFT_NATIVE:-}"
+TARGET="${SCAN_TARGET:-}"
+IMG_REF=""; IMG_ID=""
+if [[ -n "$NATIVE" && -f "$NATIVE" ]]; then
+  IMG_REF=$(jq -r '(.source.metadata.repoDigests // [])[0] // ""' "$NATIVE" 2>/dev/null)
+  [[ -z "$IMG_REF" || "$IMG_REF" == "null" ]] && \
+    IMG_REF=$(jq -r '.source.metadata.manifestDigest // ""' "$NATIVE" 2>/dev/null)
+  IMG_ID=$(jq -r '.source.metadata.imageID // ""' "$NATIVE" 2>/dev/null)
+  [[ "$IMG_REF" == "null" ]] && IMG_REF=""
+  [[ "$IMG_ID" == "null" ]] && IMG_ID=""
+fi
 
 command -v jq >/dev/null 2>&1 || { echo "::error::jq required" >&2; exit 1; }
 [[ -f "$IN" ]] || { echo "::error::not found: $IN" >&2; exit 1; }
@@ -42,7 +55,8 @@ if [[ -z "$SUBJECT" ]]; then
   exit 1
 fi
 
-jq --argjson keep_ts "$KEEP_TIMESTAMP" --arg subject "$SUBJECT" '
+jq --argjson keep_ts "$KEEP_TIMESTAMP" --arg subject "$SUBJECT" \
+   --arg ref "$IMG_REF" --arg imgid "$IMG_ID" --arg target "$TARGET" '
   # jar filename -> SHA-256, from the type:file components
   ( [ .components[]?
       | select(.type == "file")
@@ -79,6 +93,23 @@ jq --argjson keep_ts "$KEEP_TIMESTAMP" --arg subject "$SUBJECT" '
   | (if .metadata.component != null
        then .metadata.component.name = $subject
           | .metadata.component["bom-ref"] = ("quickbird:subject:" + $subject)
+          # 5. record which bytes were actually examined. The CycloneDX output carries only
+          # the image name and tag; the digest comes from the native output. Without it a
+          # floating tag leaves the document unable to say what it looked at, which is why such
+          # images were being excluded from scope as "not reproducible" — rewarding exactly the
+          # configuration that caused the problem. With it, the document is exact whatever the
+          # tag does afterwards, and tag mutation on a pinned image becomes visible: same tag,
+          # different digest between two runs.
+          | (if $ref != "" then .metadata.component.hashes =
+                 ((.metadata.component.hashes // [])
+                  + [{alg: "SHA-256", content: ($ref | sub("^.*@sha256:"; ""))}] | unique)
+             else . end)
+          | .metadata.component.properties =
+              ((.metadata.component.properties // [])
+               + [ {name: "quickbird:scan:target", value: $target} ]
+               + (if $ref != "" then [{name: "quickbird:scan:image-digest", value: $ref}] else [] end)
+               + (if $imgid != "" then [{name: "quickbird:scan:image-id", value: $imgid}] else [] end)
+               | unique_by(.name))
        else . end)
 ' "$IN" > "$OUT" || { echo "::error::normalisation failed" >&2; exit 1; }
 

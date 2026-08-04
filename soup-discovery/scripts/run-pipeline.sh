@@ -148,14 +148,27 @@ while IFS=$'\t' read -r id source resolvable; do
   esac
 
   log "  scan $id  <- $target"
-  if ! "$SYFT_BIN" scan "$target" -o cyclonedx-json="$raw" -q 2>/dev/null; then
+  # Two output formats from one scan. syft's CycloneDX output records only the image name and
+  # tag — no digest at all — while its native output carries repoDigests, manifestDigest and
+  # imageID. That digest is what makes the document say which bytes were actually examined:
+  #
+  #   redis:8.8.1-alpine  ->  index.docker.io/library/redis@sha256:8096655e4377...
+  #
+  # It matters most for a floating tag. `curlimages/curl:latest` names nothing, so without the
+  # digest the SBOM cannot say what it looked at, and the scope files were excluding such images
+  # as "not reproducible" — which rewarded leaving them unpinned. With the digest recorded, the
+  # document is exact regardless of what the tag does later, and the image can simply be in scope.
+  # It also makes tag mutation visible on a pinned image: same tag, different digest between runs.
+  native="${raw%.json}.syft.json"
+  if ! "$SYFT_BIN" scan "$target" -o cyclonedx-json="$raw" -o syft-json="$native" -q 2>/dev/null; then
     log "  gap  $id — syft failed"; GAPS+=("$id"); continue
   fi
-  BOM_SUBJECT="$id" bash "$HERE/normalize-bom.sh" "$raw" "$final" >/dev/null \
+  BOM_SUBJECT="$id" SCAN_TARGET="$target" SYFT_NATIVE="$native" \
+    bash "$HERE/normalize-bom.sh" "$raw" "$final" >/dev/null \
     || { log "  gap  $id — normalisation failed"; GAPS+=("$id"); continue; }
   bash "$HERE/verify-bom.sh" "$final" >/dev/null 2>&1 \
     || { bash "$HERE/verify-bom.sh" "$final" >&2; die "$id failed the BOM gate"; }
-  rm -f "$raw"
+  rm -f "$raw" "$native"
   BOMS+=("$final")
 done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)"' "$PLAN")
 

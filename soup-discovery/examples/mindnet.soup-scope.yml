@@ -77,6 +77,14 @@ include:
 
   # (Countly moved to exclude — see below.)
 
+  # --- floating tag, in scope anyway --------------------------------------------
+  - id: deployed-ubuntu-with-utils-latest
+    reason: >-
+      Health-check cron container on a `latest` tag. In scope because the scan records the digest
+      it examined, so the document says what was assessed even though the tag does not. Excluding
+      it made the SBOM claim completeness while a production container went unmonitored, and
+      rewarded leaving the tag floating. Pinning it remains the right fix.
+
 exclude:
   # --- build stages that never reach production ---------------------------------
   - id: web-dockerfiles-image-1
@@ -105,12 +113,6 @@ exclude:
       data-protection assessment. It is simply not a component of the shipped software,
       so its container contents are not our configuration items.
 
-  # --- utility container --------------------------------------------------------
-  - id: deployed-ubuntu-with-utils-latest
-    reason: >-
-      Health-check cron container, pinned to `latest` and therefore not reproducible.
-      Out of scope until it is pinned; tracked as a hygiene item rather than silently
-      included.
 
   # --- templated references: our own images, already covered ---------------------
   # Each of these is one of our own images whose tag is substituted at deploy time, so the

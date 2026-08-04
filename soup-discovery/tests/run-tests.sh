@@ -401,6 +401,50 @@ test_consolidate_defaults_the_tier_to_branch() {
   assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:sbom:tier")][0].value' "$TMP/tout2.json")" "branch"
 }
 
+# The CycloneDX output of a registry scan carries only the image name and tag — no digest at all.
+# Without the digest a floating tag leaves the document unable to say what it examined, which is
+# why such images were being excluded from scope as "not reproducible": the worse configuration
+# produced the cleaner report.
+test_normalize_records_the_scanned_image_digest() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"redis",version:"latest",type:"container","bom-ref":"x"}},
+          components:[]}' > "$TMP/nd-raw.json"
+  jq -n '{source:{metadata:{imageID:"sha256:aaa",manifestDigest:"sha256:bbb",
+                            repoDigests:["index.docker.io/library/redis@sha256:ccc"]}}}' \
+    > "$TMP/nd-native.json"
+  BOM_SUBJECT=deployed-redis SCAN_TARGET=registry:redis:latest SYFT_NATIVE="$TMP/nd-native.json" \
+    bash "$S/normalize-bom.sh" "$TMP/nd-raw.json" "$TMP/nd.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.metadata.component.properties[]|select(.name=="quickbird:scan:image-digest")][0].value' "$TMP/nd.json")" \
+         "index.docker.io/library/redis@sha256:ccc" || return 1
+  # also as a hash, because Component Hash is a CISA minimum element
+  assert "$(jq -r '[.metadata.component.hashes[]|select(.alg=="SHA-256")][0].content' "$TMP/nd.json")" "ccc"
+}
+
+# repoDigests is the registry-addressable form and the one that lets someone pull the same bytes
+# again; manifestDigest is the fallback when a local image has never been pushed.
+test_normalize_falls_back_to_the_manifest_digest() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"x",version:"1",type:"container","bom-ref":"x"}},components:[]}' \
+    > "$TMP/nd-raw.json"
+  jq -n '{source:{metadata:{imageID:"sha256:aaa",manifestDigest:"sha256:bbb",repoDigests:[]}}}' \
+    > "$TMP/nd-native.json"
+  BOM_SUBJECT=s SCAN_TARGET=t SYFT_NATIVE="$TMP/nd-native.json" \
+    bash "$S/normalize-bom.sh" "$TMP/nd-raw.json" "$TMP/nd.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.metadata.component.properties[]|select(.name=="quickbird:scan:image-digest")][0].value' "$TMP/nd.json")" "sha256:bbb"
+}
+
+# A directory or lockfile scan has no image digest, and a missing one must not fail the run.
+test_normalize_survives_a_scan_with_no_image() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"x",version:"1",type:"application","bom-ref":"x"}},components:[]}' \
+    > "$TMP/nd-raw.json"
+  BOM_SUBJECT=s SCAN_TARGET=dir:. bash "$S/normalize-bom.sh" "$TMP/nd-raw.json" "$TMP/nd.json" \
+    >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.metadata.component.properties[]?|select(.name=="quickbird:scan:image-digest")]|length' "$TMP/nd.json")" "0" || return 1
+  # the target is still recorded, so the document says what it looked at either way
+  assert "$(jq -r '[.metadata.component.properties[]|select(.name=="quickbird:scan:target")][0].value' "$TMP/nd.json")" "dir:."
+}
+
 # ---------------------------------------------------------------- assessment
 soup_record() { # <package> <family> <input_version> [vex-json]
   jq -n --arg p "$1" --arg f "$2" --arg iv "$3" --argjson vex "${4:-null}" \

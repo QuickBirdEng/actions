@@ -62,6 +62,17 @@ include:
   - id: deployment-terraform-main
     reason: Pinned Terraform provider versions for the production infrastructure.
 
+  # --- floating tag, in scope anyway --------------------------------------------
+  - id: deployed-curl-latest
+    reason: >-
+      Health-check cronjob. Pinned to `latest`, which names nothing — but the scan now records
+      the digest it actually examined (`quickbird:scan:image-digest`), so the document states
+      exactly what was assessed even though the tag does not. Excluding it was the older and
+      worse answer: it made the SBOM claim completeness while a production container went
+      unmonitored, and it rewarded leaving the tag floating. Pinning the tag is still the right
+      fix — it is what makes the scanned bytes and the deployed bytes the same — but not
+      scanning it was never the way to ask for that.
+
 exclude:
   # --- resolved elsewhere, would double count -----------------------------------
   - id: overlay_dialog
@@ -93,11 +104,6 @@ exclude:
       production. This is a "Software Tool" in QMS terms, not a component of the shipped
       software — it belongs in the tools record, not in the product SBOM.
 
-  # --- utility container --------------------------------------------------------
-  - id: deployed-curl-latest
-    reason: >-
-      Health-check cronjob, pinned to `latest` and therefore not reproducible. Out of scope
-      until it is pinned; tracked as a hygiene item rather than silently included.
 
   # --- release-versioned images: our own, already covered ------------------------
   # Repository resolves from the chart values, tag comes from `--set version`. Contents are
