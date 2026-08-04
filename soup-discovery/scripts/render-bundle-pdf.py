@@ -212,12 +212,24 @@ def build(bundle, out_path):
             reqtxt = f"{met}/{len(reqs)} met"
             if unmet:
                 reqtxt += f'<br/><font color="#b45309">open: {esc(", ".join(sorted(unmet)))}</font>'
+            # A temporary approval is a provisional decision: an approver signed off an
+            # unfulfilled requirement on a branch, with a recorded reason. Rendering it the same
+            # as a full approval would put a provisional sign-off into the document an auditor
+            # reads as though it were settled — which is the one thing this table must not do.
+            approved = p.get("quickbird:soup:approved", "")
+            if who == "—":
+                whotxt = '<font color="#b91c1c">not approved</font>'
+            elif approved == "temporary":
+                why = p.get("quickbird:soup:approval-temporary-reason", "no reason recorded")
+                whotxt = (f'<font color="#b45309"><b>TEMPORARY</b></font><br/>{esc(who)}'
+                          f'<br/>{esc(when)}<br/><font size="6">{esc(why[:90])}</font>')
+            else:
+                whotxt = f"{esc(who)}<br/>{esc(when)}"
             rows.append([
                 Paragraph(esc(c.get("name")), cell),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(esc(p.get("quickbird:soup:approved-family", "—")), cell),
-                Paragraph(f"{esc(who)}<br/>{esc(when)}" if who != "—" else
-                          '<font color="#b91c1c">not approved</font>', cell),
+                Paragraph(whotxt, cell),
                 Paragraph(reqtxt, cell),
             ])
         el.append(table(rows, [45 * mm, 22 * mm, 25 * mm, 38 * mm, 40 * mm]))

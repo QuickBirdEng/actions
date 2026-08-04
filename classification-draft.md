@@ -776,10 +776,39 @@ Not open questions — things that must be re-examined on a trigger rather than 
    The monitored-product list has no per-repo home by construction — a product that was never
    scanned cannot report itself — so it lives in the scheduled workflow that runs the backstop.
 
-1. **The approval field schema is inconsistent.** Records in `qb-soups` carry
-   `approval.{date,by,condition}`; the approval workflow additionally writes `by_url`; DEV-190 assumes
-   `is_temporary`. The tooling tolerates all three shapes, but the schema should be pinned down before
-   the PDF and the approval annotation are treated as controlled output.
+1. **The approval field schema** — measured 2026-08-04 against all 39 records in `qb-soups`, and it
+   is less a mess than a distinction I had missed. **There are two approval states**, written by two
+   different workflows:
+
+   | | Written by | Means |
+   | --- | --- | --- |
+   | Full | `soup-approval-verification-workflow.yml`, on a PR review by someone in `SOUP_APPROVERS` | every requirement is fulfilled, or has a stated reason for not being |
+   | Temporary | `soup-temporary-approval-workflow.yml`, on a branch, with a mandatory `approval-reason` | an approver signed off an **unfulfilled** requirement, provisionally, with the reason recorded in `is_temporary_reason` |
+
+   The temporary path is the "version release when there are gaps" — it exists precisely so an
+   unmet `grq-*` requirement can be carried on a branch rather than blocking.
+
+   That produced a real defect in this tooling, now fixed: `quickbird:soup:approved` was `true`
+   whenever `approval.by` was filled, **including for a temporary approval**, so a provisional
+   sign-off read as settled in the evidence bundle and the PDF rendered it identically to a full
+   one. It is now three-valued — `true` / `temporary` / `false` — deliberately in the direction
+   where a consumer comparing to `"true"` treats a temporary approval as *not yet* approved, and
+   the PDF marks it `TEMPORARY` with the recorded reason.
+
+   The approval is per **version family** (`version: "4.17.x"`), not per version;
+   `metadata.input_version` records which concrete version was examined at the time.
+   `merge-assessment.sh` joins on the family for that reason.
+
+   What genuinely remains open is smaller than the original item suggested:
+
+   - `by_url` is present on **22 of 39** records and absent on 17 — the verification workflow
+     writes it, so the older records predate it. Harmless, but it means the field cannot be
+     required.
+   - `condition` exists on **all 39 and is empty on all 39**. Either it has a meaning that should
+     be written down and used, or it should go; an always-empty field in a controlled record
+     invites someone to assume it means "no conditions" when it may only mean "nobody filled it in".
+   - Nothing is temporarily approved right now (`is_temporary` on 0 of 39), so the path above is
+     untested against live data.
 2. **Three values come from the SLA, not from this process** — clarified 2026-08-03:
 
    | Value | What it governs |

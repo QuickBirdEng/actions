@@ -350,6 +350,43 @@ test_discover_does_not_resolve_outside_a_chart() {
   assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].resolvable' "$TMP/cand.json")" "false"
 }
 
+# There are two approval states, not one. soup-temporary-approval-workflow.yml sets
+# metadata.approval.is_temporary when an approver signs off an unfulfilled requirement on a branch
+# with a recorded reason. Reporting that as approved: true made a provisional decision read as a
+# settled one in the evidence bundle.
+test_assessment_reports_a_temporary_approval_as_temporary() {
+  rm -rf "$TMP/ta"; mkdir -p "$TMP/ta/soups"
+  jq -n '{package:"lodash",version:"4.17.x",requirements:{},
+          metadata:{input_version:"4.17.15",
+                    approval:{by:"a",date:"2026-01-01T00:00:00Z",
+                              is_temporary:true,is_temporary_reason:"grq-3 under review"}}}' \
+    > "$TMP/ta/soups/lodash.json"
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[{"bom-ref":"c1",type:"library",name:"lodash",version:"4.17.15",
+                       purl:"pkg:npm/lodash@4.17.15"}]}' > "$TMP/ta/in.json"
+  bash "$S/merge-assessment.sh" "$TMP/ta/in.json" "$TMP/ta/soups" "$TMP/ta/out.json" >/dev/null 2>&1 || return 1
+  # not "true": a consumer comparing to "true" must treat this as not-yet-approved
+  assert "$(jq -r '[.components[0].properties[]|select(.name=="quickbird:soup:approved")][0].value' "$TMP/ta/out.json")" "temporary" || return 1
+  # and the recorded reason travels with it
+  assert "$(jq -r '[.components[0].properties[]|select(.name=="quickbird:soup:approval-temporary-reason")][0].value' "$TMP/ta/out.json")" "grq-3 under review"
+}
+
+# A full approval must still read as one.
+test_assessment_reports_a_full_approval_as_true() {
+  rm -rf "$TMP/tb"; mkdir -p "$TMP/tb/soups"
+  jq -n '{package:"lodash",version:"4.17.x",requirements:{},
+          metadata:{input_version:"4.17.15",approval:{by:"a",date:"2026-01-01T00:00:00Z"}}}' \
+    > "$TMP/tb/soups/lodash.json"
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[{"bom-ref":"c1",type:"library",name:"lodash",version:"4.17.15",
+                       purl:"pkg:npm/lodash@4.17.15"}]}' > "$TMP/tb/in.json"
+  bash "$S/merge-assessment.sh" "$TMP/tb/in.json" "$TMP/tb/soups" "$TMP/tb/out.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.components[0].properties[]|select(.name=="quickbird:soup:approved")][0].value' "$TMP/tb/out.json")" "true" || return 1
+  assert "$(jq -r '[.components[0].properties[]|select(.name=="quickbird:soup:approval-temporary-reason")]|length' "$TMP/tb/out.json")" "0"
+}
+
 # ---------------------------------------------------------------- consolidate
 test_consolidate_loses_no_component() {
   for i in 1 2; do

@@ -139,9 +139,24 @@ jq --slurpfile recs "$TMP/records.json" '
         | .c
         | .properties = ( ((.properties // []) + req_props($r)
                            + [ { name: "quickbird:soup:record",   value: ($r._source // "") },
+                               # Three states, not a boolean. A temporary approval is written by
+                               # soup-temporary-approval-workflow.yml when a requirement is
+                               # unfulfilled and has no stated reason: the approver signs it off on
+                               # a branch with a recorded justification. That is a provisional
+                               # decision, and reporting it as `true` made it read in the evidence
+                               # as a full approval — the one reading that would not survive being
+                               # asked about. A consumer comparing to "true" now correctly treats
+                               # it as not-yet-approved rather than the other way round.
                                { name: "quickbird:soup:approved",
-                                 value: ((($r.metadata.approval.by // "") != "") | tostring) },
-                               { name: "quickbird:soup:approved-family", value: ($r.version // "") },
+                                 value: (if (($r.metadata.approval.by // "") == "") then "false"
+                                         elif (($r.metadata.approval.is_temporary // false) == true) then "temporary"
+                                         else "true" end) },
+                               { name: "quickbird:soup:approved-family", value: ($r.version // "") } ]
+                           + ( if (($r.metadata.approval.is_temporary // false) == true)
+                               then [ { name: "quickbird:soup:approval-temporary-reason",
+                                        value: ($r.metadata.approval.is_temporary_reason // "no reason recorded") } ]
+                               else [] end )
+                           + [ 
                                { name: "quickbird:soup:checked-version", value: ($r.metadata.input_version // "") } ]
                            + ( if (($r.risk_refs // []) | length) > 0
                                then ($r.risk_refs | map({name:"quickbird:soup:risk-ref", value:.}))
