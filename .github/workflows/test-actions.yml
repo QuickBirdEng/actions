@@ -10,6 +10,7 @@ on:
       - "trufflehog-filter-findings/**"
       - "store-debug-symbols/**"
       - "restore-debug-symbols/**"
+      - "delete-debug-symbols/**"
       - "upload-debug-symbols-to-sentry/**"
 
 jobs:
@@ -54,6 +55,16 @@ jobs:
           python-version: '3.x'
       - uses: bats-core/bats-action@2
       - run: bats restore-debug-symbols/tests/
+
+  test-delete-debug-symbols:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: bats-core/bats-action@2
+      - run: bats delete-debug-symbols/tests/
 
   test-upload-debug-symbols-to-sentry:
     runs-on: ubuntu-latest

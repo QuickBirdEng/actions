@@ -1,0 +1,38 @@
+name: 'Delete debug symbols'
+description: 'Delete the debug symbols a build stored in QB Spaces, once Sentry has them'
+inputs:
+  access-key:
+    description: 'Digital Ocean Access Key'
+    required: true
+  secret-key:
+    description: 'Digital Ocean Secret Key'
+    required: true
+  space-name:
+    description: 'Name of the DO Space the symbols were stored in'
+    required: false
+    default: 'quickbird-artifacts'
+  space-region:
+    description: 'Region of the DO Space'
+    required: false
+    default: 'fra1'
+  build-number:
+    description: 'Build number the symbols were stored for. Must be the same one the build jobs passed to store-debug-symbols. Falls back to the workflow run id.'
+    required: false
+    default: ''
+  platforms:
+    description: 'Space separated platform labels to delete. Platforms without stored symbols are skipped.'
+    required: false
+    default: 'ios android-apk android-aab'
+runs:
+  using: "composite"
+  steps:
+    - name: Delete debug symbols from QB Spaces
+      shell: bash
+      env:
+        INPUT_ACCESS_KEY: ${{ inputs.access-key }}
+        INPUT_SECRET_KEY: ${{ inputs.secret-key }}
+        INPUT_SPACE_NAME: ${{ inputs.space-name }}
+        INPUT_SPACE_REGION: ${{ inputs.space-region }}
+        INPUT_BUILD_NUMBER: ${{ inputs.build-number }}
+        INPUT_PLATFORMS: ${{ inputs.platforms }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/delete_debug_symbols.sh"
