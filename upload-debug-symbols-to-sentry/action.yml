@@ -15,7 +15,7 @@ inputs:
     required: false
     default: ''
   symbols-dir:
-    description: 'Directory holding one folder per platform, as produced by downloading the debug symbol artifacts of a run. Debug files are found by name, so the layout inside each folder does not matter. Alternative to passing the paths below individually.'
+    description: 'Directory holding one folder per platform as created by restore-debug-symbols (<platform>/dsyms, <platform>/dart-symbols, <platform>/proguard/mapping.txt). Alternative to passing the paths below individually.'
     required: false
     default: ''
   dsyms-path:

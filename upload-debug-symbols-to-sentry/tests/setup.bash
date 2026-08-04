@@ -18,21 +18,21 @@ stub_sentry_cli() {
     chmod +x "${STUB_DIR}/sentry-cli"
 }
 
-# Build the tree `actions/download-artifact` produces: one folder per artifact,
-# each keeping the paths the build produced.
-setup_downloaded_symbols() {
+# Build the tree restore-debug-symbols produces: one folder per platform.
+setup_restored_symbols() {
     WORKSPACE="${BATS_TEST_TMPDIR}/workspace"
-    local ios="${WORKSPACE}/debug-symbols/debug-symbols-ios"
-    mkdir -p "${ios}/build/ios/archive/Runner.xcarchive/dSYMs/App.dSYM/Contents/Resources/DWARF" "${ios}/app_symbols"
-    echo "dwarf" > "${ios}/build/ios/archive/Runner.xcarchive/dSYMs/App.dSYM/Contents/Resources/DWARF/App"
-    echo "symbols" > "${ios}/app_symbols/app.ios-arm64.symbols"
-    echo '{"a":"b"}' > "${ios}/app_symbols/obfuscation.map.json"
+    mkdir -p "${WORKSPACE}/debug-symbols/ios/dsyms/App.dSYM/Contents/Resources/DWARF"
+    echo "dwarf" > "${WORKSPACE}/debug-symbols/ios/dsyms/App.dSYM/Contents/Resources/DWARF/App"
+    mkdir -p "${WORKSPACE}/debug-symbols/ios/dart-symbols"
+    echo "symbols" > "${WORKSPACE}/debug-symbols/ios/dart-symbols/app.ios-arm64.symbols"
+    echo '{"a":"b"}' > "${WORKSPACE}/debug-symbols/ios/dart-symbols/obfuscation.map.json"
+    echo "release=1.4.0+1764500000" > "${WORKSPACE}/debug-symbols/ios/metadata.env"
 
-    local android="${WORKSPACE}/debug-symbols/debug-symbols-android-aab"
-    mkdir -p "${android}/build/app/outputs/mapping/release" "${android}/app_symbols"
-    echo "mapping" > "${android}/build/app/outputs/mapping/release/mapping.txt"
-    echo "symbols" > "${android}/app_symbols/app.android-arm64.symbols"
-    echo '{"a":"b"}' > "${android}/app_symbols/obfuscation.map.json"
+    mkdir -p "${WORKSPACE}/debug-symbols/android-aab/dart-symbols" "${WORKSPACE}/debug-symbols/android-aab/proguard"
+    echo "symbols" > "${WORKSPACE}/debug-symbols/android-aab/dart-symbols/app.android-arm64.symbols"
+    echo '{"a":"b"}' > "${WORKSPACE}/debug-symbols/android-aab/dart-symbols/obfuscation.map.json"
+    echo "mapping" > "${WORKSPACE}/debug-symbols/android-aab/proguard/mapping.txt"
+    echo "release=1.4.0+1764500000" > "${WORKSPACE}/debug-symbols/android-aab/metadata.env"
 }
 
 # And the raw build outputs, for the explicit-path inputs.

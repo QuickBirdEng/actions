@@ -31,12 +31,8 @@ upload_proguard_mapping() {
 
 uploaded=0
 
-# ── downloaded symbols directory (one folder per platform) ────────────────────
+# ── restored symbols directory (one folder per platform) ──────────────────────
 
-# Each folder is one downloaded artifact and keeps the paths the build produced,
-# so everything is found by name rather than by an expected layout. dSYMs and
-# dart .symbols files are both picked up recursively by debug-files upload; only
-# the proguard mapping and the obfuscation map need handling of their own.
 if [[ -n "${INPUT_SYMBOLS_DIR:-}" ]]; then
     if [[ ! -d "$INPUT_SYMBOLS_DIR" ]]; then
         echo "::error::symbols-dir '$INPUT_SYMBOLS_DIR' does not exist"
@@ -46,24 +42,31 @@ if [[ -n "${INPUT_SYMBOLS_DIR:-}" ]]; then
     for platform_dir in "$INPUT_SYMBOLS_DIR"/*/; do
         platform_dir="${platform_dir%/}"
         [[ -d "$platform_dir" ]] || continue
-        [[ -n "$(ls -A "$platform_dir")" ]] || continue
         echo "::group::Sentry upload for $(basename "$platform_dir")"
 
-        upload_debug_files "$platform_dir"
-        uploaded=$((uploaded + 1))
+        if [[ -d "$platform_dir/dsyms" ]]; then
+            upload_debug_files "$platform_dir/dsyms"
+            uploaded=$((uploaded + 1))
+        fi
 
-        while IFS= read -r map; do
-            upload_dart_symbol_map "$map" "$(dirname "$map")"
-        done < <(find "$platform_dir" -name obfuscation.map.json)
+        if [[ -d "$platform_dir/dart-symbols" ]]; then
+            upload_debug_files "$platform_dir/dart-symbols"
+            uploaded=$((uploaded + 1))
 
-        while IFS= read -r mapping; do
-            upload_proguard_mapping "$mapping"
-        done < <(find "$platform_dir" -name mapping.txt)
+            if [[ -f "$platform_dir/dart-symbols/obfuscation.map.json" ]]; then
+                upload_dart_symbol_map "$platform_dir/dart-symbols/obfuscation.map.json" "$platform_dir/dart-symbols"
+            fi
+        fi
+
+        if [[ -f "$platform_dir/proguard/mapping.txt" ]]; then
+            upload_proguard_mapping "$platform_dir/proguard/mapping.txt"
+            uploaded=$((uploaded + 1))
+        fi
 
         echo "::endgroup::"
     done
 
-    # Being handed a symbols dir and finding nothing means the build stored nothing.
+    # Restoring symbols and then uploading nothing means the build stored nothing.
     if [[ "$uploaded" -eq 0 ]]; then
         echo "::error::No debug symbols found under '$INPUT_SYMBOLS_DIR'"
         exit 1

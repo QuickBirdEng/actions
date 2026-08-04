@@ -8,6 +8,8 @@ on:
       - "test-repo/**"
       - "trufflehog-merge-excludes/**"
       - "trufflehog-filter-findings/**"
+      - "store-debug-symbols/**"
+      - "restore-debug-symbols/**"
       - "upload-debug-symbols-to-sentry/**"
 
 jobs:
@@ -35,6 +37,23 @@ jobs:
           python-version: '3.x'
       - run: pip install pytest pyyaml
       - run: pytest trufflehog-filter-findings/tests/
+
+  test-store-debug-symbols:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bats-core/bats-action@2
+      - run: bats store-debug-symbols/tests/
+
+  test-restore-debug-symbols:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: bats-core/bats-action@2
+      - run: bats restore-debug-symbols/tests/
 
   test-upload-debug-symbols-to-sentry:
     runs-on: ubuntu-latest
