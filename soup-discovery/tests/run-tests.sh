@@ -1515,6 +1515,44 @@ test_backstop_detects_a_changed_maintenance_commitment() {
   assert "$(jq -r '[.determination_drift[].field] | join(",")' "$TMP/bd.json")" "maintenance_interval"
 }
 
+# BSI TR-03161 O.TrdP_2 requires third-party software to be the newest version or the one preceding
+# it. The process default tolerates unlimited patch drift, which does not meet that. A regulatory
+# scope entry that only appeared in prose would be a requirement nobody applies.
+test_policy_tr03161_requires_a_patch_limit() {
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-3]\n' \
+    > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/tr.txt" && return 1
+  grep -q "O.TrdP_2" "$TMP/tr.txt" || return 1
+  # with a patch limit stated, it passes
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-3]\ndependency_currency:\n  max_behind:\n    patch: 1\n' \
+    > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
+}
+
+# O.TrdP_8: third-party software that is no longer maintained MUST NOT be used, so accepting
+# obsolescence with a reason is not available for a product in that scope.
+test_policy_tr03161_forbids_accepting_obsolescence() {
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-1]\ndependency_currency:\n  max_behind:\n    patch: 1\n  obsolescence_may_be_accepted: true\n' \
+    > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/tr.txt" && return 1
+  grep -q "O.TrdP_8" "$TMP/tr.txt"
+}
+
+# A regime nobody defined must not pass silently.
+test_policy_rejects_an_unknown_regulatory_scope() {
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-99999]\n' \
+    > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
+  assert "$?" "1"
+}
+
+# A product with no regulatory scope keeps the process default.
+test_policy_no_regulatory_scope_keeps_the_default() {
+  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1 || return 1
+  assert "$(bash "$S/validate-policy.sh" "$TMP/pol.yml" 2>/dev/null | jq -r '.dependency_currency.max_behind.patch')" "unlimited"
+}
+
 test_policy_rejects_a_non_duration_maintenance_interval() {
   printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: whenever\n' > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1

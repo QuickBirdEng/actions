@@ -98,6 +98,28 @@ maintenance_interval: 90d
 production_release:
   tag_pattern: '^v?[0-9]+\.[0-9]+\.[0-9]+$'
 
+# §3 — which regulatory regimes a product is in scope of.
+#
+# Not documentation. Each entry tightens a check, because some regimes are stricter than the
+# process default:
+#
+#   tr-03161-1   BSI TR-03161 part 1, mobile applications
+#   tr-03161-2   part 2, web applications
+#   tr-03161-3   part 3, backend systems
+#   cra          Cyber Resilience Act product requirements
+#   mdr          MDR/IVDR medical device
+#
+# What TR-03161 changes, from its O.TrdP requirement family:
+#   O.TrdP_2  third-party software MUST be the newest version or the one preceding it. Stricter
+#             than the default max_behind, which tolerates unlimited patch drift.
+#   O.TrdP_8  third-party software that is no longer maintained MUST NOT be used. So the default
+#             answer to obsolescence ("replace, fork, or accept with a recorded reason") loses its
+#             third option: an acceptance is not available.
+#   O.TrdP_4  after the grace period the application MUST refuse to operate. That is a product
+#             behaviour, outside this process, and it is why the deadlines here have to match the
+#             security concept the same requirement demands.
+regulatory_scope: []
+
 # §6 — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
 dependency_currency:
   max_behind:

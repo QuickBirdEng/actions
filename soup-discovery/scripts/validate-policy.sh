@@ -102,6 +102,30 @@ if jq -e 'has("release_cadence")' <<<"$P" >/dev/null 2>&1; then
   fi
 fi
 
+# --- regulatory scope tightens the currency policy ---------------------------
+# TR-03161 O.TrdP_2 requires the newest version or the one preceding it. The process default
+# tolerates unlimited patch drift, which does not meet that, so a product in TR-03161 scope must
+# state a patch limit. Enforced rather than documented: a requirement that only appears in prose is
+# a requirement nobody applies.
+SCOPE=$(jq -r '[.regulatory_scope // [] | .[]] | join(",")' <<<"$P" 2>/dev/null)
+for entry in $(tr ',' ' ' <<<"$SCOPE"); do
+  case "$entry" in
+    tr-03161-1|tr-03161-2|tr-03161-3|cra|mdr) ;;
+    *) err "$POLICY: regulatory_scope entry '$entry' is not one of tr-03161-1, tr-03161-2, tr-03161-3, cra, mdr" ;;
+  esac
+done
+if [[ "$SCOPE" == *tr-03161* ]]; then
+  # The project value if it sets one, otherwise the process default.
+  PATCH=$(jq -r '.dependency_currency.max_behind.patch // ""' <<<"$P")
+  [[ -z "$PATCH" || "$PATCH" == "null" ]] && PATCH=$(jq -r '.dependency_currency.max_behind.patch // ""' <<<"$D")
+  if [[ "$PATCH" == "unlimited" || -z "$PATCH" ]]; then
+    err "$POLICY: regulatory_scope includes TR-03161, whose O.TrdP_2 requires third-party software to be the newest version or the one preceding it. dependency_currency.max_behind.patch is '$PATCH', which permits unlimited patch drift. Set a patch limit (1 meets O.TrdP_2)."
+  fi
+  if jq -e '.dependency_currency.obsolescence_may_be_accepted == true' <<<"$P" >/dev/null 2>&1; then
+    err "$POLICY: regulatory_scope includes TR-03161, whose O.TrdP_8 states that third-party software which is no longer maintained MUST NOT be used. obsolescence_may_be_accepted is therefore not available for this product; the answer is replacement."
+  fi
+fi
+
 # --- durations ---------------------------------------------------------------
 # to_hours: 72h -> 72, 21d -> 504, none/next-release -> sentinels
 to_hours() {
