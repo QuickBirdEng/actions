@@ -686,8 +686,12 @@ timestamp is not a release date. For `request` it reads 2026-07-17 while the las
 release was 2020-02-11 — five and a half years apart. Staleness is therefore computed from the
 newest **version publish time**, never from registry metadata that any change touches.
 
-- A dependency outside policy is flagged in the **overview and the backstop report**. On its own it is
-  **not** a Slack alert — it becomes urgent only when it coincides with an applicable CVE.
+- A dependency outside policy is flagged in the overview and the backstop report. On its own it is
+  not a Slack alert; it becomes urgent when it coincides with an applicable CVE.
+- **Operating-system packages are excluded from both tests.** Under §5.1 the base image is the SOUP
+  and its packages are updated with the image, so they are not individually subject to this policy.
+  Measured on kontina-backend: including them reported 343 of 386 components as "currency unknown",
+  because no registry answers for a distro package, and that buried the 55 real findings.
 - A per-SOUP justification overrides the policy, recorded in the existing SOUP `reason` field. This is
   the mechanism behind the acceptance criterion "Remaining non-current dependencies are justified".
 - At release, the release gate checks direct production dependencies against the policy ("libs

@@ -113,7 +113,25 @@ CLS_ARGS=("$ASSESSED" "$POLICY" --out "$FINDINGS" --annotate-bom "$ASSESSED")
 python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 classify   /' >&2 \
   || { echo "::error::classification failed" >&2; exit 1; }
 
-# --- 6. group by the action that resolves them (§3.5) ------------------------
+# --- 6. dependency currency (§6) ---------------------------------------------
+# A component two major versions behind, or one whose upstream stopped releasing, carries no CVE
+# and is still a finding. It is a property of the component rather than of a vulnerability, which
+# is why it belongs in this process at all: what is under observation is the set of third-party
+# components, and their known vulnerabilities are one of the observed properties.
+#
+# Direct dependencies only. A transitive moves when its parent moves, so reporting it separately
+# produces work items nobody can action.
+CURRENCY="$OUT_DIR/$BASE.currency.json"
+CUR_ARGS=("$ASSESSED" "$POLICY" --out "$CURRENCY")
+[[ -n "$SOUPS" && -d "$SOUPS" ]] && CUR_ARGS+=(--soups "$SOUPS")
+if [[ "${SKIP_CURRENCY:-0}" == "1" ]]; then
+  log "6/7 currency   skipped (SKIP_CURRENCY=1)"
+else
+  python3 "$HERE/check-currency.py" "${CUR_ARGS[@]}" 2>&1 | sed 's/^/6\/7 currency   /' >&2 \
+    || echo "::warning::the currency check did not complete; CVE handling is unaffected" >&2
+fi
+
+# --- 7. group by the action that resolves them (§3.5) ------------------------
 # A per-finding deadline treats a CVE as a unit of work. On kontina-backend the 521 findings
 # resolve through 2 actions, and neither is in code we write. Without this step the report
 # demands 311 mitigations in three weeks; with it, it names two images.
@@ -122,7 +140,7 @@ GR_ARGS=("$FINDINGS" "$ASSESSED" --out "$UNITS")
 [[ -n "${SOUP_DECISIONS_FILE:-}" && -f "${SOUP_DECISIONS_FILE}" ]] \
   && GR_ARGS+=(--decisions "$SOUP_DECISIONS_FILE")
 python3 "$HERE/group-remediation.py" "${GR_ARGS[@]}" 2>&1 \
-  | sed 's/^/6\/6 group      /' >&2 \
+  | sed 's/^/7\/7 group      /' >&2 \
   || echo "::warning::could not group findings by remediation action — the per-finding deadlines still stand" >&2
 
 rm -f "$VULNS" "$OUT_DIR/$BASE.enriched.cdx.json"

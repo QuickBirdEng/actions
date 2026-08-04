@@ -160,12 +160,15 @@ while IFS=$'\t' read -r id source resolvable; do
   # document is exact regardless of what the tag does later, and the image can simply be in scope.
   # It also makes tag mutation visible on a pinned image: same tag, different digest between runs.
   native="${raw%.json}.syft.json"
+  # Raw output is intermediate and must not survive the run: it carries the absolute paths the
+  # scan happened to see, which is exactly what normalisation removes. The gap paths need their own
+  # cleanup because `continue` skips the one at the end of the loop.
   if ! "$SYFT_BIN" scan "$target" -o cyclonedx-json="$raw" -o syft-json="$native" -q 2>/dev/null; then
-    log "  gap  $id — syft failed"; GAPS+=("$id"); continue
+    log "  gap  $id — syft failed"; GAPS+=("$id"); rm -f "$raw" "$native"; continue
   fi
   BOM_SUBJECT="$id" SCAN_TARGET="$target" SYFT_NATIVE="$native" \
     bash "$HERE/normalize-bom.sh" "$raw" "$final" >/dev/null \
-    || { log "  gap  $id — normalisation failed"; GAPS+=("$id"); continue; }
+    || { log "  gap  $id — normalisation failed"; GAPS+=("$id"); rm -f "$raw" "$native"; continue; }
   bash "$HERE/verify-bom.sh" "$final" >/dev/null 2>&1 \
     || { bash "$HERE/verify-bom.sh" "$final" >&2; die "$id failed the BOM gate"; }
   rm -f "$raw" "$native"

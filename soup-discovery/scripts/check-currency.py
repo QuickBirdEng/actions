@@ -220,7 +220,21 @@ def main():
         print("::warning::no SOUP records given — checking every component, including "
               "transitives, which cannot be upgraded independently", file=sys.stderr)
 
-    direct = [c for c in direct if c.get("purl")]
+    # Operating-system packages are excluded unconditionally. Under §5.1 the base image is the
+    # SOUP and its OS packages are transitive, so they are not individually subject to the
+    # currency policy: the remediation is to update the image. Including them also has no
+    # registry to query, so every one of them came back as "unknown" — on kontina-backend that
+    # was 343 of 386 unknowns, which buried the 55 real findings.
+    OS_PKG_TYPES = ("rpm", "deb", "apk")
+    def is_os_pkg(c):
+        purl = c.get("purl") or ""
+        return any(purl.startswith(f"pkg:{t}/") for t in OS_PKG_TYPES)
+
+    skipped_os = sum(1 for c in direct if is_os_pkg(c))
+    direct = [c for c in direct if c.get("purl") and not is_os_pkg(c)]
+    if skipped_os:
+        print(f"skipping {skipped_os} operating-system package(s): the base image is the SOUP "
+              f"and its packages are updated with it (§5.1)", file=sys.stderr)
     print(f"checking {len(direct)} component(s) against their registries", file=sys.stderr)
 
     def check(c):
