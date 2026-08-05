@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Group findings by the action that resolves them (§3.5).
+"""Group findings by the action that resolves them (WI §6.3).
 
 A deadline on a CVE assumes the CVE is a unit of work. Usually it is not. Measured on
-kontina-backend, where the per-finding model demanded mitigation of 23 findings in 72 hours
+one backend product, where the per-finding model demanded mitigation of 23 findings in 72 hours
 and 288 more in 20 days:
 
     521 findings  ->  2 actions
@@ -12,7 +12,7 @@ Oviva's ePA REST service, 99 inside linuxserver/wireguard:1.0.20210914. **Not on
 is in code QuickBird writes.**
 
 That is why the per-finding deadlines could not be met, and it was never about capacity. The
-deadline was attached to the wrong thing. This is the same error §3.4 removed from Track 3,
+deadline was attached to the wrong thing. This is the same error WI §6.2 removed from Track 3,
 and the same repair applies: the deadline belongs to the action.
 
 A **remediation unit** is one action:
@@ -23,7 +23,7 @@ A **remediation unit** is one action:
                          would produce actions nobody here can perform, which the first
                          version of this script did: ten separate "upgrade <go module>" items
                          inside someone else's WireGuard image.
-    base-image bump      OS-package findings in an image we do build. §5.1 already says a CVE
+    base-image bump      OS-package findings in an image we do build. Annex B B.1.1 already says a CVE
                          in an OS package is remediated by bumping the image; this makes that
                          operational.
     dependency upgrade   one direct dependency in our own code. Here the CVE genuinely is
@@ -69,7 +69,7 @@ def is_third_party_image(artifact):
     something anyone here can do. The only action is to bump or replace the image, or to ask
     its vendor.
 
-    Getting this wrong is not cosmetic. On kontina-backend the first version of this grouping
+    Getting this wrong is not cosmetic. On one backend product the first version of this grouping
     produced ten separate "upgrade <module>" actions inside a third-party WireGuard image, none
     of which QuickBird can perform.
     """
@@ -89,10 +89,11 @@ def parse_ts(v):
 def load_vendor_requests(path):
     """Unit key -> recorded request to a third-party vendor.
 
-    Both of kontina-backend's remediation units are "bump or replace a third-party image", so
+    Both remediation units of the product it was measured on are "bump or replace a third-party
+    image", so
     the fix is on someone else's release schedule. A 30-day deadline on such a unit breaches
     with certainty and without anyone having done anything wrong — which produces exactly the
-    rubber stamps §3.5 was meant to remove.
+    rubber stamps WI §6.3 was meant to remove.
 
     So a documented request to the vendor puts the unit in `waiting-on-vendor`: not a breach,
     but not closed either. It carries a follow-up date, and when that passes with no new image
@@ -266,7 +267,7 @@ def main():
             "fix_status": sorted(u["fix_status"]),
         })
 
-    # --- vendor state (§3.5) -------------------------------------------------
+    # --- vendor state (WI §6.3) -------------------------------------------------
     # A third-party image is the case where remediation is not ours to perform. The state says
     # which of three situations a unit is in, and only the last one is a breach.
     for unit in out_units:

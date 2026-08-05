@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Merge a KEV/EPSS enrichment document into a BOM's vulnerabilities.
 #
-# Consumes the output of the kev-epss-enrichment action (DEV-192) and writes:
+# Consumes the output of the kev-epss-enrichment action and writes:
 #   - quickbird:vuln:kev             on vulnerabilities in the KEV catalog
 #   - an additional rating           carrying the EPSS score (scoreMethod "other")
 #   - the feed provenance            into metadata.properties

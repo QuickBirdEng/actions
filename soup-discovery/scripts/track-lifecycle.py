@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Three-state finding lifecycle (DEV-191).
+"""Three-state finding lifecycle.
 
     open                        the deployed version is vulnerable and no fix is staged
     fix ready - release pending a fix is in main; the deployed version is still vulnerable

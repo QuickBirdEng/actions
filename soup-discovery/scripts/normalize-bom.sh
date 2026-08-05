@@ -45,7 +45,7 @@ if [[ -n "$NATIVE" && -f "$NATIVE" ]]; then
   [[ "$IMG_ID" == "null" ]] && IMG_ID=""
 
   # When the image was built. Needed because an image is a component in its own right and ages
-  # like any other: §5.1 makes the image the SOUP, so the currency policy applies to it rather
+  # like any other: Annex B B.1.1 makes the image the SOUP, so the currency policy applies to it rather
   # than to the packages inside it. Two sources, in order:
   #   the OCI standard label, which a well-behaved publisher sets, and
   #   `created` in the image config, which is always present.

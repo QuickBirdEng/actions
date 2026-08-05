@@ -631,7 +631,7 @@ test_classify_kev_and_critical_have_different_clocks() {
 # A Medium has no mitigation clock any more. It stood at 30d across 196 findings on one
 # product and meant "write a document"; Track 3 rides the maintenance window instead.
 # ---------------------------------------------------------------- image age
-# An image is a component and ages like any other. §5.1 makes the image the SOUP, so excluding its
+# An image is a component and ages like any other. Annex B B.1.1 makes the image the SOUP, so excluding its
 # OS packages from the currency policy without checking the image itself removed the signal.
 mkimg() {  # <built-iso>
   jq -n --arg b "$1" \
@@ -875,7 +875,7 @@ test_classify_deadlines_come_from_the_policy() {
   assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/co.json")" "2026-01-31"              # 30d
 }
 
-# §2.2 — EPSS decays daily. Without latching a Track 1 finding becomes Track 2 a week later,
+# WI §5 — EPSS decays daily. Without latching a Track 1 finding becomes Track 2 a week later,
 # its deadline moves outward, and the trail shows a deadline that was never breached because
 # it kept receding.
 test_classify_latches_track_downward_never() {
@@ -996,7 +996,7 @@ test_escalate_warns_before_the_deadline() {
   assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "approaching"
 }
 
-# §3.3 gives five *working* days. Counting calendar days would escalate across a weekend
+# WI §7 #6 gives five *working* days. Counting calendar days would escalate across a weekend
 # before the owner has had a working day to respond.
 test_escalate_counts_working_days() {
   mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-08-07T00:00:00+00:00"}]'
@@ -1088,7 +1088,7 @@ test_currency_stale_and_current_needs_no_upgrade() {
 # Which releases count as production decides the cadence, and the cadence decides every
 # Track 3/4 deadline. Three signals answer it and they disagree by ten months on alvie.
 # A breach on a finding that happens not to be in KEV used to produce no alert at all: the
-# whole escalation block sat inside the KEV branch. §3.3 step 1 was therefore a process step
+# whole escalation block sat inside the KEV branch. WI §7 #6 step 1 was therefore a process step
 # that silently did not happen.
 mkalert() {
   rm -rf "$TMP/mon"; mkdir -p "$TMP/mon"
@@ -1141,7 +1141,7 @@ test_monitor_alerts_a_breach_without_any_kev_finding() {
   grep -q "CVE-2026-1" "$TMP/mon/alert.txt"
 }
 
-# §3.2's release-required signal had the same problem.
+# WI §7.3's release-required signal had the same problem.
 test_monitor_alerts_release_required_without_any_kev_finding() {
   mkalert all-clear
   jq -n '{summary:{release_required:1},
@@ -1224,7 +1224,7 @@ test_units_third_party_image_is_one_action() {
   jq -re '.units[0].action | test("we do not build it")' "$TMP/ru.json" >/dev/null
 }
 
-# An OS package in an image we *do* build is a base-image bump (§5.1).
+# An OS package in an image we *do* build is a base-image bump (Annex B B.1.1).
 test_units_our_own_os_package_is_a_base_image_bump() {
   mkunits "quickbird:artifact:docker-production-image-12" \
           "pkg:rpm/rhel/openssl@3.2.2?distro=rhel-9.7" available expedited || return 1

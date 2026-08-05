@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# CRA minimal monitoring path (DEV-197): does anything we currently run contain a
+# CRA minimal monitoring path: does anything we currently run contain a
 # vulnerability that is known to be actively exploited?
 #
 # One question, because from 11 September 2026 that is the one with a 24-hour clock on it.
-# Severity grading, deadline tracking and the finding lifecycle are DEV-191 and are
+# Severity grading, deadline tracking and the finding lifecycle are separate concerns and are
 # deliberately absent here — a KEV finding is unconditionally Track 1 in the classification,
 # so acting on one needs no severity logic at all.
 #
@@ -75,13 +75,13 @@ else
     || { echo "::error::could not resolve the deployed version for $REPO" >&2; exit 1; }
 fi
 
-# One target per live thing. mindnet has two — the app and the backend — and they can be on
+# One target per live thing. A product may have two — the app and the backend — and they can be on
 # different versions, so this is a list rather than a field.
 TARGETS=$(jq -c '
   [ (if .mobile != null and .mobile.sbom != null
      then {name:"mobile", version:.mobile.live_version, sbom:.mobile.sbom,
            # When the live version reached users. This is the origin of the maintenance-window
-           # grid (§3.4): the last maintenance event, not a nominal release date.
+           # grid (WI §6.2): the last maintenance event, not a nominal release date.
            live_since:(.mobile.published // null)} else empty end),
     ( .environments[]? | select(.sbom != null and (.environment | test("prod"; "i")))
       | {name:.environment, version:.ref, sbom:.sbom,
@@ -215,7 +215,7 @@ if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
   ESCALATION="$OUT_DIR/escalation.json"
   ESC_ARGS=("$LIFECYCLE" --out "$ESCALATION")
   [[ -f "$OUT_DIR/policy.effective.json" ]] && ESC_ARGS+=(--policy "$OUT_DIR/policy.effective.json")
-  # Escalate per remediation action, not per finding (§3.5). On kontina-backend this is the
+  # Escalate per remediation action, not per finding (WI §6.3). On one backend product this is the
   # difference between 507 escalations and 2.
   for u in "$OUT_DIR"/*.remediation-units.json; do
     [[ -f "$u" ]] && ESC_ARGS+=(--units "$u") && break
@@ -251,9 +251,9 @@ jq -n \
      schema: "quickbird.kev-monitor-run/v1",
      product: $product, repo: $repo, run_at: $at, cra_scope: $cra,
      # Carried so the backstop can check the declared cadence against the actual release
-     # history (§3.4) without needing the policy file of every project.
+     # history (WI §6.2) without needing the policy file of every project.
      release_cadence: ($cadence | blank_to_null),
-     # §3.4: the maintenance commitment. The backstop checks the windows against it, and the
+     # WI §6.2: the maintenance commitment. The backstop checks the windows against it, and the
      # classifier lands every Track 3/4 finding on the next one.
      maintenance_interval: ($interval | blank_to_null),
      onboarded: ($onboarded | blank_to_null),

@@ -128,7 +128,7 @@ for record in "$@"; do
 
   if [[ ${#investigating[@]} -gt 0 && "$STRICT_UNDER_INVESTIGATION" != "true" ]]; then
     echo "::warning::$pkg@$ver — ${#investigating[@]} still under_investigation: ${investigating[*]}" >&2
-    echo "::warning::  under_investigation is a holding state. It reverts to 'affected' at the mitigation deadline (classification §4)." >&2
+    echo "::warning::  under_investigation is a holding state. It reverts to 'affected' at the mitigation deadline (classification WI §5)." >&2
   fi
 done
 

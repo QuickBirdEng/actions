@@ -4,7 +4,7 @@
 # Four independent blocks, not one nested tree. Deadlines and the release-required signal
 # used to be written only inside the KEV branch, so a breached Track 2 deadline on a finding
 # that happened not to be in KEV produced no notification at all — it reached the run record
-# and the workflow log and stopped there. §3.3 step 1 says a breach is escalated in the
+# and the workflow log and stopped there. WI §7 #6 step 1 says a breach is escalated in the
 # project's Slack channel, so that was the process step silently not happening.
 #
 # A breach is also not subject to the alert threshold. The threshold decides which *new*
@@ -69,12 +69,12 @@ if [[ -n "$ESCALATION" && -f "$ESCALATION" ]]; then
       echo ":alarm_clock: *Deadlines* — $BR breached, $UD breached with no valid decision on record:"
       jq -r '.escalations[] | select(.level=="undecided" or .level=="breached")
              | "   • \(.id) [\(.level)] \(.detail[-1])"' "$ESCALATION"
-      [[ "$UD" != "0" ]] && echo "_§3.3 requires a recorded decision — a revised date or a risk acceptance — in .soup-decisions.yml._"
+      [[ "$UD" != "0" ]] && echo "_WI §7 #6 requires a recorded decision — a revised date or a risk acceptance — in .soup-decisions.yml._"
     } >> "$ALERT"
   fi
 fi
 
-# --- release-required (§3.2), whatever the verdict ---------------------------
+# --- release-required (WI §7.3), whatever the verdict ---------------------------
 if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
   RR=$(jq -r '.summary.release_required' "$LIFECYCLE")
   if [[ "$RR" != "0" && -n "$RR" && "$RR" != "null" ]]; then

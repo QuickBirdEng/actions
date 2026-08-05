@@ -6,10 +6,13 @@ Three repositories are involved, and a file in the wrong one does not run.
 |---|---|---|
 | `workflows-repo/` | `QuickBirdEng/workflows/.github/workflows/` | The reusable workflows. `on: workflow_call` only — a reusable workflow that also declares `workflow_dispatch` takes its inputs from the dispatch form, so `product` arrives empty. |
 | `product-repo/` | `<product>/.github/workflows/` | The thin callers. These own the triggers: the schedule, the manual trigger, the release hook. Fill in the placeholders in angle brackets. |
-| `*.patch` | as named | One-off changes to existing files. |
+| `*.patch` | as named | Changes to existing shared workflows. |
 
 The actions themselves (`soup-discovery/`, `kev-monitor/`) live in this repository and are referenced
 as `QuickBirdEng/actions/<name>@main`. They have no triggers; a composite action never does.
+
+Nothing here is product-specific. A product's own configuration — its scope declaration, its policy,
+any change to its deploy workflow — belongs in that product's repository, not in shared tooling.
 
 ## Wiring a product
 

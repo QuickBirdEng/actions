@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Periodic backstop reconciliation (§6.3, §7).
+"""Periodic backstop reconciliation (§6.3, WI §4.2).
 
 The backstop exists because automation fails silently. Everything else in this pipeline
 reports what it found; this one reports what it *did not* find, which is the failure mode
@@ -14,7 +14,7 @@ Four questions, in order of how badly a wrong answer would hurt:
   3. Have any recorded risk acceptances expired without being renewed?
   4. Does each product's declared release cadence match what it actually released? A
      cadence that no longer holds turns every Track 3 deadline into fiction, because those
-     deadlines are derived from it (§3.4). Needs the release history, which comes from
+     deadlines are derived from it (WI §6.2). Needs the release history, which comes from
      GitHub rather than the evidence store — the run record carries the repo name and the
      declared cadence so this can be checked without every project's policy file.
 
@@ -50,17 +50,17 @@ def load(path):
 # record is the GitHub deployment with environment=Production — the same source resolve-deployed.sh
 # already uses to answer "what is running".
 #
-# The three signals this replaces were all proxies and all wrong. Measured on alvie: the tag
+# The three signals this replaces were all proxies and all wrong. Measured on one product: the tag
 # pattern said 2025-10-01, the prerelease flag 2026-05-04, the asset name 2025-06-23 — and the
 # production deployment record says v1.0.7 was deployed on 2026-04-21, six months after that tag
 # was published. A release date is not a deploy date.
 # `Study` counts too. On these products a study environment is usually the same thing as
-# production — Osteocoach has no environment named Production at all and deploys `Study`, so
+# production — one product has no environment named Production at all and deploys `Study`, so
 # matching only /prod/ reported a live product as unseeable. Kept as a fixed list rather than a
 # per-project setting: the environment names are a fact about the pipeline, and a knob here would
 # be one more thing to get wrong.
 PRODUCTION_ENV_RX = re.compile(r"prod|study", re.I)
-# A deployment whose ref is not a tag is not an application release. mindnet's newest Production
+# A deployment whose ref is not a tag is not an application release. One product's newest Production
 # record is a branch ref from a content-migration workflow; counting it would date the maintenance
 # grid from a database migration. Same rule as resolve-deployed.sh.
 TAG_REF_RX = re.compile(r"^v?[0-9]+(\.[0-9]+)*([.-][A-Za-z0-9.+-]+)?$")
@@ -83,7 +83,7 @@ def production_deploys(repo):
     read — which is not the same as a product that never deployed and must not read as one.
 
     Filtered server-side by environment. Paginating the whole deployment history does not work at
-    this scale: mindnet has ~25,000 records across its environments and the unfiltered walk timed
+    this scale: one product has ~25,000 records across its environments and the unfiltered walk timed
     out, reporting a product with 1059 production deploys as unknown. Filtered, the same answer
     takes under a second.
     """
@@ -271,12 +271,12 @@ def main():
                          "gaps": gaps, "incomplete_runs": incomplete,
                          "last_verdict": last.get("verdict")})
 
-        # --- the maintenance commitment vs. reality (§3.4) -----------------------
+        # --- the maintenance commitment vs. reality (WI §6.2) -----------------------
         # Not "does the observed rhythm match a declared one" any more. A product commits to a
         # maintenance release at least every `maintenance_interval`, every open Track 3/4
         # finding targets the same window, and the question here is whether the windows were
         # met. A missed window is one finding about a release — not one per CVE, which on
-        # Kontina would have been 196.
+        # On the product it was measured on this would have been 196.
         interval = last.get("maintenance_interval")
         repo = last.get("repo")
         onboarded = parse_ts(last.get("onboarded"))
@@ -300,7 +300,7 @@ def main():
                 # Deliberately `unknown`, not `broken`. A repo with no production environment is
                 # not a product that never maintains itself — it is a product this check cannot
                 # see, and saying otherwise would put a wrong finding in front of someone.
-                # Measured: osteocoach deploys to `Study`, kontina-backend has no deployment
+                # Measured: one product deploys to `Study`, another has no deployment
                 # records at all.
                 cadence.append({"product": product, "declared": interval, "status": "unknown",
                                 "detail": f"commits to maintenance every {interval}, but the "

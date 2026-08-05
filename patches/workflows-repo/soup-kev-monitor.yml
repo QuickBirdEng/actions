@@ -1,9 +1,9 @@
-# New reusable workflow for QuickBirdEng/workflows — DEV-197.
+# Reusable workflow for QuickBirdEng/workflows.
 #
 # Daily check of whether anything a product currently runs contains a vulnerability that is
 # known to be actively exploited. From 11 September 2026 that question carries a 24-hour
 # reporting clock for CRA-scoped products, and it is the only question this workflow asks.
-# Severity grading, deadlines and the finding lifecycle are DEV-191.
+# Severity grading, deadlines and the finding lifecycle are handled by the assessment, not here.
 
 # No trigger here on purpose. `workflow_dispatch` on a reusable workflow gets its inputs from the
 # dispatch form, not from workflow_call, so `product` would arrive empty and `runs-on` would arrive

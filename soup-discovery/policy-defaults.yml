@@ -1,8 +1,12 @@
-# Machine-readable form of the classification process, §2.1 and §3.
+# Machine-readable form of WI §5 and WI §6, the classification and the timeframes.
 #
-# This file is the counterpart to classification-draft.md: the document is what a person
-# reads and what an auditor is shown, this is what the tooling applies. They must not
-# diverge, so a change here is a change to the process and belongs in the same review.
+# This file is the counterpart to the Work Instruction: the document is what a person reads and what
+# an auditor is shown, this is what the tooling applies. They must not diverge, so a change here is a
+# change to the process and belongs in the same review as the document.
+#
+# The document itself is not kept in this repository. It lives in the QMS, together with Annex A
+# (the measurements it is based on) and Annex B (the implementation reference). Section references in
+# this repository point there.
 #
 # Ships with the tooling. A project overrides parts of it in its own .soup-policy.yml;
 # validate-policy.sh merges the two and refuses overrides that loosen a deadline or a
@@ -10,16 +14,16 @@
 
 process_version: "2026-08-02"
 
-# §2.1 — EPSS thresholds that escalate a finding within its CVSS band.
+# WI §5 — EPSS thresholds that escalate a finding within its CVSS band.
 epss:
   elevated: 0.10          # Medium+elevated -> Expedited, Low+elevated -> Planned
   high: 0.50              # High+high       -> Immediate
 
-# §3 — two clocks per track, in calendar time.
+# WI §6 — two clocks per track, in calendar time.
 #   mitigation  = exposure measurably reduced and documented
 #   remediation = the fix is live in the version users run; only a deploy stops this clock
-# Revised 2026-08-03. The previous values (72h/21d, 20d/40d) came from DEV-191's draft and
-# could not be met — not for lack of capacity but because the deadline hung on each CVE. §3.5
+# Revised 2026-08-03. The previous values (72h/21d, 20d/40d) came from the first draft and
+# could not be met — not for lack of capacity but because the deadline hung on each CVE. WI §6.3
 # moved it to the action, and these numbers are set for what an action actually takes: an image
 # bump on a regulated product means a regression test and a release.
 #
@@ -35,7 +39,7 @@ tracks:
     mitigation: 72h
     remediation: 30d
   immediate:              # CVSS >= 9.0, or High + EPSS >= 0.50 — severe, but not observed in use
-    # 0 of kontina-backend's 23 Critical findings were in KEV. A 72h clock here was being
+    # On one backend product, 0 of 23 Critical findings were in KEV. A 72h clock here was being
     # justified by a risk none of them carried.
     mitigation: 14d
     remediation: 30d
@@ -52,25 +56,25 @@ tracks:
     mitigation: none
     remediation: next-release
 
-# §3.3 — after a breach, how long until a decision is required.
+# WI §7 #6 — after a breach, how long until a decision is required.
 breach:
   decision_within: 5d
   risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)
 
-# §3.4 — the maintenance release commitment.
+# WI §6.2 — the maintenance release commitment.
 #
 # Track 3 remediation is "next regular release". Deriving that date from a product's *observed*
 # rhythm does not work: three of four products have a rhythm that has already lapsed, so the
-# derived date lands in the past and a finding is born overdue — Dermafy's would have been 109
+# derived date lands in the past and a finding is born overdue — on one product it would have been 109
 # days late on the day it was found.
 #
 # So a product declares a commitment instead: a maintenance release happens at least every
 # `maintenance_interval` days, and the remediation deadline is the next window on that grid.
 # Every open Track 3/4 finding shares that window, which is what makes a missed window one
-# breach about a release rather than one per finding (on Kontina: 1 instead of 196).
+# breach about a release rather than one per finding (measured: 1 instead of 196).
 maintenance_interval: 90d
 
-# §3.6 — the onboarding baseline.
+# WI §4.5 — the onboarding baseline.
 #
 # Deliberately without defaults. Both dates are per-product facts, and a default here would hand a
 # product a baseline nobody agreed to. Absent `baseline_clocks_start`, every pre-existing finding
@@ -81,10 +85,10 @@ maintenance_interval: 90d
 #   baseline_clocks_start  the date the pre-existing backlog becomes due
 #
 # KEV is never baselined: active exploitation is not something a plan can defer. Measured on
-# kontina-backend, 0 of its 23 Critical findings were in KEV, so the exemption keeps the case that
+# one backend product, 0 of its 23 Critical findings were in KEV, so the exemption keeps the case that
 # matters sharp without holding up the other 520.
 
-# §5.2 — which tags are QA builds.
+# WI §7.2 — which tags are QA builds.
 #
 # NOT "what counts as a production release" — that is not a property of a tag. Read from the
 # pipeline: a tag push triggers the *staging* workflow (both `v1.0.15` and `v1.0.15-qa4`), and
@@ -93,12 +97,12 @@ maintenance_interval: 90d
 # backstop reads it from there.
 #
 # This pattern is used for one narrower thing: deciding whether a build produces a release-tier
-# document or a staging-tier one (§5.2). A tag matching it is a candidate for production; a
+# document or a staging-tier one (WI §7.2). A tag matching it is a candidate for production; a
 # `-qaN` tag never is.
 production_release:
   tag_pattern: '^v?[0-9]+\.[0-9]+\.[0-9]+$'
 
-# §3 — which regulatory regimes a product is in scope of.
+# WI §6 — which regulatory regimes a product is in scope of.
 #
 # Not documentation. Each entry tightens a check, because some regimes are stricter than the
 # process default:
@@ -120,7 +124,7 @@ production_release:
 #             security concept the same requirement demands.
 regulatory_scope: []
 
-# §6 — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
+# WI §4.3 — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
 dependency_currency:
   max_behind:
     major: 0
@@ -132,7 +136,7 @@ dependency_currency:
   # SOUP records already use in grq-3 ("Is maintained and support is available").
   stale_after: 12m
 
-# §7 — tier drives the backstop cadence and caps the maintenance commitment.
+# WI §4.2 — tier drives the backstop cadence and caps the maintenance commitment.
 #
 # The tier is NOT decided here or in the project policy: it follows from the customer's SLA,
 # which is also where the Basic/Extended vocabulary comes from (GDG-004-01). Deliberately without

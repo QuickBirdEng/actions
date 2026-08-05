@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Maintenance release windows (§3.4).
+"""Maintenance release windows (WI §6.2).
 
 Track 3 remediation is "next regular release", which is not a date. Turning it into one used
 to be attempted from the *observed* release rhythm, and that does not work: three of four
 products have a rhythm that has already lapsed, so the derived date lands in the past and a
-finding is born overdue. Dermafy's would have been 109 days late on the day it was found.
+finding is born overdue. On one product it would have been 109 days late on the day it was found.
 
 Decided 2026-08-03: a product declares a **maintenance interval** — a commitment that a
 maintenance release happens at least every N days — and the remediation deadline is the next
 window on that grid. Three properties matter:
 
 1. **The deadline is shared.** Every open Track 3/4 finding targets the same window, so a
-   missed window is *one* breach about a release, not one per finding. On Kontina the
+   missed window is *one* breach about a release, not one per finding. On the product it was
+   measured on the
    difference is 1 recorded decision instead of 196.
 
 2. **A missed window does not move the grid.** It advances from the missed due date, not from
    whenever a release eventually happens — otherwise not releasing buys time, which is the
-   receding deadline that §2.2's latching exists to prevent.
+   receding deadline that WI §5's latching exists to prevent.
 
 3. **An early release resets the grid.** The maintenance was done; the next window counts from
    the actual release.
@@ -104,7 +105,7 @@ def state(last_release, interval_days, now, onboarded=None):
     """Window state for a product.
 
     `onboarded` shifts the grid origin: at onboarding, a product's release history is a
-    finding to be recorded, not a set of retroactive violations. Alvie and Dermafy each have
+    finding to be recorded, not a set of retroactive violations. Two products each have
     three windows that had already elapsed before monitoring existed; counting those as
     breaches would open the account with a violation nobody could have acted on.
     """

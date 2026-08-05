@@ -2,7 +2,7 @@
 # CVE enrichment: CISA KEV membership + EPSS score.
 #
 # Reads CVE IDs, writes one JSON document with a stable shape that both the release
-# evidence bundle (DEV-190) and continuous monitoring (DEV-191) consume.
+# evidence bundle and the continuous monitoring consume.
 #
 # Offline-tolerant by design: a feed that cannot be refreshed falls back to the cached
 # snapshot and marks the result stale. It never silently reports "not in KEV" for a feed

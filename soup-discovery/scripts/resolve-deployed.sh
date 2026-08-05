@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Resolve what a product currently has deployed, and whether an SBOM exists for it.
 #
-# This is the input DEV-191/DEV-197 need: "scan the deployed version" has to resolve to
+# This is what the daily monitoring needs: "scan the deployed version" has to resolve to
 # something. The convention (decided 2026-08-02) is git tag + release assets, with the
 # deploy step recording what went live.
 #
@@ -64,7 +64,7 @@ fi
 [[ "$(jq 'length' <<<"$deployments")" == "0" ]] && deployments='[]' 
 
 # A GitHub deployment record does not mean an application was deployed. *Any* workflow that
-# declares an environment creates one — including jobs that ship no code at all. mindnet's
+# declares an environment creates one — including jobs that ship no code at all. One product's
 # "Staging to Production Content Migration Workflow" migrates the Strapi database and
 # created a Production deployment record pointing at whatever branch it happened to be
 # dispatched from; GitHub then auto-marked the real v1.0.15 app deployment `inactive` as a
@@ -79,7 +79,7 @@ latest=$(jq -c '[.[] | {env: .environment, ref: .ref, sha: .sha, at: .created_at
 [[ -n "$WANT_ENV" ]] && latest=$(jq -c --arg e "$WANT_ENV" 'map(select(.[0].env == $e))' <<<"$latest")
 
 # Fetch the tag list once. Checking each record with its own API call meant 100 requests
-# for a repo that deployed `main` a hundred times (apellis), which was slow enough to time
+# for a repo that deployed `main` a hundred times, which was slow enough to time
 # out and would also burn API quota on every scheduled run.
 TAGS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags" 2>/dev/null \
        | jq -r '.[].ref | sub("^refs/tags/";"")' 2>/dev/null | sort -u)

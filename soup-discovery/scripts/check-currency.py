@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency currency and staleness (§6).
+"""Dependency currency and staleness (WI §4.3).
 
 Two different questions, deliberately answered separately because they call for different
 actions:
@@ -29,7 +29,7 @@ Two rules that keep this from becoming noise:
   Only direct dependencies are checked. Transitives move when their parent moves, so
   flagging them produces a list nobody can act on — you cannot upgrade a transitive
   without upgrading what pulled it in. Container base images are one component, not their
-  several hundred OS packages (§5.1).
+  several hundred OS packages (Annex B B.1.1).
 
 Latest versions come from each ecosystem's own registry. A registry that cannot be reached
 yields "unknown", never "current": not knowing how far behind something is must not read
@@ -173,7 +173,7 @@ def behind(current, latest):
 
 
 def load_soup_reasons(soups_dir):
-    """package -> reason, for the per-SOUP override the policy allows (§6)."""
+    """package -> reason, for the per-SOUP override the policy allows (WI §4.3)."""
     import glob
     import os
     out = {}
@@ -228,10 +228,10 @@ def main():
         print("::warning::no SOUP records given — checking every component, including "
               "transitives, which cannot be upgraded independently", file=sys.stderr)
 
-    # Operating-system packages are excluded unconditionally. Under §5.1 the base image is the
+    # Operating-system packages are excluded unconditionally. Under Annex B B.1.1 the base image is the
     # SOUP and its OS packages are transitive, so they are not individually subject to the
     # currency policy: the remediation is to update the image. Including them also has no
-    # registry to query, so every one of them came back as "unknown" — on kontina-backend that
+    # registry to query, so every one of them came back as "unknown" — on one backend product that
     # was 343 of 386 unknowns, which buried the 55 real findings.
     OS_PKG_TYPES = ("rpm", "deb", "apk")
     def is_os_pkg(c):
@@ -240,7 +240,7 @@ def main():
 
     # Container images are checked separately. They have no purl and no registry that answers
     # "what is the latest version", but they carry a build date, so the obsolescence test applies
-    # to them directly. This is where §5.1 lands: the image is the SOUP, so the currency policy
+    # to them directly. This is where Annex B B.1.1 lands: the image is the SOUP, so the currency policy
     # applies to the image rather than to the packages inside it. Excluding the OS packages
     # without checking the image would have removed the signal altogether.
     images = []
@@ -253,7 +253,7 @@ def main():
     direct = [c for c in direct if c.get("purl") and not is_os_pkg(c)]
     if skipped_os:
         print(f"skipping {skipped_os} operating-system package(s): the base image is the SOUP "
-              f"and its packages are updated with it (§5.1)", file=sys.stderr)
+              f"and its packages are updated with it (Annex B B.1.1)", file=sys.stderr)
     print(f"checking {len(direct)} component(s) against their registries", file=sys.stderr)
 
     def check(c):
@@ -312,7 +312,7 @@ def main():
             results.append(entry)
 
     # --- image obsolescence ---------------------------------------------------
-    # An image is a component in its own right and ages like any other. §5.1 makes the image the
+    # An image is a component in its own right and ages like any other. Annex B B.1.1 makes the image the
     # SOUP, so the currency policy applies to the image rather than to the packages inside it.
     # Excluding the OS packages without checking the image would have removed the signal entirely.
     stale_images = []

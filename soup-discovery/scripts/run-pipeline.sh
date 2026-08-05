@@ -104,7 +104,7 @@ while IFS=$'\t' read -r id source resolvable; do
       ;;
     mvn)
       # Same reasoning as installDist: the packaged output is the resolved set, while the
-      # pom lists declared dependencies only. mindnet's three Keycloak provider extensions
+      # pom lists declared dependencies only. One product's three Keycloak provider extensions
       # went to the gap list purely because target/ had never been built.
       mdir="$REPO/$arg"
       if [[ ! -f "$mdir/pom.xml" ]]; then

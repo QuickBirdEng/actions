@@ -1,0 +1,48 @@
+# Template for `<product>/.soup-policy.yml`.
+#
+# Only what differs from policy-defaults.yml belongs here. A value looser than the default needs a
+# `reason:`; tightening never does. What each parameter means, who decides it and where the value
+# comes from is WI §4.
+
+product: my-product
+
+# tier, cra_scope and maintenance_interval are agreed with the customer in the SLA and copied here.
+# They are not determined in this repository — do not reason them out. Changing one of them changes a
+# real obligation, which is why this file is owned in CODEOWNERS and why the backstop reports when any
+# of them moves between runs.
+tier: Basic                 # Basic | Extended — sets the backstop interval and caps the interval below
+
+# true | false | unknown. Whether the Cyber Resilience Act reporting obligations apply, which is a
+# determination per product and system boundary. `unknown` makes the alert say so; assuming `false` is
+# the one wrong answer with a legal consequence attached. Determine it before 2026-09-11.
+cra_scope: unknown
+
+# Which regulatory regimes this product is in scope of. Each entry tightens a check rather than
+# documenting an intention: tr-03161-1 | tr-03161-2 | tr-03161-3 | cra | mdr. Empty asserts no regime,
+# which is not the same as having determined that none applies. TR-03161 makes two things unavailable:
+# unlimited patch drift (O.TrdP_2) and accepting an obsolete component with a recorded reason
+# (O.TrdP_8) — a configuration that does either is refused.
+regulatory_scope: []
+
+# WI §6.2 — the maintenance commitment. Not an observation of how often this product has released, but
+# a promise: a maintenance release happens at least this often. Every open Track 3/4 finding lands on
+# the next window, so a missed window is one decision about a release rather than one per finding. The
+# tier caps how loose this may be (Basic 90d, Extended 60d) and that cap cannot be waived.
+maintenance_interval: 90d
+
+# WI §4.5 — both deliberately without a default, because a default would hand this product a baseline
+# nobody agreed to.
+#   onboarded              the date monitoring began for this product
+#   baseline_clocks_start  the date the backlog that existed at onboarding becomes due. Absent, every
+#                          pre-existing finding counts from its first scan, so the whole backlog falls
+#                          due at once. KEV is never baselined.
+onboarded: ""
+baseline_clocks_start: ""
+
+alerts:
+  slack_channel: ""         # without it, runs still write their record and nobody is notified
+  threshold: high           # critical | high | medium | low. KEV and breaches ignore this.
+
+# Everything else — the tracks and their two timeframes, the EPSS thresholds, the currency limits, the
+# breach decision period, the production tag pattern — comes from policy-defaults.yml. Override a value
+# here only with a reason; example-relaxation.soup-policy.yml shows what a reason looks like.

@@ -1,4 +1,4 @@
-# New reusable workflow for QuickBirdEng/workflows — DEV-195/196.
+# Reusable workflow for QuickBirdEng/workflows.
 #
 # WI §7 stage #3: produce the inventory of a build and assess it. Called by a thin workflow in
 # the product repository, which owns the trigger — same pattern as soup-version-check.yml.

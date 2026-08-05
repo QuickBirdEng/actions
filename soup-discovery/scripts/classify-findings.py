@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply the classification (§2.1, §3) to the findings in a BOM.
+"""Apply the classification (WI §5, WI §6) to the findings in a BOM.
 
 This is what makes the policy do something. Until now .soup-policy.yml validated its
 deadlines and thresholds and nothing read them; this turns a vulnerability plus its CVSS,
@@ -88,7 +88,7 @@ def parse_duration(s):
 
 # KEV is its own track, not the top of the CVSS ladder. "Actively exploited" is a state of the
 # world; "CVSS 9.8" is a property of the vulnerability, and the two deserve different clocks —
-# measured on kontina-backend, 0 of 23 Critical findings were in KEV, so a shared 72h clock was
+# measured on one backend product, 0 of 23 Critical findings were in KEV, so a shared 72h clock was
 # being justified by a risk that was not present in any of them.
 TRACK_ORDER = ["kev", "immediate", "expedited", "planned", "monitor"]
 # Alert bands map onto tracks: KEV and Critical both alert at "critical".
@@ -117,7 +117,7 @@ def epss_of(v):
 
 
 def classify(v, policy):
-    """Return (track, rule, why). Rules are §2.1, first match wins."""
+    """Return (track, rule, why). Rules are WI §5, first match wins."""
     p = props(v)
     kev = p.get("quickbird:vuln:kev")
     analysis = v.get("analysis") or {}
@@ -219,7 +219,7 @@ def main():
               "whole backlog is due at once", file=sys.stderr)
     findings, suppressed = [], []
 
-    # --- SOUP records whose grq-4 snapshot no longer matches reality (§4.1) ------
+    # --- SOUP records whose grq-4 snapshot no longer matches reality (WI §7 #4) ------
     # grq-4 ("Does not contain major or critical security issues") is evaluated once, against
     # metadata.input_version, at approval time. A patch move inside the approved family keeps the
     # approval — correctly — but the vulnerability picture can change underneath it. Nothing
@@ -228,7 +228,7 @@ def main():
     # documents side by side finds that in a minute.
     #
     # Keyed on the component, because that is the unit that gets re-checked. A library with 40
-    # High findings is one record to look at, not 40 alerts — the same reason §3.5 attaches
+    # High findings is one record to look at, not 40 alerts — the same reason WI §6.3 attaches
     # deadlines to actions rather than findings.
     comp_by_ref = {}
     for c in bom.get("components", []) or []:
@@ -270,22 +270,22 @@ def main():
         was = prior.get(vid)
         latched_from = None
         if was and was.get("track") in TRACK_ORDER:
-            # §2.2 — a track may only move up. EPSS is recomputed daily and decays; without
+            # WI §5 — a track may only move up. EPSS is recomputed daily and decays; without
             # latching a Track 1 finding quietly becomes Track 2 a week later, its deadline
             # moves outward, and the audit trail shows a deadline that was never breached
             # because it kept receding.
             if TRACK_ORDER.index(was["track"]) < TRACK_ORDER.index(track):
                 latched_from, track = track, was["track"]
 
-        # The clock starts when we first saw it (§3), not at CVE publication. An escalation
+        # The clock starts when we first saw it (WI §6), not at CVE publication. An escalation
         # restarts it from the date of escalation rather than retroactively.
         escalated = bool(was and was.get("track") != track and latched_from is None)
         first_seen = now if (not was or escalated) else datetime.fromisoformat(was["first_seen"])
 
-        # --- onboarding baseline (§3.6) --------------------------------------
+        # --- onboarding baseline (WI §4.5) --------------------------------------
         # Starting every clock at first discovery is right for a product already under
         # monitoring, and wrong on the day monitoring begins: the whole accumulated backlog is
-        # dated the same day. On kontina-backend that is 23 Critical findings with a 14-day
+        # dated the same day. On one backend product that is 23 Critical findings with a 14-day
         # mitigation deadline and 288 more at 30 days, none of which anyone could have acted on
         # before there was a scan.
         #
@@ -322,12 +322,12 @@ def main():
                 "onboarded": onboarded.date().isoformat(),
                 "clocks_start": baseline_start.date().isoformat(),
                 "why": ("present when monitoring began, so its deadlines run from the agreed "
-                        "baseline date rather than from the first scan (§3.6). Recorded, not "
+                        "baseline date rather than from the first scan (WI §4.5). Recorded, not "
                         "waived — the finding keeps its track."),
             }
         if latched_from:
             out["latched"] = {"from": latched_from, "held_at": track,
-                              "why": "a track may only move up (§2.2)"}
+                              "why": "a track may only move up (WI §5)"}
         if escalated and was:
             out["escalated_from"] = was.get("track")
 
@@ -338,7 +338,7 @@ def main():
                 out[f"{clock}_due"] = None
                 out[f"{clock}_basis"] = spec or "not set"
                 if spec == "next-release":
-                    # §3.4: the next maintenance window, not a date derived from an observed
+                    # WI §6.2: the next maintenance window, not a date derived from an observed
                     # rhythm. Every open Track 3/4 finding lands on the same window, so a
                     # missed window is one breach about a release rather than one per finding.
                     if windows:
@@ -399,7 +399,7 @@ def main():
         "schema": "quickbird.classified-findings/v1",
         "classified_at": now.isoformat(),
         "product": policy.get("product"),
-        # §4.1 — records whose grq-4 snapshot no longer matches what the scan finds. Not an
+        # WI §7 #4 — records whose grq-4 snapshot no longer matches what the scan finds. Not an
         # incident and deliberately not in the alert: a review event.
         "soup_records_to_recheck": recheck_list,
         "baseline": ({"onboarded": onboarded.date().isoformat(),

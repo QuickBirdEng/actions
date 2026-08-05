@@ -81,7 +81,7 @@ jq -n \
   # came from.
   #
   # That stamp is what makes "which action fixes this finding" answerable. Without it, 492 of
-  # the 521 findings on kontina-backend are indistinguishable from 492 separate pieces of
+  # the 521 findings on one backend product are indistinguishable from 492 separate pieces of
   # work, when one base-image bump resolves all of them. A component present in several
   # artifacts keeps all of them, because bumping one image does not resolve the others.
   | ( [ $boms[]

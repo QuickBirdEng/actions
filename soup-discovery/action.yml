@@ -45,7 +45,7 @@ inputs:
     required: false
     default: 'false'
   registry-username:
-    description: 'Registry login for private images. Without it, private images are recorded as gaps rather than scanned — verified against qbsdocker/*, which is private.'
+    description: 'Registry login for private images. Without it, private images are recorded as gaps rather than scanned — verified against a private registry namespace.'
     required: false
     default: ''
   registry-password:
@@ -67,7 +67,7 @@ inputs:
   publish-to-release:
     description: >-
       On a tag, attach the bundle to the GitHub release as sbom-<tag>.cdx.json (and the PDF).
-      The stable name is what makes the deployed version resolvable to its SBOM (DEV-196) —
+      The stable name is what makes the deployed version resolvable to its SBOM —
       resolve-deployed.sh looks for exactly this asset.
     required: false
     default: 'true'
@@ -273,7 +273,7 @@ runs:
       if: ${{ inputs.do-access-key != '' && steps.store.outputs.dir != '' }}
       # Pinned to an exact release: this action publishes no moving major tag, so `@v2` does not
       # resolve. Its newest release is v2.0.146 from 2024-02-12, which is over two years old and
-      # would be an obsolescence finding under §11 if it were a product dependency. The existing
+      # would be an obsolescence finding under WI §4.3 if it were a product dependency. The existing
       # upload-artifact-qb action in this repository uses `@latest` for the same upload, which is
       # worth revisiting separately.
       uses: BetaHuhn/do-spaces-action@v2.0.146

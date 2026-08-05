@@ -98,7 +98,7 @@ if jq -e 'has("release_cadence")' <<<"$P" >/dev/null 2>&1; then
   if [[ "$RC" == "continuous" ]]; then
     warn "$POLICY: release_cadence: continuous is retained for products that deploy every merge; the maintenance window still applies and is measured against deploys."
   else
-    warn "$POLICY: release_cadence ('$RC') is superseded by maintenance_interval (§3.4) and is ignored for deadlines. Remove it once the interval is agreed."
+    warn "$POLICY: release_cadence ('$RC') is superseded by maintenance_interval (WI §6.2) and is ignored for deadlines. Remove it once the interval is agreed."
   fi
 fi
 

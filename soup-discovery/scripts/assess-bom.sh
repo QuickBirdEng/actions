@@ -93,9 +93,9 @@ else
 fi
 
 # --- 5. classify -------------------------------------------------------------
-# Maintenance windows (§3.4) are what give Track 3/4 a remediation date at all. Without them
+# Maintenance windows (WI §6.2) are what give Track 3/4 a remediation date at all. Without them
 # the classifier says so explicitly rather than leaving an empty field that reads as "no
-# deadline yet" — 210 of Kontina's 521 findings used to sit in exactly that state.
+# deadline yet" — 210 of one product's 521 findings used to sit in exactly that state.
 WINDOWS=""
 if [[ -n "${MAINTENANCE_LAST_RELEASE:-}" ]]; then
   WINDOWS="$OUT_DIR/maintenance-windows.json"
@@ -113,7 +113,7 @@ CLS_ARGS=("$ASSESSED" "$POLICY" --out "$FINDINGS" --annotate-bom "$ASSESSED")
 python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 classify   /' >&2 \
   || { echo "::error::classification failed" >&2; exit 1; }
 
-# --- 6. dependency currency (§6) ---------------------------------------------
+# --- 6. dependency currency (WI §4.3) ---------------------------------------------
 # A component two major versions behind, or one whose upstream stopped releasing, carries no CVE
 # and is still a finding. It is a property of the component rather than of a vulnerability, which
 # is why it belongs in this process at all: what is under observation is the set of third-party
@@ -131,8 +131,8 @@ else
     || echo "::warning::the currency check did not complete; CVE handling is unaffected" >&2
 fi
 
-# --- 7. group by the action that resolves them (§3.5) ------------------------
-# A per-finding deadline treats a CVE as a unit of work. On kontina-backend the 521 findings
+# --- 7. group by the action that resolves them (WI §6.3) ------------------------
+# A per-finding deadline treats a CVE as a unit of work. On one backend product the 521 findings
 # resolve through 2 actions, and neither is in code we write. Without this step the report
 # demands 311 mitigations in three weeks; with it, it names two images.
 UNITS="$OUT_DIR/$BASE.remediation-units.json"

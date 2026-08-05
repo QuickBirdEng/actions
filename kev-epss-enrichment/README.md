@@ -1,8 +1,8 @@
 # CVE Enrichment — KEV + EPSS
 
-Prototype for [DEV-192](https://quickbird.atlassian.net/browse/DEV-192). Annotates CVE IDs with
+Annotates CVE IDs with
 **CISA KEV** membership and **EPSS** score, in one shape that both the release evidence bundle
-(DEV-190) and continuous monitoring (DEV-191) read. Bash + `jq` + `curl` + `awk` only — same
+and the continuous monitoring read. Bash + `jq` + `curl` + `awk` only — same
 dependency footprint as the existing `soup-*` actions.
 
 Intended destination: `QuickBirdEng/actions/kev-epss-enrichment`.
@@ -75,7 +75,7 @@ The ticket specifies "query the EPSS API (FIRST.org)". This uses the bulk CSV in
    feed carries both on its first line:
    `#model_version:v2026.06.15,score_date:2026-07-31T12:03:43Z`
 2. It is one 2.5 MB request for all 354k scored CVEs instead of N requests against a rate-limited
-   lookup endpoint — which matters once DEV-191 runs daily across every project.
+   lookup endpoint — which matters once the monitoring runs daily across every product.
 
 Bulk feeds are served from `epss.empiricalsecurity.com`; the old `epss.cyentia.com` path redirects
 there. The FIRST.org lookup API still works and is the right fallback for a one-off check.
@@ -89,7 +89,7 @@ classification reconstructable. Verified: pinning to 2026-07-15 returns `score_d
 **Known gap: KEV has no historical feed.** CISA publishes only the current catalog, so a past KEV state
 cannot be re-fetched — only the `catalogVersion` proves which snapshot was used. To make KEV membership
 reproducible, **the consumer must archive the catalog file itself**, keyed by `catalogVersion`. For
-DEV-191 that is a natural fit for the per-project evidence store; for DEV-190 the frozen bundle should
+the daily monitoring that is a natural fit for the per-product evidence store; for the release bundle the frozen copy should
 carry the `catalogVersion` in `metadata.properties`. Worth adding as an explicit acceptance criterion
 on both tickets — the current wording ("emits the feed snapshot date") is satisfiable without it and
 would leave KEV unreproducible.
@@ -122,10 +122,10 @@ separate signals rather than collapsed into one.
 ## Not in scope here
 
 - **Classification.** This step supplies raw signals only. The CVSS/KEV/EPSS → track mapping lives in
-  the process document (see `../classification-draft.md`) and is applied by the consumers, per the
+  the Work Instruction in the QMS and is applied by the consumers, per the
   ticket's own division of labour.
 - **CVSS retrieval.** The enrichment joins on CVE ID; CVSS comes from the scanner output that already
   carries it.
 - **CPE matching.** Do not feed heuristic CPEs into this. syft generated ~1900 speculative
-  `syft:cpe23` variants for the Apellis worker alone; matching on those produces phantom findings.
+  `syft:cpe23` variants for a single service; matching on those produces phantom findings.
   Join on `purl`.

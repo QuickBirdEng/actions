@@ -1,6 +1,6 @@
 # VEX extension to the SOUP record
 
-The data layer DEV-190 owns. Today a `.soups/**/*.json` record carries `package`,
+The data layer the release bundle owns. Today a `.soups/**/*.json` record carries `package`,
 `version`, `requirements{}` and `metadata.approval{}` — there is nowhere to record whether
 a reported CVE actually applies to this product. This adds that, and `merge-assessment.sh`
 serialises it into CycloneDX `vulnerabilities[].analysis`.
@@ -74,7 +74,7 @@ and pretending otherwise would be the more dangerous design.
 
 **`under_investigation` expires.** It is a holding state, not a resting state — if it is
 still `under_investigation` when the finding's mitigation deadline elapses, it reverts to
-`affected` and alerts (see `classification-draft.md` §4). Without that rule
+`affected` and alerts (see WI §5, rule 0). Without that rule
 `under_investigation` becomes the mute button `not_affected` was designed not to be.
 
 **Scope — the approval is a version *family*, not a version.** The record's `version` field
@@ -128,6 +128,6 @@ gives exit 0 lenient, exit 1 strict.
    plus the `soup-fix-or-vex` action, wired into `soup-approval-verification-workflow`
    before approval is recorded.
 3. **Approval fields are inconsistent.** The record in `qb-soups` has
-   `approval.{date,by,condition}`; the approval workflow writes `by_url` as well; DEV-190
+   `approval.{date,by,condition}`; the approval workflow writes `by_url` as well; the release bundle
    assumes `is_temporary`. The merge tolerates all three shapes, but the schema should be
    pinned down.

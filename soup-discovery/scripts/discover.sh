@@ -64,7 +64,7 @@ done <<<"$(grep -E '(^|/)go\.mod$' <<<"$FILES" || true)"
 # ---------------------------------------------------------------------------
 # JVM — prefer the resolved runtime closure over declared dependencies
 # ---------------------------------------------------------------------------
-# This is the defect DEV-195 exists for. Parsing build.gradle gives declared
+# This is the defect this discovery step exists for. Parsing build.gradle gives declared
 # dependencies only: transitives are invisible and BOM/platform-managed versions come
 # back empty. installDist output (or the lockfile, where locking is on) is the resolved
 # set and is exactly what the runtime image copies.
@@ -119,10 +119,10 @@ done <<<"$(grep -E '(^|/)pom\.xml$' <<<"$FILES" || true)"
 # Workspace members must be resolved against the workspace root, not on their own. In a
 # yarn/npm/pnpm workspace only the root carries a lockfile, so treating each member as its
 # own candidate reports "NO LOCKFILE — not reproducible" for packages that are perfectly
-# well resolved. Seen on osteocoach: web/packages/common and web/packages/rest are covered
+# well resolved. Seen in practice: web/packages/common and web/packages/rest are covered
 # by web/yarn.lock. A member is folded into the root candidate as an extra marker, so scope
 # rules by path still reach it and nothing disappears silently.
-# A monorepo root is not only "package.json has a workspaces field". osteocoach uses Nx
+# A monorepo root is not only "package.json has a workspaces field". One product uses Nx
 # (web/nx.json) with no workspaces key at all, and its web/yarn.lock resolves every
 # package under web/packages/. Checking only for `workspaces` reported two perfectly
 # resolved packages as unreproducible.
@@ -251,13 +251,13 @@ done <<<"$(grep -E '(^|/)Dockerfile[^/]*$' <<<"$FILES" || true)"
 # not from the line the reference appears on. Resolving it is what separates the two very
 # different cases that both look templated:
 #
-#   redis:7-alpine, epa4all-rest-service:v1.2.4, wireguard:1.0.20210914
+#   redis:7-alpine, vendor-rest-service:v1.2.4, wireguard:1.0.20210914
 #       third-party images pinned in values.yaml. Nothing else in the repo covers them,
 #       so reporting them as unresolvable forces a scope file to exclude them, and the
 #       images whose CVEs nobody else is watching are the ones that fall out of scope.
 #
-#   qbsdocker/<product>-rest:<appVersion>
-#       our own image at the release version. Genuinely not knowable here (DEV-196), but
+#   <our-registry>/<product>-rest:<appVersion>
+#       our own image at the release version. Genuinely not knowable from the repository, but
 #       naming the repository is what lets a scope rule say which build candidate covers it.
 resolve_helm_ref() {
   local img="$1" file="$2" chart values expr key val out rest
@@ -275,7 +275,7 @@ resolve_helm_ref() {
     # The first .Values reference in the expression is the one that supplies the value;
     # anything after it is a `| default` fallback. `.*\.Values\.` would be greedy and pick
     # the LAST one — which resolved every image to the chart's default `version: 1.0.0`
-    # via `| default .Values.version`, silently replacing epa4all's real v1.2.4.
+    # via `| default .Values.version`, silently replacing the vendor image's real v1.2.4.
     key=$(grep -oE '\.Values\.[A-Za-z0-9_.]+' <<<"$expr" | head -1 | sed -E 's/^\.Values\.//; s/\.$//')
     if [[ -z "$key" ]]; then out+="@unresolved"; continue; fi
     val=$(yq -r ".${key}" "$values" 2>/dev/null)
@@ -316,13 +316,13 @@ while IFS= read -r ref; do
   [[ "$img" == *'{{'* ]] && img=$(resolve_helm_ref "$img" "$file")
 
   # `image:` is not a container-only key. Flutter's flutter_native_splash.yaml, theme
-  # files and countless other configs use it for asset paths — mindnet yielded
+  # files and countless other configs use it for asset paths — one product yielded
   # "assets/logo/logo.png" as a container image. Reject anything with an image-file
   # extension before anything else.
   [[ "$img" =~ \.(png|jpe?g|svg|gif|webp|ico|bmp|tiff?)$ ]] && continue
 
   # A templated tag is a real deployed image whose concrete version is substituted at
-  # deploy time. It cannot be scanned from the repo — which is precisely the DEV-196
+  # deploy time. It cannot be scanned from the repo — which is precisely the deployed-version
   # problem, so record it as unresolvable rather than dropping it or pretending it scans.
   resolvable=true
   note="referenced in a deployment manifest — built elsewhere, so its contents are out of our control but in our CVE scope"
@@ -331,10 +331,10 @@ while IFS= read -r ref; do
     # is the difference between a scope rule that can say what covers this and one that
     # can only say "some templated thing in this file".
     resolvable=false
-    note="OUR OWN IMAGE, RELEASE-VERSIONED — repository resolved from the chart values as ${img%%:*}, but the tag is the chart appVersion / --set version, so the concrete version comes from the deploy record (DEV-196). Its contents are covered by the Dockerfile candidate that builds it."
+    note="OUR OWN IMAGE, RELEASE-VERSIONED — repository resolved from the chart values as ${img%%:*}, but the tag is the chart appVersion / --set version, so the concrete version comes from the deploy record. Its contents are covered by the Dockerfile candidate that builds it."
   elif [[ "$img" == *'@unresolved'* || "$img" == *'{{'* || "$img" == *'<'*'>'* || "$img" == *'${'* || "$img" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
     resolvable=false
-    note="TEMPLATED REFERENCE — the concrete version is substituted at deploy time and is not knowable from the repo. Its components cannot be enumerated here; resolving it needs the deploy record (DEV-196)."
+    note="TEMPLATED REFERENCE — the concrete version is substituted at deploy time and is not knowable from the repo. Its components cannot be enumerated here; resolving it needs the deploy record."
   fi
 
   # Must still look like an image reference: a repo path, optionally with tag/digest.
@@ -351,7 +351,7 @@ while IFS= read -r ref; do
   # A ref that is still templated has no version to name it by, and slugging the raw
   # Jinja gives ids like `superset.postgres.image_name-superset.postgres.image_tag`. Name
   # it after whatever *is* concrete: the literal prefix if the repository is spelled out
-  # (`qbsdocker/dermafy-rest:{{ image.TAG }}`), otherwise the variable path that stands in
+  # (`<our-registry>/<product>-rest:{{ image.TAG }}`), otherwise the variable path that stands in
   # for it, minus its uninformative leaf.
   if [[ "$slug_src" == *'{{'* ]]; then
     literal="${slug_src%%\{\{*}"

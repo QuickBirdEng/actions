@@ -64,7 +64,7 @@ printf '%s\n' "$IDS" | grep . | xargs -P "${OSV_PARALLEL:-8}" -I{} \
 # Severity is not uniformly populated. The Go vulnerability database (GO-*) carries none
 # at all, but aliases to a GHSA advisory that does — verified: GO-2022-0646 has
 # severity:null while its alias GHSA-f5pg-7wfw-84q9 carries the CVSS vector. Without
-# following the alias, every Go finding would arrive with no CVSS, and DEV-190 requires
+# following the alias, every Go finding would arrive with no CVSS, and the release bundle requires
 # one. Collect the aliases that need resolving, then fetch those too.
 : > "$TMP/need_alias.txt"
 for f in "$TMP"/adv/*.json; do

@@ -3,7 +3,7 @@
 #
 #   candidate a build from a release-shaped tag (v1.0.15). It MAY become what runs in production.
 #             It is not evidence that it did: in these repos a tag push only ever triggers the
-#             staging workflow, and production is a later manual dispatch of the same ref. Dermafy
+#             staging workflow, and production is a later manual dispatch of the same ref. One product
 #             released v1.0.6 on 2025-10-15 and still runs v1.0.5 — a document stamped `release`
 #             at build time would have claimed release evidence for a version that never shipped.
 #   staging   a build from a QA tag (v1.0.15-qa4). Will never be production.
