@@ -1,0 +1,29 @@
+name: 'TruffleHog Filter Findings'
+description: 'Filters raw TruffleHog output against acknowledged_findings in .qb/security/trufflehog-ignores.yaml and emits annotations for remaining findings.'
+inputs:
+  findings-file:
+    description: 'Path to the raw TruffleHog JSONL output file.'
+    required: true
+  scan-outcome:
+    description: 'Outcome of the trufflehog-scan step (success or failure). Used to distinguish scan errors from clean runs.'
+    required: false
+    default: 'success'
+  fail-on-found:
+    description: 'Exit non-zero if any unacknowledged findings remain after filtering.'
+    required: false
+    default: 'true'
+outputs:
+  count:
+    description: 'Number of unacknowledged findings after filtering.'
+    value: ${{ steps.filter.outputs.count }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Filter and annotate
+      id: filter
+      shell: bash
+      env:
+        INPUT_FINDINGS_FILE: ${{ inputs.findings-file }}
+        INPUT_SCAN_OUTCOME: ${{ inputs.scan-outcome }}
+        INPUT_FAIL_ON_FOUND: ${{ inputs.fail-on-found }}
+      run: python3 "$GITHUB_ACTION_PATH/scripts/filter_findings.py"

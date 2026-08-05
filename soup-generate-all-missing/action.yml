@@ -1,0 +1,241 @@
+name: 'Generate Missing SOUPs and Create PR'
+description: 'Generate missing SOUP files and create a pull request'
+inputs:
+  excluded-requirements:
+    description: 'A comma-separated list of requirements to exclude from SOUP generation'
+    required: false
+    type: string
+    default: ''
+  repository:
+    description: 'The name of the repository (e.g., soups)'
+    required: true
+  gh-api-token:
+    description: 'GitHub API token with repo access'
+    required: true
+  soup-approvers:
+    description: 'List of GitHub usernames to assign as reviewers for SOUP PRs'
+    required: true
+  branch-name:
+    description: 'The name of the branch to create or use for the PR'
+    required: true
+    default: 'soups/missing-soups'
+  base-branch:
+    description: 'The base branch to compare against (e.g., main)'
+    required: false
+    default: 'main'
+  slack-webhook-url:
+    description: 'Slack webhook URL for notifications'
+    required: true
+  github-to-slack-mapping:
+    description: 'JSON mapping of GitHub usernames to Slack user IDs (e.g., {"github-user1":"U12345","github-user2":"U67890"})'
+    required: false
+runs:
+  using: "composite"
+  steps:
+    - name: Create branch (if needed)
+      shell: bash
+      run: |
+        git remote prune origin
+        if git ls-remote --exit-code --heads origin "${{ inputs.branch-name }}" > /dev/null; then
+            git fetch origin "${{ inputs.branch-name }}"
+            git checkout "${{ inputs.branch-name }}" && git pull --rebase
+        else
+            git checkout -b "${{ inputs.branch-name }}"
+        fi
+    - name: Copy scripts
+      shell: bash
+      run: git clone --branch v1.0.0 git@github.com:QuickBirdEng/action-scripts.git action-scripts && mv action-scripts/* .
+    - name: Generate Missing SOUPs
+      env:
+        EXCLUDED_REQUIREMENTS: ${{ inputs.excluded-requirements }}
+      shell: bash
+      run: git fetch origin && bash generate-all-missing-soups.sh
+    - name: Commit and Push Changes
+      id: commit-changes
+      shell: bash
+      run: |
+        USER_INFO=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user)
+        echo "User Info: $USER_INFO"
+
+        PR_AUTHOR=$(echo "$USER_INFO" | jq -r .login)
+        PR_NAME=$(echo "$USER_INFO" | jq -r .name)
+
+        EMAILS=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github+json" https://api.github.com/user/emails)
+        echo "User Emails: $EMAILS"
+        PR_EMAIL=$(echo "$EMAILS" | jq -r '.[] | select(.primary == true) | .email')
+        git config --local user.email "$PR_EMAIL"
+        git config --local user.name "$PR_NAME"
+
+        if git add -A .soups && git commit  --no-verify -m "generate missing soup files"; then
+          echo "skip-remaining-steps=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "skip-remaining-steps=true" >> "$GITHUB_OUTPUT"
+          echo "No changes to commit"
+        fi
+
+        git push origin ${{ inputs.branch-name }}
+        echo "PR_AUTHOR=$PR_AUTHOR" >> $GITHUB_ENV
+    - name: Create Pull Request
+      if: steps.commit-changes.outputs.skip-remaining-steps == 'false'
+      shell: bash
+      run: |
+        RESPONSE=$(curl -s -H "Authorization: token ${{ inputs.gh-api-token }}" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls?head=QuickBirdEng:${{ inputs.branch-name }}&base=${{ inputs.base-branch }}")
+        EXISTING_PR=$(echo "$RESPONSE" | jq -r '.[0].number')
+        echo "Found PR: $EXISTING_PR"
+        
+        if [ "$EXISTING_PR" != "null" ] && [ -n "$EXISTING_PR" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            echo "skip-remaining-steps=true" >> "$GITHUB_OUTPUT"
+            exit 0
+        fi
+
+        PR_RESPONSE=$(curl -s -X POST \
+          -H "Authorization: token ${{ inputs.gh-api-token }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls \
+          -d "{
+            \"title\": \"Add Missing SOUPs\",
+            \"body\": \"Automated soup generation of missing soups\",
+            \"head\": \"${{ inputs.branch-name }}\",
+            \"base\": \"${{ inputs.base-branch }}\"
+          }")
+          
+        PR_NUMBER=$(echo "$PR_RESPONSE" | jq -r '.number')
+        echo "Created PR #$PR_NUMBER"
+        
+        echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+
+        curl -s -X POST \
+          -H "Authorization: token ${{ inputs.gh-api-token }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/issues/$PR_NUMBER/labels \
+          -d '{
+            "labels": ["soup"]
+          }'
+
+        if [ -n "${{ inputs.soup-approvers }}" ]; then
+          echo "Original approvers list: ${{ inputs.soup-approvers }}"
+          echo "Filtering out PR author: $PR_AUTHOR"
+
+          IFS=',' read -ra APPROVER_LIST <<< "${{ inputs.soup-approvers }}"
+          FILTERED_APPROVERS=""
+            
+          for approver in "${APPROVER_LIST[@]}"; do
+            approver_trimmed=$(echo "$approver" | xargs)
+            if [ "$approver_trimmed" != "$PR_AUTHOR" ]; then
+              if [ -z "$FILTERED_APPROVERS" ]; then
+                FILTERED_APPROVERS="$approver_trimmed"
+              else
+                FILTERED_APPROVERS="$FILTERED_APPROVERS,$approver_trimmed"
+              fi
+            fi
+          done
+          
+          if [ -z "$FILTERED_APPROVERS" ]; then
+            echo "No reviewers to assign after filtering out PR author"
+          else
+            echo "Assigning reviewers: $FILTERED_APPROVERS"
+            
+            IFS=',' read -ra FILTERED_ARRAY <<< "$FILTERED_APPROVERS"
+            ARRAY_SIZE=${#FILTERED_ARRAY[@]}
+
+            if [ $ARRAY_SIZE -le 2 ]; then
+              RANDOM_APPROVERS="$FILTERED_APPROVERS"
+            else
+              SELECTED_INDICES=$(shuf -i 0-$((ARRAY_SIZE-1)) -n 2)
+              RANDOM_APPROVERS=""
+              for idx in $SELECTED_INDICES; do
+                if [ -z "$RANDOM_APPROVERS" ]; then
+                  RANDOM_APPROVERS="${FILTERED_ARRAY[$idx]}"
+                else
+                  RANDOM_APPROVERS="$RANDOM_APPROVERS,${FILTERED_ARRAY[$idx]}"
+                fi
+              done
+            fi
+
+            echo "Randomly selected approvers: $RANDOM_APPROVERS"
+            echo "RANDOM_APPROVERS=$RANDOM_APPROVERS" >> $GITHUB_ENV
+
+            REVIEWERS_JSON=$(echo "$FILTERED_APPROVERS" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' | sed 's/^/[/' | sed 's/$/]/')
+              
+            curl -X POST \
+              -H "Authorization: token ${{ inputs.gh-api-token }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/QuickBirdEng/${{ inputs.repository }}/pulls/$PR_NUMBER/requested_reviewers \
+              -d "{\"reviewers\": $REVIEWERS_JSON}"
+                
+              echo "Reviewers assigned successfully"
+          fi
+        else
+          echo "No SOUP_APPROVERS configured - skipping reviewer assignment"
+        fi
+    - name: Send Slack Notification
+      shell: bash
+      if:  steps.commit-changes.outputs.skip-remaining-steps == 'false' && env.PR_NUMBER != '' && env.PR_NUMBER != 'null'
+      run: |
+        PR_TITLE="Add Missing SOUPs"
+        REPO_NAME="${{ inputs.repository }}"
+        PR_URL="https://github.com/QuickBirdEng/$REPO_NAME/pull/$PR_NUMBER"
+
+        SLACK_MENTIONS=""
+        if [ -n "$RANDOM_APPROVERS" ] && [ -n "${{ inputs.github-to-slack-mapping }}" ]; then
+          IFS=',' read -ra APPROVER_ARRAY <<< "$RANDOM_APPROVERS"
+          for approver in "${APPROVER_ARRAY[@]}"; do
+            approver_trimmed=$(echo "$approver" | xargs)
+            SLACK_ID=$(echo '${{ inputs.github-to-slack-mapping }}' | jq -r --arg user "$approver_trimmed" '.[$user] // empty')
+            if [ -n "$SLACK_ID" ]; then
+              SLACK_MENTIONS="$SLACK_MENTIONS <@$SLACK_ID>"
+            fi
+          done
+        fi
+
+        MENTION_BLOCK=""
+        if [ -n "$SLACK_MENTIONS" ]; then
+          MENTION_BLOCK=',
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "Assigned Reviewers: '$SLACK_MENTIONS'"
+              }
+            }'
+        fi
+
+        curl -X POST -H "Content-Type: application/json" \
+          --data @- \
+          ${{ inputs.slack-webhook-url }} <<EOF
+        {
+          "blocks": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "$PR_TITLE (#$PR_NUMBER)",
+                "emoji": false
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "Repo: $REPO_NAME, Author: @$PR_AUTHOR"
+              }
+            }$MENTION_BLOCK,
+            {
+              "type": "actions",
+              "elements": [
+                {
+                  "type": "button",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "View Pull Request",
+                    "emoji": true
+                  },
+                  "url": "$PR_URL",
+                  "style": "primary"
+                }
+              ]
+            }
+          ]
+        }
+        EOF

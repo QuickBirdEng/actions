@@ -1,0 +1,25 @@
+name: 'Upload Artifact to QB DO Space'
+description: 'Upload Artifact to QB DO Space'
+inputs:
+  access-key:
+    description: 'Digital Ocean Access Key'
+    required: true
+  secret-key:
+    description: 'Digital Ocean Secret Key'
+    required: true
+  artifact:
+    description: 'Path of the artifact'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: 'Upload as artifact'
+      uses: BetaHuhn/do-spaces-action@latest
+      with:
+        access_key: ${{ inputs.access-key }}
+        secret_key: ${{ inputs.secret-key }}
+        space_name: quickbird-artifacts
+        space_region: fra1
+        source: ${{ inputs.artifact }}
+        out_dir: ${{ github.event.repository.name }}

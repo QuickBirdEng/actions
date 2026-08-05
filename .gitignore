@@ -1,0 +1,5 @@
+.idea
+
+# Python bytecode from the SOUP tooling
+__pycache__/
+*.pyc

@@ -1,0 +1,68 @@
+name: 'Setup Flutter'
+description: 'Setting up Environment before every action'
+inputs:
+  use-cache:
+    description: 'Use cached version of packages (to speed up the build)'
+    required: false
+    default: false
+  clean:
+    description: 'Should perform a `flutter clean` first?'
+    required: false
+    default: false
+  setup-gems:
+    description: 'Setups gems (needed for iOS)'
+    default: false
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
+  skip-build-runner:
+    description: 'Run build_runner for code generation'
+    required: false
+    default: false
+  skip-pub-get:
+    description: 'Skip flutter pub get'
+    required: false
+    default: false
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-environment@main
+    #- uses: QuickBirdEng/actions/subosito-flutter-action@main
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: 'stable'
+        cache: ${{ inputs.use-cache }}
+    - shell: bash
+      if: ${{ inputs.clean == 'true' }}
+      working-directory: ${{ inputs.working-directory }}
+      run: flutter clean && flutter pub cache clean -f
+    - name: Fetch Project Dependencies
+      shell: bash
+      if: ${{ inputs.skip-pub-get == 'false' }}
+      working-directory: ${{ inputs.working-directory }}
+      run: flutter pub get
+    - name: Code Generation using build_runner
+      shell: bash
+      if: ${{ (env.RUN_BUILD_RUNNER == '' || env.RUN_BUILD_RUNNER == 'true') && inputs.skip-build-runner == 'false' }}
+      working-directory: ${{ inputs.working-directory }}
+      run: flutter pub run build_runner clean && flutter pub run build_runner build --delete-conflicting-outputs
+    - name: Setup Gems
+      shell: bash -l {0}
+      if: ${{ inputs.setup-gems == 'true' }}
+      working-directory: ${{ inputs.working-directory }}
+      run: cd ios && gem install bundler -v 2.7.2 && bundle _2.7.2_ update
+    - name: Install Pods
+      shell: bash -l {0}
+      if: ${{ inputs.setup-gems == 'true' }}
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f ios/Podfile ]; then
+          pod repo update && cd ios && pod install
+        else
+          echo "No ios/Podfile found; enabling Swift Package Manager."
+          flutter config --enable-swift-package-manager
+        fi
+    - name: Flutter version
+      shell: bash
+      run: flutter --version

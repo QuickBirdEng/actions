@@ -1,0 +1,12 @@
+lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      shady-fork:
+        specifier: github:attacker/shady-fork
+        version: github.com/attacker/shady-fork/abc123
+
+packages:
+  shady-fork@0.0.0:
+    resolution: {tarball: 'https://github.com/attacker/shady-fork/archive/abc123.tar.gz'}

@@ -1,0 +1,38 @@
+name: 'Setup Android'
+description: 'Setting up Android & JDK'
+inputs:
+  key-store-file-content:
+    description: ''
+    required: true
+  key-store-password:
+    description: ''
+    required: true
+  signing-key-alias:
+    description: ''
+    required: true
+  signing-key-password:
+    description: ''
+    required: true
+  qbs-maven-username:
+    default: ""
+  qbs-maven-password:
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-android-for-build@main
+      with:
+        qbs-maven-username: ${{ inputs.qbs-maven-username }}
+        qbs-maven-password: ${{ inputs.qbs-maven-password }}
+    - name: Setup Android Signing Keys
+      shell: bash
+      run: |
+        KEY_STORE_PATH="${RUNNER_TEMP}"/keystore.jks
+        echo ${{ inputs.key-store-file-content }} | base64 -d > "$KEY_STORE_PATH"
+
+        keytool -list -v -keystore "$KEY_STORE_PATH" -alias ${{ inputs.signing-key-alias }} -storepass ${{ inputs.key-store-password }} -keypass ${{ inputs.signing-key-password }}
+
+        echo ANDROID_KEYSTORE_PATH="$KEY_STORE_PATH" >> $GITHUB_ENV
+        echo ANDROID_KEYSTORE_PASSWORD=${{ inputs.key-store-password }} >> $GITHUB_ENV
+        echo ANDROID_SIGNING_KEY_ALIAS=${{ inputs.signing-key-alias }} >> $GITHUB_ENV
+        echo ANDROID_SIGNING_KEY_PASSWORD=${{ inputs.signing-key-password }} >> $GITHUB_ENV

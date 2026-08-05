@@ -1,0 +1,60 @@
+name: "Check LoC"
+description: "Fails when the total diff line count against a base ref exceeds a configured limit."
+inputs:
+  base-ref:
+    description: "Explicit base ref or branch used to compute the merge-base. When empty, the action resolves the closest branch from base-branches."
+    required: false
+    default: ""
+  base-branches:
+    description: "Comma- or newline-separated candidate base branches. The closest merge-base wins when base-ref is empty."
+    required: false
+    default: "main"
+  fetch-base-branches:
+    description: "Whether to fetch the candidate base branches from origin before resolving the merge-base."
+    required: false
+    default: "true"
+  end-ref:
+    description: "End ref or commit to compare against."
+    required: false
+    default: "HEAD"
+  loc-limit:
+    description: "Maximum allowed inserted plus deleted lines."
+    required: false
+    default: "800"
+  exit-code-on-limit:
+    description: "Exit code to use when the limit is exceeded."
+    required: false
+    default: "1"
+  ignore-patterns:
+    description: "Additional newline-separated git pathspec exclude patterns appended to the built-in defaults."
+    required: false
+    default: ""
+  working-directory:
+    description: "Repository directory to run the check in."
+    required: false
+    default: "."
+outputs:
+  resolved-base-ref:
+    description: "The base ref selected by the action."
+    value: ${{ steps.loc-check.outputs.resolved-base-ref }}
+  merge-base:
+    description: "The merge-base used for the comparison."
+    value: ${{ steps.loc-check.outputs.merge-base }}
+  total-loc-change:
+    description: "Total inserted plus deleted lines counted by the action."
+    value: ${{ steps.loc-check.outputs.total-loc-change }}
+runs:
+  using: "composite"
+  steps:
+    - id: loc-check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_BASE_BRANCHES: ${{ inputs.base-branches }}
+        INPUT_FETCH_BASE_BRANCHES: ${{ inputs.fetch-base-branches }}
+        INPUT_END_REF: ${{ inputs.end-ref }}
+        INPUT_LOC_LIMIT: ${{ inputs.loc-limit }}
+        INPUT_EXIT_CODE_ON_LIMIT: ${{ inputs.exit-code-on-limit }}
+        INPUT_IGNORE_PATTERNS: ${{ inputs.ignore-patterns }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/check_loc.sh"

@@ -1,0 +1,105 @@
+name: 'Build Flutter Artifact'
+description: 'Building IPA, APK or App Bundle for flutter applications'
+inputs:
+  build-number:
+    description: 'Build number'
+    required: true
+  use-cache:
+    description: 'Use cached version of packages (to speed up the build)'
+    required: false
+    default: false
+  clean:
+    description: 'Should perform a `flutter clean` first?'
+    required: false
+    default: false
+  build-type:
+    description: 'ios, ipa, apk or appbundle'
+    required: true
+  build-arguments:
+    description: 'any extra arguments such as using sksl or passing a variable using --dart-define etc.'
+    required: false
+  extra-step:
+    description: ''
+  skip-setup-step:
+    description: 'If the flutter setup step is already done, you can skip it by setting this to true'
+    required: false
+    default: false
+  obfuscate:
+    description: 'Should obfuscate the build?'
+    required: false
+    default: false
+  working-directory:
+    description: 'Working directory for action'
+    default: '.'
+outputs:
+  artifact-path:
+    description: 'The path to the artifact (ipa, apk or appbundle) created by this action'
+    value: ${{ steps.build-artifact.outputs.artifact-path }}
+  artifact-dart-symbols-file-path:
+    description: 'The path to the dart symbols file'
+    value: ${{ steps.build-artifact.outputs.dart-symbols-path }}
+  artifact-dart-obfuscation-map-file-path:
+    description: 'The path to the obfuscation map file'
+    value: ${{ steps.build-artifact.outputs.obfuscation-map-path }}
+  version-and-build-number:
+    description: 'The version and build number used for this build (e.g. 1.0.0+12345)'
+    value: ${{ steps.build-artifact.outputs.version-and-build-number }}
+runs:
+  using: "composite"
+  steps:
+    - uses: QuickBirdEng/actions/setup-flutter@main
+      if: ${{ inputs.skip-setup-step == 'false' }}
+      with:
+        use-cache: ${{ inputs.use-cache }}
+        clean: ${{ inputs.clean }}
+        setup-gems: ${{ inputs.build-type == 'ipa' }}
+        working-directory: ${{ inputs.working-directory }}
+    - id: build-artifact
+      name: "Building Artifact"
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: |
+        extra_arguments_list=()
+
+        version_and_build_number=""
+        symbols_directory="app_symbols"
+
+        if [[ ${{ inputs.obfuscate }} == 'true' ]]; then
+          extra_arguments_list+=("--obfuscate --split-debug-info=$symbols_directory --extra-gen-snapshot-options=--save-obfuscation-map=$symbols_directory/obfuscation.map.json")
+        fi
+
+        if [[ ${{ inputs.build-type }} == 'ipa' ]]; then
+          extra_arguments_list+=("--export-options-plist=ios/fastlane/ExportOptions.plist")
+        fi
+        # Get tag if it exists (to get version number from it)
+        if [[ $GITHUB_REF_TYPE == 'tag' ]]; then
+          version=$(echo $GITHUB_REF_NAME | grep --only-matching --extended-regexp '([0-9]+).([0-9]+).([0-9]+)' | head -1)
+          echo "Using Version number from tag => $version"
+          extra_arguments_list+=("--build-name=$version")
+          version_and_build_number="$version+${{ inputs.build-number }}"
+        else
+          version_and_build_number="$(grep '^version:' pubspec.yaml | sed 's/version: //' | sed 's/+.*//')+${{ inputs.build-number }}"
+        fi
+
+        extra_arguments="${extra_arguments_list[*]}"
+
+        echo "Extra Arguments: $extra_arguments"
+        echo "Version & Build: $version_and_build_number"
+
+        # 2. Build flutter with build number and version number
+        flutter build ${{ inputs.build-type }} --build-number=${{ inputs.build-number }} $extra_arguments ${{ inputs.build-arguments }} | tee flutter_build.log
+
+        # 3. search for word that ends with certain strings and then remove the ending . if any and convert to relative path if needed
+        artifact_path=$(cat flutter_build.log | awk '{for (word=1;word<=NF;word++) if ($word~/release.apk|release.aab|.xcarchive/) print $word}' | sed 's/\.$//')
+
+        echo "Artifact Path => $artifact_path"
+        echo "Dart Symbols Path => ${{ inputs.working-directory }}/$symbols_directory"
+        echo "Version & Build Number => $version_and_build_number"
+        echo "dart-symbols-path=${{ inputs.working-directory }}/$symbols_directory" >> $GITHUB_OUTPUT
+        echo "obfuscation-map-path=${{ inputs.working-directory }}/$symbols_directory/obfuscation.map.json" >> $GITHUB_OUTPUT
+        echo "version-and-build-number=$version_and_build_number" >> $GITHUB_OUTPUT
+
+        case $artifact_path in
+          /*) echo "artifact-path=$artifact_path" >> $GITHUB_OUTPUT ;;
+          *) echo "artifact-path=${{ inputs.working-directory }}/$(echo $artifact_path)" >> $GITHUB_OUTPUT ;;
+        esac

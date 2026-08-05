@@ -1,0 +1,3 @@
+paths:
+  - test/fixtures/**
+  - docs/fake-creds.txt
