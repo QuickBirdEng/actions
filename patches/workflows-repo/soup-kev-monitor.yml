@@ -5,6 +5,11 @@
 # reporting clock for CRA-scoped products, and it is the only question this workflow asks.
 # Severity grading, deadlines and the finding lifecycle are DEV-191.
 
+# No trigger here on purpose. `workflow_dispatch` on a reusable workflow gets its inputs from the
+# dispatch form, not from workflow_call, so `product` would arrive empty and `runs-on` would arrive
+# as "" — fromJSON("") then fails the job before anything runs. The product caller owns both the
+# schedule and the manual trigger, which is also how soup-version-check.yml is wired.
+
 name: SOUP - KEV monitor
 
 on:
@@ -44,10 +49,6 @@ on:
         required: false
       DO_SECRET_KEY:
         required: false
-
-  # Callers add their own schedule. A fixed one here would put every product on the same
-  # minute, and the KEV catalog is a single shared feed.
-  workflow_dispatch:
 
 jobs:
   kev-check:

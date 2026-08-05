@@ -1,0 +1,32 @@
+# Goes into <product>/.github/workflows/soup-backstop.yml — WI §7 stage #7.
+#
+# The reconciliation: what did NOT happen. Days without a record, breaches without a decision,
+# expired risk acceptances, missed maintenance windows, and parameters that changed between runs.
+#
+# One caller may cover several products by listing them, which is the point — a product missing from
+# the evidence store entirely is the finding this catches, and a per-product workflow cannot notice
+# that its own product is absent.
+
+name: SOUP Backstop
+
+on:
+  schedule:
+    # Quarterly for tier Extended, annually for Basic (WI §4.2). Set one, delete the other.
+    - cron: '0 7 1 1,4,7,10 *'    # Extended: 1 January, April, July, October
+    # - cron: '0 7 15 1 *'        # Basic: 15 January
+
+  workflow_dispatch:
+    inputs:
+      window:
+        description: 'Days of history to reconcile. 92 for Extended, 366 for Basic.'
+        required: false
+        default: '92'
+        type: string
+
+jobs:
+  backstop:
+    uses: QuickBirdEng/workflows/.github/workflows/soup-backstop.yml@main
+    with:
+      products: <product>[,<product>,...]
+      window: ${{ fromJSON(inputs.window || '92') }}
+    secrets: inherit

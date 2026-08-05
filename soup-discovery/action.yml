@@ -32,6 +32,14 @@ inputs:
       tag build only ever deploys to staging in this pipeline.
     required: false
     default: ''
+  release-tag:
+    description: >-
+      The tag this build belongs to. Defaults to the ref when the tag itself triggered the run. Must
+      be passed when the run is triggered any other way — by workflow_run after the release
+      workflow, or manually — because github.ref_name is then the default branch, and the bundle
+      would be attached to a release named after it.
+    required: false
+    default: ''
   keep-timestamp:
     description: 'Set true when the document needs metadata.timestamp. Leave false for a committable, diffable BOM — successive builds of the same commit then differ only where the components differ.'
     required: false
@@ -126,19 +134,33 @@ runs:
       shell: bash
       run: python3 -c 'import reportlab' 2>/dev/null || pip3 install --quiet reportlab
 
-    - name: Resolve the document tier
+    # The tag this build belongs to, resolved once and used for the tier, the release asset and the
+    # object key. Deriving it from github.ref_name works only when the tag itself triggered the run.
+    # Under workflow_run — which is how the SBOM workflow is triggered, because images have to be
+    # pushed before they can be scanned — github.ref_name is the default branch, and the bundle would
+    # be attached to a release called "main" and stored under soup-sbom/branch/main.
+    - name: Resolve the tag and the document tier
       id: tier
       shell: bash
       run: |
+        TAG="${{ inputs.release-tag }}"
+        if [ -z "$TAG" ] && [ "${{ github.ref_type }}" = "tag" ]; then
+          TAG="${{ github.ref_name }}"
+        fi
         if [ -n "${{ inputs.tier }}" ]; then
           TIER="${{ inputs.tier }}"
         else
+          # A run with no tag is a branch build whatever its ref is called.
+          REF_TYPE="branch"; [ -n "$TAG" ] && REF_TYPE="tag"
           TIER=$(bash "$GITHUB_ACTION_PATH/scripts/resolve-tier.sh" \
-            "${{ github.ref_type }}" "${{ github.ref_name }}" \
+            "$REF_TYPE" "${TAG:-${{ github.ref_name }}}" \
             "${{ inputs.repo-root }}/.soup-policy.yml") || exit 1
         fi
-        echo "tier=$TIER" >> "$GITHUB_OUTPUT"
-        echo "document tier: $TIER (ref ${{ github.ref_name }})"
+        {
+          echo "tier=$TIER"
+          echo "tag=$TAG"
+        } >> "$GITHUB_OUTPUT"
+        echo "document tier: $TIER (tag ${TAG:-none}, ref ${{ github.ref_name }})"
 
     - name: Discover, scope, scan, consolidate
       id: run
@@ -178,7 +200,7 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Attach bundle to the release
-      if: ${{ inputs.publish-to-release == 'true' && github.ref_type == 'tag' }}
+      if: ${{ inputs.publish-to-release == 'true' && steps.tier.outputs.tag != '' }}
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.repo-token }}
@@ -187,7 +209,7 @@ runs:
         BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
         [ -f "$BOM" ] || BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
         PDF="${BOM%.json}.pdf"
-        TAG="${{ github.ref_name }}"
+        TAG="${{ steps.tier.outputs.tag }}"
         TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
         # Both candidate and staging bundles are attached, each to the release of its own tag.
         # That is the point of producing them: a 90-day workflow artifact cannot be pulled later,
@@ -231,7 +253,7 @@ runs:
         BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
         [ -f "$BOM" ] || BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
         TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
-        REF="${{ github.ref_name }}"
+        REF="${{ steps.tier.outputs.tag }}"
         [ -n "$REF" ] || REF="${{ github.sha }}"
         DIR="${{ inputs.output-dir }}/store"
         mkdir -p "$DIR"

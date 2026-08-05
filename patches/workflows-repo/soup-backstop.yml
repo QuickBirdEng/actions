@@ -7,6 +7,9 @@
 # The product list lives here on purpose. A product that was never scanned cannot report its own
 # absence, so the expectation has to come from outside the products.
 
+# No trigger here on purpose — see soup-kev-monitor.yml. The product caller owns the schedule
+# (annually for tier Basic, quarterly for Extended) and the manual trigger.
+
 name: SOUP Backstop
 
 on:

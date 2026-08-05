@@ -102,15 +102,56 @@
 workflows. Both take the product's configuration from the product repository; neither holds
 product-specific values.</p>
 
+<p>Three repositories are involved, and the split matters because a file in the wrong one does not
+run:</p>
+
 <table>
-<tr><th style="width:13rem">Action</th><th>Called on</th><th>Does</th></tr>
-<tr><td class="mono">soup-discovery</td><td>Every tag, and on demand</td>
-    <td>WI §7 stage #3: discovery through publication.</td></tr>
-<tr><td class="mono">kev-monitor</td><td>Daily schedule</td>
-    <td>WI §7 stage #4: resolve the deployed version, re-assess, record, notify.</td></tr>
-<tr><td class="mono">soup-backstop.yml</td><td>Manual or scheduled, per tier</td>
-    <td>WI §7 stage #7. Reads the year's records back out of the object store.</td></tr>
+<tr><th style="width:12rem">Repository</th><th>Holds</th></tr>
+<tr><td class="mono">QuickBirdEng/actions</td><td>The composite actions. An action never has a trigger
+    of its own; it runs when a workflow calls it.</td></tr>
+<tr><td class="mono">QuickBirdEng/workflows</td><td>The reusable workflows, with
+    <code>on: workflow_call</code> only. Staged in this repository under
+    <code>patches/workflows-repo/</code>.</td></tr>
+<tr><td>The product repository</td><td>A thin caller per workflow. <strong>This is where every trigger
+    lives.</strong> Staged under <code>patches/product-repo/</code>.</td></tr>
 </table>
+
+<p>A reusable workflow must not declare <code>workflow_dispatch</code> itself: the inputs then come
+from the dispatch form rather than from the caller, so <code>product</code> arrives empty and
+<code>runs-on</code> arrives as an empty string, which fails <code>fromJSON</code> before any step
+runs.</p>
+
+<table>
+<tr><th style="width:11rem">Reusable workflow</th><th style="width:15rem">Triggered by the caller on</th>
+    <th>Does</th></tr>
+<tr><td class="mono">soup-sbom.yml</td>
+    <td><code>workflow_run</code> of the product's release workflow, completed and successful;
+        <code>workflow_dispatch</code> with a tag</td>
+    <td>WI §7 stage #3, via the <code>soup-discovery</code> action.</td></tr>
+<tr><td class="mono">soup-kev-monitor.yml</td>
+    <td><code>schedule</code>, daily at a per-product minute; <code>workflow_dispatch</code></td>
+    <td>WI §7 stage #4, via the <code>kev-monitor</code> action.</td></tr>
+<tr><td class="mono">soup-backstop.yml</td>
+    <td><code>schedule</code>, quarterly or annually by tier; <code>workflow_dispatch</code> with a
+        window</td>
+    <td>WI §7 stage #7. Reads the period's records back out of the object store.</td></tr>
+</table>
+
+<p>Each of the three can be started manually, and each has a reason to be: to produce the inventory of
+a version released before the workflow existed, to reproduce a run whose record is questioned, and to
+reconcile a period on demand.</p>
+
+<h3>B.1.2 Why the SBOM workflow is not triggered by the tag push</h3>
+
+<p>The release workflow is what pushes the images of a tag. The pipeline scans an image by pulling it
+and records the digest of what it pulled, so an image that is not in the registry yet becomes a gap.
+The caller therefore waits for the release workflow rather than starting alongside it.</p>
+
+<p>This is also why the action takes the tag as an input rather than reading
+<code>github.ref_name</code>. Under <code>workflow_run</code> the ref is the default branch, and the
+bundle would be attached to a release named after it and stored under the branch prefix. Making the
+reusable workflow a final job of the release workflow instead removes the ordering question, at the
+cost of editing that workflow.</p>
 
 <h3>B.1.1 Scripts</h3>
 
