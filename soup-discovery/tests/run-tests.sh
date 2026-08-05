@@ -1638,7 +1638,7 @@ EOF
 EOF
   cat > "$1/releases.json" <<'EOF'
 [{"tag_name":"v1.2.0","published_at":"2026-07-01T09:00:00Z",
-  "assets":[{"name":"sbom-v1.2.0.cdx.json","browser_download_url":"https://x/sbom-v1.2.0.cdx.json"}]}]
+  "assets":[{"name":"sbom-v1.2.0.cdx.json","url":"https://api.github.com/repos/owner/repo/releases/assets/9"}]}]
 EOF
 }
 
@@ -1647,7 +1647,8 @@ test_resolve_deployed_finds_the_sbom_asset() {
   fake_gh_fixtures "$TMP/fx1"
   out=$(FAKE_DIR="$TMP/fx1" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
   # the defect made this null on every deployed tag
-  assert "$(jq -r '.environments[0].sbom' <<<"$out")" "https://x/sbom-v1.2.0.cdx.json" || return 1
+  # the API asset URL — the browser URL is not downloadable with a token on a private repo
+  assert "$(jq -r '.environments[0].sbom' <<<"$out")" "https://api.github.com/repos/owner/repo/releases/assets/9" || return 1
   assert "$(jq -r '.environments[0].sbom_status' <<<"$out")" "available"
 }
 

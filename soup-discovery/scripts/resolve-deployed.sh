@@ -43,7 +43,10 @@ mobile=$(gh api "repos/$REPO/releases?per_page=100" 2>/dev/null \
       [ .[] | select([.assets[].name] | any(test($pat; "i")))
         | { tag: .tag_name, published: .published_at,
             artifacts: [.assets[].name | select(test($pat; "i"))],
-            sbom: ([.assets[] | select(.name | test("^sbom-.*\\.cdx\\.json$")) | .browser_download_url][0] // null) } ]
+            # The API asset URL, not browser_download_url: these repos are private, and the
+            # browser URL answers only an authenticated browser session. The API URL with
+            # Accept: application/octet-stream is what a token can download.
+            sbom: ([.assets[] | select(.name | test("^sbom-.*\\.cdx\\.json$")) | .url][0] // null) } ]
       | sort_by(.published) | last // null' 2>/dev/null) || mobile=null
 [[ -z "$mobile" ]] && mobile=null
 
@@ -143,7 +146,7 @@ while IFS=$'\t' read -r env ref sha at id; do
     # a missing publish step. Caught by the code review, not by a run, because every
     # monitor run until then had used MONITOR_LOCAL_SBOM.
     sbom_url=$(gh api "repos/$REPO/releases/tags/$ref" 2>/dev/null \
-                 | jq -r --arg a "$asset" '[.assets[] | select(.name==$a) | .browser_download_url][0] // ""' \
+                 | jq -r --arg a "$asset" '[.assets[] | select(.name==$a) | .url][0] // ""' \
                  2>/dev/null || echo "")
     if [[ -n "$sbom_url" ]]; then
       sbom_state="available"

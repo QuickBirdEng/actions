@@ -16,6 +16,15 @@ inputs:
     description: 'Scope declaration. Every discovered candidate must be classified in it or the run fails.'
     required: false
     default: '.soup-scope.yml'
+  policy-file:
+    description: >-
+      Per-product policy. With it, the bundle is assessed — vulnerabilities, classification,
+      currency, remediation units — and the release asset is the assessed document. Without
+      it the bundle carries components only, and the run says so. Found by the first
+      end-to-end run: the pipeline supported the policy all along and nothing in CI ever
+      passed it, so no CI bundle had ever been assessed.
+    required: false
+    default: '.soup-policy.yml'
   output-dir:
     description: 'Where to write candidates.json, scan-plan.json and bom/'
     required: false
@@ -188,7 +197,16 @@ runs:
         IN_PRODUCT: ${{ inputs.product }}
         IN_VERSION: ${{ inputs.version }}
         IN_ROOT: ${{ inputs.repo-root }}
+        IN_POLICY: ${{ inputs.policy-file }}
       run: |
+        # Resolve the policy against the repo root; run-pipeline warns and skips assessment
+        # when the file does not exist, which is the correct degradation for a product that
+        # has not adopted one yet.
+        if [ -f "$IN_POLICY" ]; then
+          export SOUP_POLICY_FILE="$IN_POLICY"
+        elif [ -f "$IN_ROOT/$IN_POLICY" ]; then
+          export SOUP_POLICY_FILE="$IN_ROOT/$IN_POLICY"
+        fi
         bash "$GITHUB_ACTION_PATH/scripts/run-pipeline.sh" \
           "$IN_PRODUCT" "$IN_VERSION" "$IN_ROOT"
 
