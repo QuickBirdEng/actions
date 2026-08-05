@@ -23,7 +23,7 @@ SYFT_BIN="${SYFT_BIN:-}"
 log() { printf '%s\n' "$*" >&2; }
 die() { printf '::error::%s\n' "$*" >&2; exit 1; }
 
-for tool in jq yq curl; do
+for tool in jq yq curl python3; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool not found: $tool"
 done
 

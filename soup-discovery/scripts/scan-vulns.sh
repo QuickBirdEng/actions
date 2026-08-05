@@ -40,15 +40,39 @@ FAILED=0
 for chunk in "$TMP"/chunk.*; do
   cut -f1 "$chunk" | jq -R -s -c 'split("\n") | map(select(length>0) | {package:{purl:.}}) | {queries:.}' \
     > "$TMP/q.json"
-  if ! curl -sS --fail --max-time 120 -X POST "$OSV/v1/querybatch" \
+  if ! curl -sS --fail --max-time 120 --retry 3 --retry-delay 2 -X POST "$OSV/v1/querybatch" \
         -H 'Content-Type: application/json' -d @"$TMP/q.json" -o "$TMP/r.json" 2>/dev/null; then
-    echo "::warning::OSV batch query failed for one chunk — results are incomplete" >&2
+    echo "::error::OSV batch query failed for one chunk after retries — the vulnerability list would be incomplete" >&2
     FAILED=$((FAILED+1)); continue
   fi
   # results[] is positionally aligned with queries[]
   paste <(cut -f1 "$chunk") <(cut -f2 "$chunk") \
         <(jq -r '.results[] | [(.vulns // [])[].id] | join(",")' "$TMP/r.json") \
     >> "$TMP/hits.tsv"
+
+  # querybatch caps each query at 1000 vulnerability ids and signals the rest with a
+  # next_page_token. Rare for library purls, realistic for OS packages — a kernel RPM
+  # carries thousands of CVEs, and dropping page two would silently truncate exactly the
+  # package with the most findings. Follow the token per affected purl until exhausted.
+  while IFS=$'\t' read -r idx token; do
+    [[ -z "$idx" ]] && continue
+    purl=$(sed -n "$((idx+1))p" "$chunk" | cut -f1)
+    ref=$(sed -n "$((idx+1))p" "$chunk" | cut -f2)
+    [[ -z "$purl" ]] && continue
+    while [[ -n "$token" ]]; do
+      jq -n --arg p "$purl" --arg t "$token" '{queries:[{package:{purl:$p}, page_token:$t}]}' > "$TMP/qp.json"
+      if ! curl -sS --fail --max-time 120 --retry 3 --retry-delay 2 -X POST "$OSV/v1/querybatch" \
+            -H 'Content-Type: application/json' -d @"$TMP/qp.json" -o "$TMP/rp.json" 2>/dev/null; then
+        echo "::error::OSV pagination failed for $purl — the vulnerability list would be incomplete" >&2
+        FAILED=$((FAILED+1)); break
+      fi
+      ids=$(jq -r '.results[0] | [(.vulns // [])[].id] | join(",")' "$TMP/rp.json")
+      [[ -n "$ids" ]] && printf '%s\t%s\t%s\n' "$purl" "$ref" "$ids" >> "$TMP/hits.tsv"
+      token=$(jq -r '.results[0].next_page_token // ""' "$TMP/rp.json")
+    done
+  done < <(jq -r '.results | to_entries[]
+                  | select(.value.next_page_token != null and .value.next_page_token != "")
+                  | "\(.key)\t\(.value.next_page_token)"' "$TMP/r.json" 2>/dev/null)
 done
 
 IDS=$(awk -F'\t' '$3 != "" {print $3}' "$TMP/hits.tsv" | tr ',' '\n' | sort -u)
@@ -59,7 +83,7 @@ echo "  $NID distinct advisories" >&2
 # ~550 advisories, which is the difference between a usable CI step and one people skip.
 mkdir -p "$TMP/adv"
 printf '%s\n' "$IDS" | grep . | xargs -P "${OSV_PARALLEL:-8}" -I{} \
-  sh -c 'curl -sS --fail --max-time 60 "'"$OSV"'/v1/vulns/{}" -o "'"$TMP"'/adv/{}.json" 2>/dev/null || true'
+  sh -c 'curl -sS --fail --max-time 60 --retry 3 --retry-delay 2 "'"$OSV"'/v1/vulns/{}" -o "'"$TMP"'/adv/{}.json" 2>/dev/null || true'
 
 # Severity is not uniformly populated. The Go vulnerability database (GO-*) carries none
 # at all, but aliases to a GHSA advisory that does — verified: GO-2022-0646 has
@@ -85,7 +109,7 @@ if [[ -s "$TMP/alias_ids.txt" ]]; then
     [[ -z "$aid" ]] && continue
     printf '%s\n' "$aid"
   done < "$TMP/alias_ids.txt" | xargs -P "${OSV_PARALLEL:-8}" -I{} \
-    curl -sS --fail --max-time 60 "$OSV/v1/vulns/{}" -o "$TMP/alias/{}.json"
+    curl -sS --fail --max-time 60 --retry 3 --retry-delay 2 "$OSV/v1/vulns/{}" -o "$TMP/alias/{}.json"
 fi
 NALIAS=$(wc -l < "$TMP/alias_ids.txt" | tr -d ' ')
 NALIAS_OK=$(find "$TMP/alias" -name '*.json' -size +0 2>/dev/null | wc -l | tr -d ' ')
@@ -95,7 +119,15 @@ NALIAS_OK=$(find "$TMP/alias" -name '*.json' -size +0 2>/dev/null | wc -l | tr -
 while IFS= read -r id; do
   [[ -z "$id" ]] && continue
   f="$TMP/adv/$id.json"
-  [[ -s "$f" ]] || { echo "::warning::could not fetch advisory $id" >&2; continue; }
+  if [[ ! -s "$f" ]]; then
+    # An advisory that could not be fetched is still a finding — OSV reported the id for a
+    # component we ship. Dropping it here silently shrank the list; instead it is carried
+    # unscored, which classifies as rule 9 (no CVSS -> expedited) until a later run scores it.
+    echo "::warning::could not fetch advisory $id after retries — carried unscored, not dropped" >&2
+    jq -n --arg id "$id" '{osv_id:$id, aliases:[], summary:"advisory could not be fetched — carried unscored",
+                           severity:[], db_severity:null, severity_via:null, fixes:[]}' >> "$TMP/vulns.jsonl"
+    continue
+  fi
   alias_ghsa=$(jq -r 'if ((.severity // []) | length) == 0
                       then ((.aliases // []) | map(select(startswith("GHSA-"))) | first // "")
                       else "" end' "$f")
@@ -234,4 +266,11 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
 TOTAL=$(jq '[.vulnerabilities[]?] | length' "$OUT")
 CVES=$(jq '[.vulnerabilities[]? | select(.id | startswith("CVE-"))] | length' "$OUT")
 echo "wrote $OUT — $TOTAL vulnerabilities ($CVES with a CVE id)" >&2
-[[ "$FAILED" == "0" ]] || echo "::warning::$FAILED chunk(s) failed; the vulnerability list is incomplete" >&2
+# Incomplete fails the run. This script's own design note says a failed query is not "no
+# vulnerabilities", and exit 0 on a dropped chunk was exactly that: the caller writes an
+# assessment that reads as complete over a list that is not. The monitor turns this failure
+# into an `incomplete` verdict, which is the honest answer.
+if [[ "$FAILED" != "0" ]]; then
+  echo "::error::$FAILED OSV request(s) failed after retries — refusing to present an incomplete vulnerability list as an assessment" >&2
+  exit 1
+fi

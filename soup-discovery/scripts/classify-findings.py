@@ -138,6 +138,24 @@ def classify(v, policy):
         return "kev", 1, "KEV membership could not be established — treated as KEV until it can"
 
     if cvss is None:
+        # No parsable CVSS 3.x vector. Increasingly this means a CVSS 4.0-only advisory —
+        # there is no v4 scorer here, but the database severity is a usable band, and
+        # falling straight to rule 9 would put a v4 Critical two tracks too low.
+        band = (p.get("quickbird:vuln:osv-severity") or "").strip().upper()
+        if band == "CRITICAL":
+            return "immediate", 2, "vendor severity Critical (no parsable CVSS 3.x vector)"
+        if band == "HIGH":
+            if epss is not None and epss >= hi:
+                return "immediate", 3, f"vendor severity High with EPSS {epss} >= {hi}"
+            return "expedited", 4, "vendor severity High (no parsable CVSS 3.x vector)"
+        if band in ("MODERATE", "MEDIUM"):
+            if epss is not None and epss >= el:
+                return "expedited", 5, f"vendor severity Medium with EPSS {epss} >= {el}"
+            return "planned", 6, "vendor severity Medium (no parsable CVSS 3.x vector)"
+        if band == "LOW":
+            if epss is not None and epss >= el:
+                return "planned", 7, f"vendor severity Low with EPSS {epss} >= {el}"
+            return "monitor", 8, "vendor severity Low (no parsable CVSS 3.x vector)"
         return "expedited", 9, "no CVSS score available — an unknown is not a low"
     if cvss >= 9.0:
         return "immediate", 2, f"CVSS {cvss} (Critical)"
@@ -299,7 +317,11 @@ def main():
         # silent amnesty for a whole backlog.
         clock_start = first_seen
         baseline = False
-        if track != "kev" and onboarded and baseline_start and first_seen <= onboarded:
+        # Dates, not instants: `onboarded` parses to midnight, so a scan later the same day
+        # had first_seen > onboarded and the whole backlog missed the baseline — on the one
+        # day the baseline exists for.
+        if track != "kev" and onboarded and baseline_start \
+                and first_seen.date() <= onboarded.date():
             clock_start = baseline_start
             baseline = True
 
@@ -312,6 +334,10 @@ def main():
             "cvss": cvss_of(v),
             "epss": epss_of(v),
             "kev": props(v).get("quickbird:vuln:kev"),
+            # Carried so the alert can say since when it has been exploited — the alert
+            # composer read these fields before anything wrote them.
+            "kev_date_added": props(v).get("quickbird:vuln:kev-date-added"),
+            "kev_ransomware": props(v).get("quickbird:vuln:kev-ransomware") == "true",
             "first_seen": first_seen.isoformat(),
             "clock_start": clock_start.isoformat(),
             "affects": [a.get("ref") for a in (v.get("affects") or [])],

@@ -83,7 +83,10 @@ TARGETS=$(jq -c '
            # When the live version reached users. This is the origin of the maintenance-window
            # grid (WI §6.2): the last maintenance event, not a nominal release date.
            live_since:(.mobile.published // null)} else empty end),
-    ( .environments[]? | select(.sbom != null and (.environment | test("prod"; "i")))
+    # prod|study, the same rule as the backstop: on these products a Study environment is
+    # production. Matching only /prod/ dropped a Study-only product from the targets AND from
+    # the unscannable list — the record then said all_clear with nothing scanned at all.
+    ( .environments[]? | select(.sbom != null and (.environment | test("prod|study"; "i")))
       | {name:.environment, version:.ref, sbom:.sbom,
          live_since:(.deployed_at // null)} ) ]' "$DEPLOYED")
 
@@ -94,9 +97,13 @@ N_UNSCANNABLE=$(jq 'length' <<<"$UNSCANNABLE")
 log "$PRODUCT: $N_TARGETS scannable target(s), $N_UNSCANNABLE unscannable"
 
 FINDINGS='[]'; SUPPRESSED='[]'; UNKNOWN='[]'; SCANNED='[]'; CLASSIFIED='[]'
+LIFECYCLES='[]'; ESCALATIONS='[]'
 FEEDS='{}'
-STATE_FILE="${MONITOR_STATE:-$OUT_DIR/state.json}"
-LIFECYCLE_STATE="${MONITOR_LIFECYCLE_STATE:-$OUT_DIR/lifecycle-state.json}"
+# Per target, not per product. One state file for a product with two live things (the app
+# and the backend) handed target B target A's clock starts, so B's clocks restarted on
+# every run and its latching never held.
+STATE_DIR="${MONITOR_STATE_DIR:-$OUT_DIR}"
+LIFECYCLE_STATE_DIR="${MONITOR_LIFECYCLE_STATE_DIR:-$OUT_DIR}"
 DECISIONS_FILE="${SOUP_DECISIONS_FILE:-.soup-decisions.yml}"
 
 # --- 2. per target: scan, enrich, filter -------------------------------------
@@ -150,7 +157,7 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   export MAINTENANCE_LAST_RELEASE="${live_since:-}"
   ASSESS=("$bom" "$POL_EFF" --out-dir "$OUT_DIR")
   [[ -d "$OUT_DIR/soups" ]] && ASSESS+=(--soups "$OUT_DIR/soups")
-  [[ -f "$STATE_FILE" ]] && ASSESS+=(--state "$STATE_FILE")
+  [[ -f "$STATE_DIR/state-$name.json" ]] && ASSESS+=(--state "$STATE_DIR/state-$name.json")
   if ! bash "$HERE/assess-bom.sh" "${ASSESS[@]}" >&2; then
     UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" \
       '. + [{name:$n, version:$v, why:"assessment failed"}]' <<<"$UNSCANNABLE")
@@ -159,7 +166,6 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   final="$OUT_DIR/$name.assessed.cdx.json"
   cls="$OUT_DIR/$name.findings.json"
   FEEDS=$(jq -c --slurpfile e "$OUT_DIR/$name.enrichment.json" '$e[0].feeds' <<<"$FEEDS")
-  enr="$OUT_DIR/$name.enrichment.json"
 
   # KEV findings, from the classified output: the classifier already applied VEX
   # suppression and the tri-state KEV rule, so re-deriving them here would be a second
@@ -169,6 +175,8 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
       | select(.kev == "true" or .kev == "unknown")
       | { cve: .id, target: $n, version: $v, track: .track,
           kev_uncertain: (.kev == "unknown"),
+          kev_date_added: (.kev_date_added // null),
+          ransomware: (.kev_ransomware // false),
           epss: .epss,
           mitigation_due: .mitigation_due, remediation_due: .remediation_due,
           overdue: ((.mitigation_overdue // false) or (.remediation_overdue // false)),
@@ -189,39 +197,66 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
            # document when a pre-release tag is what got deployed, but the record has to say
            # so rather than leaving a reader to assume it was the release bundle.
            sbom_tier:$tier}]' <<<"$SCANNED")
+
+  # --- lifecycle and escalation, per target ----------------------------------
+  # These used to run once after the loop, on whichever findings file `ls -1t` surfaced
+  # first — with two targets, one of them was simply never lifecycle-tracked.
+  lc="$OUT_DIR/$name.lifecycle.json"
+  LC_ARGS=(--deployed "$cls" --out "$lc")
+  [[ -n "${MONITOR_MAIN_BOM:-}" && -f "${MONITOR_MAIN_BOM}" ]] && LC_ARGS+=(--main "$MONITOR_MAIN_BOM")
+  [[ -f "$LIFECYCLE_STATE_DIR/lifecycle-state-$name.json" ]] \
+    && LC_ARGS+=(--state "$LIFECYCLE_STATE_DIR/lifecycle-state-$name.json")
+  [[ -f "$POL_EFF" ]] && LC_ARGS+=(--policy "$POL_EFF")
+  if python3 "$HERE/track-lifecycle.py" "${LC_ARGS[@]}" >&2; then
+    LIFECYCLES=$(jq -c --arg n "$name" --slurpfile l "$lc" '. + [{target:$n} + $l[0]]' <<<"$LIFECYCLES")
+  fi
+
+  esc="$OUT_DIR/$name.escalation.json"
+  if [[ -f "$lc" ]]; then
+    ESC_ARGS=("$lc" --out "$esc")
+    [[ -f "$POL_EFF" ]] && ESC_ARGS+=(--policy "$POL_EFF")
+    units="$OUT_DIR/$(basename "${cls%.findings.json}").remediation-units.json"
+    [[ -f "$units" ]] && ESC_ARGS+=(--units "$units")
+    [[ -f "$DECISIONS_FILE" ]] && ESC_ARGS+=(--decisions "$DECISIONS_FILE")
+    if python3 "$HERE/escalate-breaches.py" "${ESC_ARGS[@]}" >&2; then
+      ESCALATIONS=$(jq -c --arg n "$name" --slurpfile e "$esc" '. + [{target:$n} + $e[0]]' <<<"$ESCALATIONS")
+    fi
+  fi
 done < <(jq -r '.[] | "\(.name)\t\(.version)\t\(.sbom)\t\(.live_since // "")"' <<<"$TARGETS")
 
-# --- 2b. lifecycle -----------------------------------------------------------
-# The classifier says what a finding is; this says where it stands. Without it the monitor
-# cannot tell "nobody has fixed this" from "the fix is merged and waiting to ship", and the
-# second of those is the state the whole ticket is about.
-#
-# MONITOR_MAIN_BOM is the comparison against main. Absent, every finding reads as open and
-# the middle state is unreachable — the lifecycle says so rather than pretending.
+# Merge the per-target results into one product view for the record and the alert. Sums and
+# concatenations only — nothing is re-decided here.
 LIFECYCLE=""
-LATEST_FINDINGS=$(ls -1t "$OUT_DIR"/*.findings.json 2>/dev/null | head -1)
-if [[ -n "$LATEST_FINDINGS" ]]; then
+if [[ "$(jq 'length' <<<"$LIFECYCLES")" != "0" ]]; then
   LIFECYCLE="$OUT_DIR/lifecycle.json"
-  LC_ARGS=(--deployed "$LATEST_FINDINGS" --out "$LIFECYCLE")
-  [[ -n "${MONITOR_MAIN_BOM:-}" && -f "${MONITOR_MAIN_BOM}" ]] && LC_ARGS+=(--main "$MONITOR_MAIN_BOM")
-  [[ -f "$LIFECYCLE_STATE" ]] && LC_ARGS+=(--state "$LIFECYCLE_STATE")
-  [[ -f "$OUT_DIR/policy.effective.json" ]] && LC_ARGS+=(--policy "$OUT_DIR/policy.effective.json")
-  python3 "$HERE/track-lifecycle.py" "${LC_ARGS[@]}" >&2 || LIFECYCLE=""
+  jq -c '{
+    schema: "quickbird.finding-lifecycle/v1",
+    targets: [.[].target],
+    summary: {
+      total: ([.[].summary.total] | add),
+      by_state: (map(.summary.by_state | to_entries) | add | group_by(.key)
+                 | map({key: .[0].key, value: (map(.value) | add)}) | from_entries),
+      release_required: ([.[].summary.release_required] | add),
+      transitions: ([.[].summary.transitions] | add),
+      resolved_this_run: ([.[].summary.resolved_this_run] | add)
+    },
+    release_required: (map(. as $t | .release_required[] | . + {target: $t.target})),
+    transitions: (map(. as $t | .transitions[] | . + {target: $t.target}))
+  }' <<<"$LIFECYCLES" > "$LIFECYCLE"
 fi
-
-# --- 2c. deadline escalation --------------------------------------------------
 ESCALATION=""
-if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
+if [[ "$(jq 'length' <<<"$ESCALATIONS")" != "0" ]]; then
   ESCALATION="$OUT_DIR/escalation.json"
-  ESC_ARGS=("$LIFECYCLE" --out "$ESCALATION")
-  [[ -f "$OUT_DIR/policy.effective.json" ]] && ESC_ARGS+=(--policy "$OUT_DIR/policy.effective.json")
-  # Escalate per remediation action, not per finding (WI §6.3). On one backend product this is the
-  # difference between 507 escalations and 2.
-  for u in "$OUT_DIR"/*.remediation-units.json; do
-    [[ -f "$u" ]] && ESC_ARGS+=(--units "$u") && break
-  done
-  [[ -f "$DECISIONS_FILE" ]] && ESC_ARGS+=(--decisions "$DECISIONS_FILE")
-  python3 "$HERE/escalate-breaches.py" "${ESC_ARGS[@]}" >&2 || ESCALATION=""
+  jq -c '{
+    schema: "quickbird.deadline-escalation/v1",
+    targets: [.[].target],
+    summary: {
+      total: ([.[].summary.total] | add),
+      by_level: (map(.summary.by_level | to_entries) | add | group_by(.key)
+                 | map({key: .[0].key, value: (map(.value) | add)}) | from_entries)
+    },
+    escalations: (map(. as $t | .escalations[] | . + {target: $t.target}))
+  }' <<<"$ESCALATIONS" > "$ESCALATION"
 fi
 
 # --- 3. the run record ------------------------------------------------------
@@ -272,10 +307,15 @@ jq -n \
      classification: $classified,
      lifecycle: $lifecycle,
      escalation: $escalation,
-     all_clear: (($findings | length) == 0
+     # An all-clear additionally requires that something was actually scanned. A target
+     # filter that drops every environment produces empty lists on both sides, and an empty
+     # record must read as "nothing was looked at", never as "nothing was found".
+     all_clear: (($scanned | length) > 0
+                 and ($findings | length) == 0
                  and ($unscannable | length) == 0
                  and ($unknown | length) == 0),
      verdict: (if ($findings | length) > 0 then "kev-findings"
+               elif ($scanned | length) == 0 then "incomplete"
                elif ($unscannable | length) > 0 or ($unknown | length) > 0 then "incomplete"
                else "all-clear" end)
    }' > "$RECORD"
@@ -289,14 +329,19 @@ if [[ ! -s "$RECORD" ]] || ! jq -e . "$RECORD" >/dev/null 2>&1; then
   exit 1
 fi
 
-# Carry the classified findings forward. Without this every run restarts every clock and
-# latching never happens — the deadlines would look correct and mean nothing.
+# Carry the classified findings forward, one state file per target. Without this every run
+# restarts every clock and latching never happens — the deadlines would look correct and
+# mean nothing.
 for f in "$OUT_DIR"/*.findings.json; do
   [[ -e "$f" ]] || continue
-  cp "$f" "$STATE_FILE"
-  break
+  n=$(basename "${f%.findings.json}")
+  cp "$f" "$STATE_DIR/state-$n.json"
 done
-[[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && cp "$LIFECYCLE" "$LIFECYCLE_STATE"
+for f in "$OUT_DIR"/*.lifecycle.json; do
+  [[ -e "$f" ]] || continue
+  n=$(basename "${f%.lifecycle.json}")
+  cp "$f" "$LIFECYCLE_STATE_DIR/lifecycle-state-$n.json"
+done
 
 jq -r '"  verdict: \(.verdict)  (kev=\(.kev_findings|length), suppressed=\(.kev_suppressed_by_vex|length), unknown=\(.kev_membership_unknown|length), not scanned=\(.not_scanned|length))"' "$RECORD" >&2
 log "  record: $RECORD"

@@ -112,11 +112,20 @@ jq --slurpfile recs "$TMP/records.json" '
                   + (if (($a.is_temporary // false) == true) then "; TEMPORARY approval" else "" end) ) }
       end;
 
-  def vex_entries($r):
+  # The CycloneDX 1.6 impact-justification vocabulary. A code outside it is not a
+  # justification — the classifier only suppresses on state+justification, so an invalid
+  # code must surface here rather than acting like a valid one.
+  ["code_not_present","code_not_reachable","requires_configuration","requires_dependency",
+   "requires_environment","protected_by_compiler","protected_at_runtime",
+   "protected_at_perimeter","protected_by_mitigating_control"] as $vocab
+
+  | def vex_entries($r):
     ($r.vex // {}) | to_entries | map({
       key: .key,
       value: { state: (.value.state // "under_investigation"),
                justification: (.value.justification // null),
+               justification_valid: ((.value.justification // null) == null
+                                     or ((.value.justification // "") | IN($vocab[]))),
                response: (.value.response // null),
                detail: (.value.detail // null) } });
 
@@ -126,6 +135,17 @@ jq --slurpfile recs "$TMP/records.json" '
   | ( [ $matched[].r.package ] | unique ) as $matched_names
   | ( $records | map(select(((.package // "") as $p | ($matched_names | index($p)) == null))) ) as $orphans
   | ( $records | map(select(.vex != null)) | map(vex_entries(.)) | add // [] ) as $all_vex
+  # CVE -> the component refs whose OWN record carries a VEX for it. A statement in the
+  # record of package A used to suppress the same CVE on package B: the map was keyed on
+  # the CVE alone, and CVEs routinely affect more than one component. The analysis is only
+  # applied when every affected component is covered by its own record.
+  | ( $matched
+      | map( (.c."bom-ref") as $ref
+             | ((.r.vex // {}) | keys) | map({cve: ., ref: $ref}) )
+      | add // []
+      | group_by(.cve)
+      | map({key: .[0].cve, value: (map(.ref) | unique)})
+      | from_entries ) as $vex_cover
   | ( $all_vex | from_entries ) as $vexmap
 
   | .components = ( $pairs | map(
@@ -166,11 +186,28 @@ jq --slurpfile recs "$TMP/records.json" '
         | if $ann != null then .annotations = ((.annotations // []) + [$ann]) else . end
       end ) )
 
-  # VEX lands on vulnerabilities[].analysis.
+  # VEX lands on vulnerabilities[].analysis — but only when every component the
+  # vulnerability affects is covered by its own record, because the analysis is a property
+  # of the vulnerability entry and would otherwise speak for components nobody assessed.
   | .vulnerabilities = ( [ (.vulnerabilities // [])[]
       | . as $v
       | ($vexmap[$v.id] // null) as $x
+      | ($vex_cover[$v.id] // []) as $covered
+      | ([ ($v.affects // [])[].ref ] | map(select(. != null))) as $affected
+      | (($affected - $covered) | length == 0 and ($affected | length) > 0) as $fully_covered
       | if $x == null then $v
+        # == false, not `// true | not`: the jq alternative operator treats false as
+        # absent, so `false // true` is true and this branch never fired. Same operator
+        # trap that validate-policy.sh documents for cra_scope. (And no apostrophes in
+        # comments inside a single-quoted jq program — that is how this fix broke twice.)
+        elif $x.justification_valid == false then
+          $v + { properties: ((.properties // []) + [
+                   {name:"quickbird:vex:invalid-justification",
+                    value: ("\($x.justification // "") is not in the CycloneDX justification vocabulary — the statement does not suppress this finding")}]) }
+        elif ($fully_covered | not) and $x.state == "not_affected" then
+          $v + { properties: ((.properties // []) + [
+                   {name:"quickbird:vex:partial",
+                    value: ("a not_affected exists for \($covered | join(", ")) but this vulnerability also affects \(($affected - $covered) | join(", ")) — not suppressed; each affected component needs its own statement")}]) }
         else $v + { analysis: (
               { state: $x.state }
               + (if $x.justification != null then {justification: $x.justification} else {} end)
@@ -192,6 +229,8 @@ jq --slurpfile recs "$TMP/records.json" '
             components_without_record: ($pairs | map(select(.r == null)) | length),
             vex_statements: ($all_vex | length),
             vex_applied: ([ .vulnerabilities[]? | select(.analysis != null) ] | length),
+            vex_partial: ([ .vulnerabilities[]? | select(.properties[]? | .name == "quickbird:vex:partial") ] | length),
+            vex_invalid_justification: ([ .vulnerabilities[]? | select(.properties[]? | .name == "quickbird:vex:invalid-justification") ] | length),
             vulns_without_analysis: ([ .vulnerabilities[]? | select(.analysis == null) ] | map(.id)) } }
 ' "$BOM" > "$TMP/merged.json" || { echo "::error::merge failed" >&2; exit 1; }
 
@@ -206,6 +245,14 @@ jq -r '
 ' <<<"$REPORT" >&2
 
 STATUS=0
+
+PARTIAL=$(jq -r '.vex_partial // 0' <<<"$REPORT")
+INVALID=$(jq -r '.vex_invalid_justification // 0' <<<"$REPORT")
+if [[ "$INVALID" != "0" ]]; then
+  echo "::error::$INVALID VEX statement(s) carry a justification outside the CycloneDX vocabulary — they do not suppress anything until corrected" >&2
+  STATUS=1
+fi
+[[ "$PARTIAL" != "0" ]] && echo "::warning::$PARTIAL vulnerability/ies have a not_affected that covers only some of their affected components — not suppressed" >&2
 
 # A record that matches nothing means the SOUP list and the build disagree. Nothing
 # checks this today, which is exactly why stale records accumulate.

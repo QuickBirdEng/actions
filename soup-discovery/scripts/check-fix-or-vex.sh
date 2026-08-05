@@ -22,6 +22,10 @@ set -uo pipefail
 OSV="${OSV_API:-https://api.osv.dev}"
 STRICT_UNDER_INVESTIGATION="${STRICT_UNDER_INVESTIGATION:-false}"
 
+# The CycloneDX 1.6 justification vocabulary. Presence alone was checked before, so any
+# free-text string acted as a valid code — the mute button this gate exists to remove.
+VALID_JUST="code_not_present code_not_reachable requires_configuration requires_dependency requires_environment protected_by_compiler protected_at_runtime protected_at_perimeter protected_by_mitigating_control"
+
 for t in jq curl; do command -v "$t" >/dev/null 2>&1 || { echo "::error::$t required" >&2; exit 1; }; done
 [[ $# -gt 0 ]] || { echo "::error::no SOUP records given" >&2; exit 1; }
 
@@ -101,6 +105,8 @@ for record in "$@"; do
         # assertion, not an argument. This is the mute-button case the rule exists to stop.
         if [[ -z "$just" ]]; then
           missing+=("$id — not_affected without a justification code")
+        elif [[ " $VALID_JUST " != *" $just "* ]]; then
+          missing+=("$id — justification '$just' is not in the CycloneDX vocabulary (${VALID_JUST// /, })")
         elif [[ -z "$detail" ]]; then
           missing+=("$id — not_affected without a detail explaining why, for this product")
         else

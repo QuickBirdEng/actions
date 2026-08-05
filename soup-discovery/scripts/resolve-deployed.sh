@@ -47,8 +47,25 @@ mobile=$(gh api "repos/$REPO/releases?per_page=100" 2>/dev/null \
       | sort_by(.published) | last // null' 2>/dev/null) || mobile=null
 [[ -z "$mobile" ]] && mobile=null
 
-deployments=$(gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null) || {
-  echo "::error::cannot read deployments for $REPO" >&2; exit 1; }
+# Per environment, server-side — the same access pattern the backstop uses, and for the
+# same reason: the first 100 records of the whole history are dominated by whichever
+# environment deploys most often. An environment that deploys rarely (Study on a product
+# that ships to prod daily) fell off that page and silently vanished from the answer —
+# not as "unresolvable", but as if it did not exist.
+ENV_NAMES=$(gh api "repos/$REPO/environments" --jq '.environments[].name' 2>/dev/null || true)
+if [[ -n "$ENV_NAMES" ]]; then
+  deployments='[]'
+  while IFS= read -r e; do
+    [[ -z "$e" ]] && continue
+    page=$(gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" 2>/dev/null) || continue
+    deployments=$(jq -c --argjson p "$page" '. + $p' <<<"$deployments")
+  done <<<"$ENV_NAMES"
+else
+  # No declared environments (or no permission to list them): fall back to the newest 100
+  # records of the whole history, which is better than nothing and says so below.
+  deployments=$(gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null) || {
+    echo "::error::cannot read deployments for $REPO" >&2; exit 1; }
+fi
 
 if [[ "$(jq 'length' <<<"$deployments")" == "0" && "$mobile" == "null" ]]; then
   jq -n --arg repo "$REPO" '{
@@ -118,8 +135,15 @@ while IFS=$'\t' read -r env ref sha at id; do
   sbom_url=""; sbom_state=""
   if $ref_is_tag; then
     asset=$(printf "$ASSET_PATTERN" "$ref")
-    sbom_url=$(gh api "repos/$REPO/releases/tags/$ref" \
-                 --jq --arg a "$asset" '[.assets[] | select(.name==$a) | .browser_download_url][0] // ""' \
+    # Pipe to jq rather than using `gh api --jq` — the comment at the top of this file
+    # already says why: --jq takes only an expression and does not forward --arg, so the
+    # variable is silently lost. The first version of THIS block made exactly that mistake
+    # anyway: gh refused the extra arguments, `|| echo ""` swallowed the refusal, and every
+    # deployed tag reported "release carries no SBOM asset" — a wrong answer that read like
+    # a missing publish step. Caught by the code review, not by a run, because every
+    # monitor run until then had used MONITOR_LOCAL_SBOM.
+    sbom_url=$(gh api "repos/$REPO/releases/tags/$ref" 2>/dev/null \
+                 | jq -r --arg a "$asset" '[.assets[] | select(.name==$a) | .browser_download_url][0] // ""' \
                  2>/dev/null || echo "")
     if [[ -n "$sbom_url" ]]; then
       sbom_state="available"

@@ -369,7 +369,6 @@ def main():
             "undecided_breaches": len(open_breaches),
             "expired_decisions": len(expired),
             "cadence_broken": sum(1 for c in cadence if c["status"] == "broken"),
-            "cadence_lagging": sum(1 for c in cadence if c["status"] == "lagging"),
             "cadence_unknown": sum(1 for c in cadence if c["status"] in ("unknown", "not-declared")),
             "determination_drift": len(drift),
         },

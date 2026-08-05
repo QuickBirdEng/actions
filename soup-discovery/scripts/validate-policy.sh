@@ -28,12 +28,41 @@ for t in yq jq; do command -v "$t" >/dev/null 2>&1 || { echo "::error::$t requir
 [[ -f "$POLICY" ]]   || { echo "::error::no policy file at $POLICY — every product needs one" >&2; exit 1; }
 [[ -f "$DEFAULTS" ]] || { echo "::error::defaults not found at $DEFAULTS" >&2; exit 1; }
 
+# Every script here uses mikefarah yq v4 syntax (-o=json). The python yq is a different
+# tool with the same name; its failure mode is a confusing parse error deep in a run, so
+# the variant is checked once, here, where every consumer already passes through.
+yq --version 2>&1 | grep -q "mikefarah" \
+  || { echo "::error::yq on this runner is not mikefarah yq v4 — install it; the python yq is a different tool with the same name" >&2; exit 1; }
+
 P=$(yq -o=json '.' "$POLICY")   || { echo "::error::$POLICY is not valid YAML" >&2; exit 1; }
 D=$(yq -o=json '.' "$DEFAULTS") || { echo "::error::$DEFAULTS is not valid YAML" >&2; exit 1; }
 
 STATUS=0
 err() { echo "::error::$*" >&2; STATUS=1; }
 warn() { echo "::warning::$*" >&2; }
+
+# --- unknown keys ---------------------------------------------------------------
+# A typo in an override is worse than a missing one: `mitigaton:` simply does nothing, the
+# operator believes a stricter value applies, and no error ever says otherwise. Everything
+# a project may set is named here; anything else fails.
+KNOWN_TOP='["process_version","product","tier","cra_scope","regulatory_scope","maintenance_interval","onboarded","baseline_clocks_start","epss","tracks","breach","production_release","dependency_currency","alerts","release_cadence"]'
+UNKNOWN=$(jq -r --argjson known "$KNOWN_TOP" 'keys - $known | join(", ")' <<<"$P")
+[[ -n "$UNKNOWN" ]] && err "$POLICY: unknown key(s): $UNKNOWN — a misspelled override silently does nothing, so unknown keys are refused"
+for spec in \
+  'tracks:.tracks // {} | [.[] | keys[]] | unique:["mitigation","remediation","reason"]' \
+  'epss:.epss // {} | keys:["elevated","high","reason"]' \
+  'dependency_currency:.dependency_currency // {} | keys:["max_behind","stale_after","obsolescence_may_be_accepted","reason"]' \
+  'dependency_currency.max_behind:.dependency_currency.max_behind // {} | keys:["major","minor","patch"]' \
+  'alerts:.alerts // {} | keys:["threshold","slack_channel"]' \
+  'breach:.breach // {} | keys:["decision_within","risk_acceptance_approvers"]' \
+  'production_release:.production_release // {} | keys:["tag_pattern"]'; do
+  name="${spec%%:*}"; rest="${spec#*:}"; expr="${rest%:*}"; allowed="${rest##*:}"
+  U=$(jq -r --argjson a "$allowed" "[$expr] | flatten - \$a | join(\", \")" <<<"$P" 2>/dev/null)
+  [[ -n "$U" ]] && err "$POLICY: unknown key(s) under $name: $U"
+done
+# tracks may only name the five tracks
+U=$(jq -r '.tracks // {} | keys - ["kev","immediate","expedited","planned","monitor"] | join(", ")' <<<"$P")
+[[ -n "$U" ]] && err "$POLICY: unknown track(s): $U — the tracks are kev, immediate, expedited, planned, monitor"
 
 # --- required fields ---------------------------------------------------------
 for f in product tier cra_scope maintenance_interval; do
@@ -179,10 +208,16 @@ for k in elevated high; do
 done
 
 # --- currency: more slack than the default needs a reason --------------------
-for lvl in major minor; do
+for lvl in major minor patch; do
   dv=$(jq -r --arg l "$lvl" '.dependency_currency.max_behind[$l]' <<<"$D")
   pv=$(jq -r --arg l "$lvl" '.dependency_currency.max_behind[$l] // ""' <<<"$P")
   [[ -z "$pv" || "$pv" == "null" || "$pv" == "unlimited" && "$dv" == "unlimited" ]] && continue
+  # Both values numeric before an arithmetic compare — (( )) on a non-number is a silent
+  # no-op under this shell configuration, which would let an invalid value through unflagged.
+  if [[ "$pv" != "unlimited" ]] && ! [[ "$pv" =~ ^[0-9]+$ ]]; then
+    err "$POLICY: dependency_currency.max_behind.$lvl is '$pv' — expected a number or 'unlimited'"
+    continue
+  fi
   if [[ "$pv" == "unlimited" ]] || { [[ "$dv" != "unlimited" ]] && (( pv > dv )); }; then
     reason=$(jq -r '.dependency_currency.reason // ""' <<<"$P")
     [[ -n "$reason" ]] \

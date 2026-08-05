@@ -35,12 +35,15 @@ permissions:
 
 jobs:
   sbom:
-    # On workflow_run: only for a successful, tag-triggered release run. A failed release did not
-    # publish the images, and an inventory of a branch build carries no version identity (WI §7.2).
+    # On workflow_run: only for a successful release run with a resolvable ref. No tag-shape
+    # check here — the shape is per product (`tag_pattern` in .soup-policy.yml) and the tier
+    # resolution downstream classifies QA tags as staging and everything else on its own.
+    # NOTE verify on the first real run that head_branch carries the tag name for your
+    # release workflow; if it is empty, trigger the SBOM as a final job of that workflow instead.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-       startsWith(github.event.workflow_run.head_branch, 'v'))
+       github.event.workflow_run.head_branch != '')
     uses: QuickBirdEng/workflows/.github/workflows/soup-sbom.yml@main
     with:
       product: <product>

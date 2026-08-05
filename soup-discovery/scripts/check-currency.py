@@ -205,8 +205,28 @@ def main():
     policy = json.load(open(args.policy, encoding="utf-8"))
     cur_policy = policy.get("dependency_currency", {})
     limits = cur_policy.get("max_behind", {})
-    max_major = limits.get("major", 0)
-    max_minor = limits.get("minor", 1)
+
+    def limit(key, default):
+        """A max_behind value as an int, or None for 'unlimited'. Robust against the two
+        shapes YAML produces (int and string), because a limit that raises a TypeError in
+        the comparison would take the whole currency check down with it."""
+        v = limits.get(key, default)
+        if v is None or str(v).strip().lower() == "unlimited":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            print(f"::warning::max_behind.{key} is {v!r}, not a number or 'unlimited' — "
+                  f"using the default {default}", file=sys.stderr)
+            return None if str(default).lower() == "unlimited" else int(default)
+
+    max_major = limit("major", 0)
+    max_minor = limit("minor", 1)
+    # The patch limit was validated by validate-policy.sh (TR-03161 O.TrdP_2 requires one)
+    # and then never measured: the comparison below only looked at major and minor, so a
+    # component five patches behind a limit of one was not reported. Found by the review,
+    # not by a run — the default is unlimited, so no default-configured product could show it.
+    max_patch = limit("patch", "unlimited")
     stale_days = parse_window(cur_policy.get("stale_after", "12m"))
     if args.now:
         now = datetime.fromisoformat(str(args.now).replace("Z", "+00:00"))
@@ -276,7 +296,9 @@ def main():
                 unknown.append({"name": name, "version": cur, "latest": latest,
                                 "why": "version is not semver-comparable"})
                 continue
-            over = (b[0] > max_major) or (b[1] > max_minor and max_minor != "unlimited")
+            over = ((max_major is not None and b[0] > max_major)
+                    or (max_minor is not None and b[1] > max_minor)
+                    or (max_patch is not None and b[2] > max_patch))
 
             if not over and not is_stale:
                 continue

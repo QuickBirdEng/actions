@@ -63,16 +63,22 @@ runs:
     - name: Run the KEV check
       id: run
       shell: bash
+      # Inputs reach the script through env, not through ${{ }} inside the run block: an
+      # expression is substituted into the script text before bash parses it, so quoting
+      # does not protect it — the env indirection is what does.
       env:
         GH_TOKEN: ${{ inputs.gh-token }}
         CRA_SCOPE: ${{ inputs.cra-scope }}
         SOUP_POLICY_FILE: ${{ inputs.policy-file }}
+        IN_REPO: ${{ inputs.repo }}
+        IN_PRODUCT: ${{ inputs.product }}
+        IN_OUT: ${{ inputs.evidence-dir }}
       run: |
         set -o pipefail
-        OUT="${{ inputs.evidence-dir }}"
+        OUT="$IN_OUT"
         bash "$GITHUB_ACTION_PATH/../soup-discovery/scripts/monitor-kev.sh" \
-          "${{ inputs.repo }}" "${{ inputs.product }}" "$OUT"
-        REC=$(ls -1 "$OUT"/*-"${{ inputs.product }}".json | head -1)
+          "$IN_REPO" "$IN_PRODUCT" "$OUT"
+        REC=$(ls -1 "$OUT"/*-"$IN_PRODUCT".json | head -1)
         {
           echo "verdict=$(jq -r '.verdict' "$REC")"
           echo "record=$REC"
@@ -84,18 +90,24 @@ runs:
       shell: bash
       env:
         SLACK_TOKEN: ${{ inputs.slack-bot-token }}
+        IN_OUT: ${{ inputs.evidence-dir }}
+        IN_CHANNEL: ${{ inputs.slack-channel-id }}
       run: |
         # curl rather than slackapi/slack-github-action: the alert is multi-line markdown
         # assembled by the script, and routing it through the action's YAML payload template
         # mangles the newlines. chat.postMessage is the same API either way.
-        BODY=$(cat "${{ inputs.evidence-dir }}/alert.txt")
-        jq -n --arg ch "${{ inputs.slack-channel-id }}" --arg t "$BODY" \
+        #
+        # A failed post fails the step. An alert exists because something needs a person;
+        # an annotation nobody reads is not a notification, and the failed job is the only
+        # remaining channel that reaches one.
+        BODY=$(cat "$IN_OUT/alert.txt")
+        jq -n --arg ch "$IN_CHANNEL" --arg t "$BODY" \
           '{channel:$ch, text:$t, mrkdwn:true}' \
-        | curl -sS -X POST https://slack.com/api/chat.postMessage \
+        | curl -sS --retry 3 --retry-delay 2 -X POST https://slack.com/api/chat.postMessage \
             -H "Authorization: Bearer $SLACK_TOKEN" \
             -H 'Content-Type: application/json; charset=utf-8' \
             --data @- | jq -e '.ok' >/dev/null \
-          || echo "::error::Slack post failed — the run record was still written"
+          || { echo "::error::Slack post failed — the record exists, but nobody was notified. Failing so the alert is not lost."; exit 1; }
 
     # The durable copy. Written with the same action and into the same space as the mobile build
     # artifacts, so the retention and access rules are the ones already in place. The workflow
@@ -108,11 +120,14 @@ runs:
       id: evidence
       if: ${{ always() && inputs.do-access-key != '' }}
       shell: bash
+      env:
+        IN_OUT: ${{ inputs.evidence-dir }}
+        IN_PRODUCT: ${{ inputs.product }}
       run: |
-        REC=$(ls -1 "${{ inputs.evidence-dir }}"/[0-9]*-*.json 2>/dev/null | head -1)
+        REC=$(ls -1 "$IN_OUT"/[0-9]*-*.json 2>/dev/null | head -1)
         if [ -z "$REC" ]; then
           echo "::error::no dated run record to store — this run produced no evidence that"
-          echo "::error::  ${{ inputs.product }} was monitored, so it must not be treated as a clean run"
+          echo "::error::  $IN_PRODUCT was monitored, so it must not be treated as a clean run"
           exit 1
         fi
         echo "record=$REC" >> "$GITHUB_OUTPUT"
@@ -148,6 +163,8 @@ runs:
     - name: Summary
       if: always()
       shell: bash
+      env:
+        IN_OUT: ${{ inputs.evidence-dir }}
       run: |
         V="${{ steps.run.outputs.verdict }}"
         case "$V" in
@@ -155,6 +172,6 @@ runs:
           kev-findings) echo "### KEV monitor: ACTIVELY EXPLOITED vulnerability in the running version" ;;
           incomplete)   echo "### KEV monitor: could not complete — this is not an all-clear" ;;
         esac >> "$GITHUB_STEP_SUMMARY"
-        [ -s "${{ inputs.evidence-dir }}/alert.txt" ] && {
-          echo '```'; cat "${{ inputs.evidence-dir }}/alert.txt"; echo '```'
+        [ -s "$IN_OUT/alert.txt" ] && {
+          echo '```'; cat "$IN_OUT/alert.txt"; echo '```'
         } >> "$GITHUB_STEP_SUMMARY" || true

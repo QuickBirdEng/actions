@@ -36,7 +36,8 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
     echo ""
     jq -r '.kev_findings[] |
       "• *\(.cve)*  in `\(.target)` @ \(.version)\n" +
-      "   in CISA KEV since \(.kev_date_added // "?")" +
+      "   in CISA KEV since \(.kev_date_added // "unknown date")" +
+      (if .kev_uncertain then " (membership could not be established — treated as KEV)" else "" end) +
       (if .ransomware then "  · known ransomware use" else "" end) +
       (if .epss then "  · EPSS \(.epss)" else "" end) +
       "\n   component: \((.components // []) | join(", ") | .[0:120])"' "$RECORD"
@@ -54,7 +55,10 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
       echo ":question: *CRA scope for this product is not recorded.* Determine it before assuming the 24-hour clock does not apply."
     fi
     echo ""
-    echo "Classification: KEV is Track 1 unconditionally — mitigation 72 h, remediation 21 d, and the remediation clock stops only on deploy."
+    # No hardcoded durations here: the 72h/21d that used to be in this sentence had already
+    # drifted from the revised policy (30d). The dated deadlines per finding are in the lines
+    # above, straight from the record.
+    echo "Classification: KEV is Track 1 unconditionally. The dated deadlines above come from the policy, and the remediation clock stops only on deploy."
   } >> "$ALERT"
 fi
 
@@ -68,7 +72,7 @@ if [[ -n "$ESCALATION" && -f "$ESCALATION" ]]; then
       [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT — missed remediation deadlines*" && echo ""
       echo ":alarm_clock: *Deadlines* — $BR breached, $UD breached with no valid decision on record:"
       jq -r '.escalations[] | select(.level=="undecided" or .level=="breached")
-             | "   • \(.id) [\(.level)] \(.detail[-1])"' "$ESCALATION"
+             | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' "$ESCALATION"
       [[ "$UD" != "0" ]] && echo "_WI §7 #6 requires a recorded decision — a revised date or a risk acceptance — in .soup-decisions.yml._"
     } >> "$ALERT"
   fi

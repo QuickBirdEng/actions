@@ -1255,8 +1255,11 @@ test_units_take_the_worst_track_and_earliest_deadline() {
           vulnerabilities:[{id:"CVE-A",affects:[{ref:"c1"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]},
                            {id:"CVE-B",affects:[{ref:"c2"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]}]}' \
     > "$TMP/ru-bom.json"
-  jq -n '{findings:[{id:"CVE-A",track:"planned",kev:false,mitigation_due:"2026-10-01T00:00:00+00:00"},
-                    {id:"CVE-B",track:"immediate",kev:true,mitigation_due:"2026-08-06T00:00:00+00:00"}]}' \
+  # kev as the string the classifier actually writes — the earlier boolean fixture was how
+  # the `is True` comparison in group-remediation survived: the test data had a shape the
+  # production data never has.
+  jq -n '{findings:[{id:"CVE-A",track:"planned",kev:null,mitigation_due:"2026-10-01T00:00:00+00:00"},
+                    {id:"CVE-B",track:"immediate",kev:"true",mitigation_due:"2026-08-06T00:00:00+00:00"}]}' \
     > "$TMP/ru-f.json"
   python3 "$S/group-remediation.py" "$TMP/ru-f.json" "$TMP/ru-bom.json" --out "$TMP/ru.json" 2>/dev/null || return 1
   assert "$(jq -r '.units | length' "$TMP/ru.json")" "1" || return 1
@@ -1581,6 +1584,264 @@ test_net_backstop_cadence_counts_production_releases_only() {
   # alvie last deployed v1.0.7 to production on 2026-04-21, so a 90-day commitment is missed.
   assert "$(jq -r '.cadence[0].status' "$TMP/bs.json")" "broken" || return 1
   jq -re '.cadence[0].last_release | startswith("2026-04-21")' "$TMP/bs.json" >/dev/null
+}
+
+# ------------------------------------------------- code-review regressions (2026-08-05)
+# Each of these reproduces a defect found by the full review, not by a run. The common
+# thread: the wrong answer looked exactly like a right one.
+
+# Regression: `gh api --jq --arg` — gh takes --jq with ONE expression and forwards nothing
+# to jq, so the asset lookup errored, `|| echo ""` ate the error, and every deployed tag
+# reported "no SBOM asset". The fake gh below answers like the real API so the resolution
+# path is testable at all (it had zero tests, and all three critical review findings lived
+# in untested code).
+make_fake_gh() {
+  mkdir -p "$TMP/fakebin"
+  cat > "$TMP/fakebin/gh" <<'FAKE'
+#!/usr/bin/env bash
+# minimal gh-api fake: answers the endpoints resolve-deployed.sh asks, from fixture files.
+# The endpoint is the first argument that looks like a path — flags like --paginate and
+# --jq come in any position and must not be mistaken for it.
+EP=""
+for a in "$@"; do case "$a" in repos/*) EP="$a"; break;; esac; done
+case "$EP" in
+  repos/*/releases?per_page=100) cat "$FAKE_DIR/releases.json" ;;
+  repos/*/environments) 
+    # supports --jq '.environments[].name'
+    jq -r '.environments[].name' "$FAKE_DIR/environments.json" ;;
+  repos/*/deployments?environment=*)
+    env_name=$(printf '%s' "$EP" | sed -E 's/.*environment=([^&]*).*/\1/')
+    jq -c --arg e "$env_name" '[.[] | select(.environment == $e)]' "$FAKE_DIR/deployments.json" ;;
+  repos/*/deployments?per_page=100) cat "$FAKE_DIR/deployments.json" ;;
+  repos/*/git/matching-refs/tags) cat "$FAKE_DIR/tags.json" ;;
+  repos/*/deployments/*/statuses?per_page=1) echo '[{"state":"success"}]' ;;
+  repos/*/releases/tags/*) 
+    tag="${EP##*/}"
+    jq -e --arg t "$tag" '.[] | select(.tag_name == $t)' "$FAKE_DIR/releases.json" || exit 1 ;;
+  *) echo "fake gh: unhandled $EP" >&2; exit 1 ;;
+esac
+FAKE
+  chmod +x "$TMP/fakebin/gh"
+}
+
+fake_gh_fixtures() {  # <dir>
+  mkdir -p "$1"
+  cat > "$1/environments.json" <<'EOF'
+{"environments":[{"name":"Study"},{"name":"dev"}]}
+EOF
+  cat > "$1/deployments.json" <<'EOF'
+[{"environment":"Study","ref":"v1.2.0","sha":"abc","created_at":"2026-07-01T10:00:00Z","id":1},
+ {"environment":"dev","ref":"main","sha":"def","created_at":"2026-08-01T10:00:00Z","id":2}]
+EOF
+  cat > "$1/tags.json" <<'EOF'
+[{"ref":"refs/tags/v1.2.0"}]
+EOF
+  cat > "$1/releases.json" <<'EOF'
+[{"tag_name":"v1.2.0","published_at":"2026-07-01T09:00:00Z",
+  "assets":[{"name":"sbom-v1.2.0.cdx.json","browser_download_url":"https://x/sbom-v1.2.0.cdx.json"}]}]
+EOF
+}
+
+test_resolve_deployed_finds_the_sbom_asset() {
+  make_fake_gh
+  fake_gh_fixtures "$TMP/fx1"
+  out=$(FAKE_DIR="$TMP/fx1" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
+  # the defect made this null on every deployed tag
+  assert "$(jq -r '.environments[0].sbom' <<<"$out")" "https://x/sbom-v1.2.0.cdx.json" || return 1
+  assert "$(jq -r '.environments[0].sbom_status' <<<"$out")" "available"
+}
+
+test_resolve_deployed_reads_environments_server_side() {
+  make_fake_gh
+  fake_gh_fixtures "$TMP/fx2"
+  # 150 dev deployments would push Study off a first-100 page; server-side per-env must not care
+  python3 - "$TMP/fx2/deployments.json" <<'PYEOF'
+import json, sys
+rows=[{"environment":"dev","ref":"main","sha":"d","created_at":f"2026-08-01T{i%24:02d}:00:00Z","id":100+i} for i in range(150)]
+rows.append({"environment":"Study","ref":"v1.2.0","sha":"abc","created_at":"2026-07-01T10:00:00Z","id":1})
+json.dump(rows, open(sys.argv[1],"w"))
+PYEOF
+  out=$(FAKE_DIR="$TMP/fx2" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
+  contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
+}
+
+# Regression: the monitor filtered targets on /prod/ only. A Study-only product fell out of
+# both lists and the record said all_clear with nothing scanned.
+test_monitor_targets_include_study() {
+  # unit-level: the same jq filter the monitor applies
+  echo '{"mobile":null,"environments":[{"environment":"Study","ref":"v1","sbom":"https://x/s.json"}],"unresolvable":[]}' > "$TMP/dep.json"
+  n=$(jq '[ .environments[]? | select(.sbom != null and (.environment | test("prod|study"; "i"))) ] | length' "$TMP/dep.json")
+  assert "$n" "1"
+}
+
+test_monitor_record_zero_targets_is_not_all_clear() {
+  # the verdict expression from the record, applied to empty inputs
+  v=$(jq -n '{scanned: [], findings: [], unscannable: [], unknown: []} |
+      (if (.findings | length) > 0 then "kev-findings"
+       elif (.scanned | length) == 0 then "incomplete"
+       elif (.unscannable | length) > 0 or (.unknown | length) > 0 then "incomplete"
+       else "all-clear" end)')
+  assert "$v" '"incomplete"'
+}
+
+# Regression: max_behind.patch was validated but never measured.
+test_currency_enforces_patch_limit() {
+  cat > "$TMP/cur-bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+  {"bom-ref":"a","type":"library","name":"pkg","version":"1.2.0","purl":"pkg:npm/pkg@1.2.0"}]}
+EOF
+  jq '.dependency_currency.max_behind.patch = 1' "$TMP/cp.json" > "$TMP/cur-pol.json"
+  # fake registry via a python shim is overkill — check the comparison directly
+  python3 - "$S/check-currency.py" <<'PYEOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("cc", sys.argv[1])
+cc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cc)
+b = cc.behind("1.2.0", "1.2.5")
+assert b == (0, 0, 5), b
+# the fixed comparison: patch limit 1, behind 5 -> over
+max_major, max_minor, max_patch = 0, 1, 1
+over = ((max_major is not None and b[0] > max_major)
+        or (max_minor is not None and b[1] > max_minor)
+        or (max_patch is not None and b[2] > max_patch))
+assert over, "5 patches behind a limit of 1 must be over"
+PYEOF
+}
+
+# Regression: unit kev membership compared a string to True and was always empty.
+test_units_list_their_kev_members() {
+  cat > "$TMP/kf.json" <<'EOF'
+{"findings":[{"id":"CVE-1","track":"kev","kev":"true","affects":["a"],
+              "mitigation_due":"2026-08-08T00:00:00+00:00","remediation_due":"2026-09-04T00:00:00+00:00"}]}
+EOF
+  cat > "$TMP/kb.json" <<'EOF'
+{"components":[{"bom-ref":"a","name":"x","version":"1","purl":"pkg:rpm/x@1",
+                "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:deployed-img"}]}],
+ "vulnerabilities":[{"id":"CVE-1","affects":[{"ref":"a"}]}]}
+EOF
+  python3 "$S/group-remediation.py" "$TMP/kf.json" "$TMP/kb.json" --out "$TMP/ku.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.units[0].kev_findings | join(",")' "$TMP/ku.json")" "CVE-1"
+}
+
+# Regression: a CVSS-4-only advisory has no parsable 3.x vector and fell to rule 9
+# (expedited) whatever its severity. The database severity band now routes it.
+test_classify_v4_only_critical_is_immediate() {
+  cat > "$TMP/v4.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[],
+ "vulnerabilities":[{"id":"CVE-9","affects":[{"ref":"a"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv4","vector":"CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"}],
+   "properties":[{"name":"quickbird:vuln:osv-severity","value":"CRITICAL"}]}]}
+EOF
+  python3 "$S/classify-findings.py" "$TMP/v4.json" "$TMP/cp.json" --out "$TMP/v4f.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/v4f.json")" "immediate"
+}
+
+# Regression: `onboarded` parses to midnight, so a scan later that same day missed the
+# baseline for the entire backlog.
+test_classify_baseline_applies_on_the_onboarding_day() {
+  cat > "$TMP/ob.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[],
+ "vulnerabilities":[{"id":"CVE-10","affects":[{"ref":"a"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}]}]}
+EOF
+  jq '.onboarded = "2026-08-05" | .baseline_clocks_start = "2026-10-01"' "$TMP/cp.json" > "$TMP/obp.json"
+  python3 "$S/classify-findings.py" "$TMP/ob.json" "$TMP/obp.json" \
+    --now "2026-08-05T14:00:00+00:00" --out "$TMP/obf.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].clock_start' "$TMP/obf.json")" "2026-10-01T00:00:00+00:00"
+}
+
+# Regression: a VEX in package A suppressed the same CVE on package B; and an invalid
+# justification code suppressed anything at all.
+test_vex_does_not_cross_components() {
+  mkdir -p "$TMP/vx/soups/npm"
+  cat > "$TMP/vx/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+   {"bom-ref":"a","type":"library","name":"liba","version":"1.0.0","purl":"pkg:npm/liba@1.0.0"},
+   {"bom-ref":"b","type":"library","name":"libb","version":"2.0.0","purl":"pkg:npm/libb@2.0.0"}],
+ "vulnerabilities":[{"id":"CVE-2026-1111","affects":[{"ref":"a"},{"ref":"b"}]}]}
+EOF
+  cat > "$TMP/vx/soups/npm/liba.json" <<'EOF'
+{"package":"liba","version":"1.x.x","metadata":{"input_version":"1.0.0"},
+ "vex":{"CVE-2026-1111":{"state":"not_affected","justification":"code_not_reachable","detail":"d"}}}
+EOF
+  bash "$S/merge-assessment.sh" "$TMP/vx/bom.json" "$TMP/vx/soups" "$TMP/vx/out.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.vulnerabilities[0].analysis' "$TMP/vx/out.json")" "null" || return 1
+  contains "$(jq -r '[.vulnerabilities[0].properties[]?.name] | join(",")' "$TMP/vx/out.json")" "quickbird:vex:partial"
+}
+
+test_vex_invalid_justification_does_not_suppress() {
+  mkdir -p "$TMP/vi/soups/npm"
+  cat > "$TMP/vi/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[{"bom-ref":"a","type":"library","name":"liba","version":"1.0.0","purl":"pkg:npm/liba@1.0.0"}],
+ "vulnerabilities":[{"id":"CVE-2026-2222","affects":[{"ref":"a"}]}]}
+EOF
+  cat > "$TMP/vi/soups/npm/liba.json" <<'EOF'
+{"package":"liba","version":"1.x.x","metadata":{"input_version":"1.0.0"},
+ "vex":{"CVE-2026-2222":{"state":"not_affected","justification":"seems_fine","detail":"d"}}}
+EOF
+  bash "$S/merge-assessment.sh" "$TMP/vi/bom.json" "$TMP/vi/soups" "$TMP/vi/out.json" >/dev/null 2>&1
+  assert "$?" "1" || return 1
+  assert "$(jq -r '.vulnerabilities[0].analysis' "$TMP/vi/out.json")" "null"
+}
+
+# Regression: two directories with the same basename merged into one candidate and the
+# second scan source silently vanished.
+test_discover_distinguishes_equal_basenames() {
+  mkdir -p "$TMP/repo/services/a/server" "$TMP/repo/services/b/server"
+  printf 'module a\n' > "$TMP/repo/services/a/server/go.mod"
+  printf 'module b\n' > "$TMP/repo/services/b/server/go.mod"
+  ( cd "$TMP/repo" && git init -q . && git add -A )
+  DISCOVER_OUTPUT="$TMP/repo/cand.json" bash "$S/discover.sh" "$TMP/repo" >/dev/null 2>&1 || return 1
+  assert "$(jq '[.candidates[] | select(.ecosystem=="go")] | length' "$TMP/repo/cand.json")" "2"
+}
+
+# Regression: a typo in an override silently did nothing.
+test_policy_rejects_unknown_keys() {
+  printf 'product: x\ntier: Basic\ncra_scope: unknown\nmaintenance_interval: 90d\ntracks:\n  immediate:\n    mitigaton: 1d\n' > "$TMP/typo.yml"
+  bash "$S/validate-policy.sh" "$TMP/typo.yml" >/dev/null 2>&1
+  assert "$?" "1"
+}
+
+# Regression: an include without a reason passed the gate; only excludes were checked.
+test_scope_include_needs_reason() {
+  cat > "$TMP/inc-cand.json" <<'EOF'
+{"schema":"quickbird.soup-discovery/v1","candidate_count":1,
+ "candidates":[{"id":"x","ecosystem":"npm","scan_source":"dir:x","markers":["x/package.json"],"ships":true,"resolvable":true,"note":""}]}
+EOF
+  printf 'include:\n  - id: x\nexclude: []\n' > "$TMP/inc-scope.yml"
+  SCOPE_OUTPUT="$TMP/inc-plan.json" bash "$S/resolve-scope.sh" "$TMP/inc-cand.json" "$TMP/inc-scope.yml" >/dev/null 2>&1
+  assert "$?" "1"
+}
+
+# Regression: the fix-or-VEX gate accepted any string as a justification code.
+test_fix_or_vex_rejects_invalid_justification() {
+  # no network needed: drive the state machine with a record and a fake OSV via OSV_API
+  mkdir -p "$TMP/fv/npm" "$TMP/fakebin"
+  cat > "$TMP/fv/npm/lib.json" <<'EOF'
+{"package":"lib","version":"1.x.x","metadata":{"input_version":"1.0.0"},
+ "vex":{"CVE-2026-3333":{"state":"not_affected","justification":"seems_fine","detail":"d"}}}
+EOF
+  cat > "$TMP/fakebin/curl" <<'FAKE'
+#!/usr/bin/env bash
+echo '{"vulns":[{"id":"OSV-1","aliases":["CVE-2026-3333"]}]}'
+FAKE
+  chmod +x "$TMP/fakebin/curl"
+  out=$(PATH="$TMP/fakebin:$PATH" bash "$S/check-fix-or-vex.sh" "$TMP/fv/npm/lib.json" 2>&1)
+  assert "$?" "1" || return 1
+  contains "$out" "not in the CycloneDX vocabulary"
+}
+
+# Regression: scan-vulns exited 0 with an incomplete list when OSV was unreachable.
+test_scan_vulns_fails_on_unreachable_osv() {
+  cat > "$TMP/sv-bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+  {"bom-ref":"a","type":"library","name":"pkg","version":"1.0.0","purl":"pkg:npm/pkg@1.0.0"}]}
+EOF
+  OSV_API="http://127.0.0.1:1" bash "$S/scan-vulns.sh" "$TMP/sv-bom.json" "$TMP/sv-out.json" >/dev/null 2>&1
+  assert "$?" "1"
 }
 
 # ---------------------------------------------------------------- network

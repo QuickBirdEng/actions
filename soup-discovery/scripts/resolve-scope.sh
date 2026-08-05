@@ -94,7 +94,10 @@ PLAN=$(jq -n \
       },
       unclassified: ($all | map(select(.decision=="unclassified")) | map({id, ecosystem, markers, ships})),
       conflicts:    ($all | map(select(.decision=="conflict"))     | map({id, markers})),
-      missing_reason: ($all | map(select(.decision=="exclude" and (.reason == "" or .reason == null))) | map({id, markers})),
+      # Includes as well as excludes: WI §7 #0 says every entry carries a reason, and an
+      # unexplained include is how test tooling ends up in the shipped inventory unnoticed.
+      missing_reason: ($all | map(select((.decision=="exclude" or .decision=="include")
+                                         and (.reason == "" or .reason == null))) | map({id, decision, markers})),
       scan: ($all | map(select(.decision=="include"))),
       excluded: ($all | map(select(.decision=="exclude")) | map({id, ecosystem, markers, reason}))
     }
@@ -120,8 +123,8 @@ fi
 # An exclusion without a reason is the failure mode this whole file exists to prevent:
 # it is indistinguishable from an oversight six months later.
 if [[ "$(jq -r '.missing_reason | length' "$OUTPUT")" != "0" ]]; then
-  echo "::error::exclusions without a reason — an unexplained exclusion is not a decision" >&2
-  jq -r '.missing_reason[] | "::error::  no reason: \(.id)  \(.markers | join(", "))"' "$OUTPUT" >&2
+  echo "::error::scope entries without a reason — an unexplained decision is not a decision" >&2
+  jq -r '.missing_reason[] | "::error::  no reason (\(.decision)): \(.id)  \(.markers | join(", "))"' "$OUTPUT" >&2
   STATUS=1
 fi
 

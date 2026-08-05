@@ -48,6 +48,10 @@ add() {
     ' <<<"$CANDIDATES")
 }
 
+# Stable id from a path: the full path with / -> -, so equal basenames in different trees
+# stay distinct. A top-level directory keeps its short name unchanged.
+id_slug() { printf '%s' "${1//\//-}"; }
+
 # ---------------------------------------------------------------------------
 # Go — prefer the linked binary over go.sum
 # ---------------------------------------------------------------------------
@@ -57,7 +61,10 @@ add() {
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   dir=$(dirname "$f")
-  add "$(basename "$dir")" "go" "binary:$dir" "$f" "true" \
+  # Path-based id, not basename: two go.mod in services/a/server and services/b/server both
+  # slugged to "server", the `add` dedupe merged them, and the second scan source was
+  # silently dropped while its marker claimed coverage. Same convention as python/terraform.
+  add "$(id_slug "$dir")" "go" "binary:$dir" "$f" "true" \
       "scan the linked binary, not go.sum — go.sum includes test-only modules that do not ship"
 done <<<"$(grep -E '(^|/)go\.mod$' <<<"$FILES" || true)"
 
@@ -103,13 +110,13 @@ while IFS= read -r f; do
     src="installDist:$dir"
     note="no gradle.lockfile — scan installDist output for the resolved runtime closure; declared deps alone would omit transitives and leave BOM-managed versions empty"
   fi
-  add "$(basename "$dir")" "jvm-gradle" "$src" "$f" "true" "$note"
+  add "$(id_slug "$dir")" "jvm-gradle" "$src" "$f" "true" "$note"
 done <<<"$(grep -E '(^|/)build\.gradle(\.kts)?$' <<<"$FILES" || true)"
 
 while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   dir=$(dirname "$f")
-  add "$(basename "$dir")" "jvm-maven" "mvn:$dir" "$f" "true" \
+  add "$(id_slug "$dir")" "jvm-maven" "mvn:$dir" "$f" "true" \
       "package first, then scan target/ — the pom lists declared dependencies only, the packaged output is the resolved set"
 done <<<"$(grep -E '(^|/)pom\.xml$' <<<"$FILES" || true)"
 
@@ -157,17 +164,17 @@ while IFS= read -r f; do
   # Own lockfile wins: a package that resolves independently is its own resolved set even
   # inside a monorepo. Only fall back to the root when the package has none of its own.
   if lock=$(npm_lock_in "$dir"); then
-    add "$(basename "$dir")" "npm" "file:$lock" "$f" "true" "lockfile present — resolved set"
+    add "$(id_slug "$dir")" "npm" "file:$lock" "$f" "true" "lockfile present — resolved set"
     continue
   fi
 
   if root=$(npm_monorepo_root "$dir") && rootlock=$(npm_lock_in "$root"); then
-    add "$(basename "$root")" "npm" "file:$rootlock" "$f" "true" \
+    add "$(id_slug "$root")" "npm" "file:$rootlock" "$f" "true" \
         "monorepo root lockfile covers this and every member package — resolved set"
     continue
   fi
 
-  add "$(basename "$dir")" "npm" "dir:$dir" "$f" "true" \
+  add "$(id_slug "$dir")" "npm" "dir:$dir" "$f" "true" \
       "NO LOCKFILE — versions are ranges, not a resolved set; the component list is not reproducible"
 done <<<"$(grep -E '(^|/)package\.json$' <<<"$FILES" | grep -v 'node_modules' || true)"
 
@@ -175,9 +182,9 @@ while IFS= read -r f; do
   [[ -z "$f" ]] && continue
   dir=$(dirname "$f")
   if [[ -f "$dir/pubspec.lock" ]]; then
-    add "$(basename "$dir")" "pub" "file:$dir/pubspec.lock" "$f" "true" "lockfile present — resolved set"
+    add "$(id_slug "$dir")" "pub" "file:$dir/pubspec.lock" "$f" "true" "lockfile present — resolved set"
   else
-    add "$(basename "$dir")" "pub" "dir:$dir" "$f" "true" "NO pubspec.lock — not a resolved set"
+    add "$(id_slug "$dir")" "pub" "dir:$dir" "$f" "true" "NO pubspec.lock — not a resolved set"
   fi
 done <<<"$(grep -E '(^|/)pubspec\.yaml$' <<<"$FILES" || true)"
 

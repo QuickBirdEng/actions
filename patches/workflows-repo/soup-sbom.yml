@@ -88,6 +88,12 @@ jobs:
         with:
           product: ${{ inputs.product }}
           version: ${{ inputs.version }}
+          # Also passed as the release tag. Under workflow_run — the normal trigger — the
+          # ref is the default branch, so the action cannot derive the tag itself; without
+          # this line the bundle would be tiered `branch`, never attached to the release,
+          # and stored under the branch prefix. `version` is documented as the release tag,
+          # which is what makes this pass-through correct.
+          release-tag: ${{ inputs.version }}
           scope-file: ${{ inputs.scope-file }}
           render-pdf: ${{ inputs.render-pdf }}
           publish-to-release: ${{ inputs.publish-to-release }}

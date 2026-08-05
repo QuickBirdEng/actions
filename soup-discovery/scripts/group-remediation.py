@@ -7,9 +7,9 @@ and 288 more in 20 days:
 
     521 findings  ->  2 actions
 
-Both actions are "bump or replace a third-party image". 422 of the findings are inside
-Oviva's ePA REST service, 99 inside linuxserver/wireguard:1.0.20210914. **Not one of the 521
-is in code QuickBird writes.**
+Both actions are "bump or replace a third-party image": 422 of the findings are inside a
+vendor REST service we deploy but do not build, 99 inside a third-party WireGuard image.
+**Not one of the 521 is in code QuickBird writes.**
 
 That is why the per-finding deadlines could not be met, and it was never about capacity. The
 deadline was attached to the wrong thing. This is the same error WI §6.2 removed from Track 3,
@@ -248,8 +248,11 @@ def main():
                     if m in by_track and by_track[m].get(field)]
             return min(vals) if vals else None
 
+        # The field is the string "true" / "unknown" / None, straight from the BOM property —
+        # `is True` never matched and every unit reported zero KEV members, including units
+        # whose track was `kev`. "unknown" deliberately counts: it classifies as KEV.
         kev = [m for m in members
-               if m in by_track and by_track[m].get("kev") is True]
+               if m in by_track and by_track[m].get("kev") in ("true", "unknown")]
         out_units.append({
             "kind": u["kind"],
             "artifact": u["artifact"],

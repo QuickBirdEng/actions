@@ -56,8 +56,10 @@ if $SKIP_SCAN; then
   cp "$BOM" "$VULNS"
   log "1/5 scan       skipped, BOM already carries $(jq '[.vulnerabilities[]?]|length' "$VULNS") vulnerabilities"
 else
-  bash "$HERE/scan-vulns.sh" "$BOM" "$VULNS" >/dev/null 2>&1 \
-    || { echo "::error::vulnerability scan failed" >&2; exit 1; }
+  # stderr passes through — it is where scan-vulns reports retries and refusals, and
+  # silencing it was how an incomplete chunk once dropped out of sight entirely.
+  bash "$HERE/scan-vulns.sh" "$BOM" "$VULNS" >/dev/null \
+    || { echo "::error::vulnerability scan failed or was incomplete — not assessing a partial list" >&2; exit 1; }
   log "1/5 scan       $(jq '[.vulnerabilities[]?]|length' "$VULNS") vulnerabilities"
 fi
 
@@ -78,13 +80,13 @@ else
 fi
 
 # --- 3. enrichment onto the BOM ----------------------------------------------
-bash "$HERE/merge-enrichment.sh" "$VULNS" "$ENRICH" "$OUT_DIR/$BASE.enriched.cdx.json" >/dev/null 2>&1 \
+bash "$HERE/merge-enrichment.sh" "$VULNS" "$ENRICH" "$OUT_DIR/$BASE.enriched.cdx.json" >/dev/null \
   || { echo "::error::could not merge the enrichment" >&2; exit 1; }
 log "3/5 merge-enr   $(jq '[.vulnerabilities[]? | select(.properties[]? | .name=="quickbird:vuln:kev" and .value=="true")]|length' "$OUT_DIR/$BASE.enriched.cdx.json") in KEV"
 
 # --- 4. SOUP assessment ------------------------------------------------------
 if [[ -n "$SOUPS" && -d "$SOUPS" ]]; then
-  bash "$HERE/merge-assessment.sh" "$OUT_DIR/$BASE.enriched.cdx.json" "$SOUPS" "$ASSESSED" >/dev/null 2>&1 \
+  bash "$HERE/merge-assessment.sh" "$OUT_DIR/$BASE.enriched.cdx.json" "$SOUPS" "$ASSESSED" >/dev/null \
     || { echo "::error::could not merge the SOUP assessment" >&2; exit 1; }
   log "4/5 assess     $(jq -r '[.metadata.properties[]?|select(.name=="quickbird:soup:records-matched")][0].value // 0' "$ASSESSED") SOUP records matched, $(jq '[.vulnerabilities[]?|select(.analysis)]|length' "$ASSESSED") VEX statements applied"
 else
