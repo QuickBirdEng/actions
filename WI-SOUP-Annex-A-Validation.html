@@ -59,27 +59,27 @@ below are the evidence for those changes. Each is keyed to the section it suppor
 
 <table>
 <tr><th style="width:6rem">WI section</th><th>Rule</th><th>What the measurement showed</th></tr>
-<tr><td>§8</td><td>KEV is a separate track</td>
+<tr><td>WI §5</td><td>KEV is a separate track</td>
     <td>Of 23 Critical findings on one product, <strong>0</strong> were listed in KEV. A shared
         72-hour deadline therefore applied the urgency of observed exploitation to 23 findings that
         did not carry it.</td></tr>
-<tr><td>§9</td><td>Revised deadlines</td>
+<tr><td>WI §6</td><td>Revised deadlines</td>
     <td>The previous values (72 h / 21 d and 20 d / 40 d) produced 23 mitigations due within 72 hours
         and 288 more within 20 days on a single product.</td></tr>
-<tr><td>§9.3</td><td>Maintenance windows replace the observed release rhythm</td>
+<tr><td>WI §6.2</td><td>Maintenance windows replace the observed release rhythm</td>
     <td>Under the previous model, three of four products produced a deadline in the past, because
         their observed rhythm had lapsed. See A.3.</td></tr>
-<tr><td>§10</td><td>The deadline belongs to the action</td>
+<tr><td>WI §6.3</td><td>The deadline belongs to the action</td>
     <td>522 findings on one product resolve through <strong>3</strong> actions. With all deadlines
         elapsed, 522 escalations reduce to 3. See A.4.</td></tr>
-<tr><td>§11</td><td>OS packages excluded, image age tested instead</td>
+<tr><td>WI §4.3</td><td>OS packages excluded, image age tested instead</td>
     <td>Including OS packages reported 343 of 386 components as "currency unknown". See A.5.</td></tr>
 </table>
 
 <h2>A.2 Which releases reached production</h2>
 
 <p>Three signals in a GitHub repository can be read as "this release went to production". They
-disagree, so the deployment record is used instead (§9.3 of the Work Instruction). Measured on one
+disagree, so the deployment record is used instead (WI §7.1, stage #4 step 1). Measured on one
 mobile product:</p>
 
 <table>
@@ -153,7 +153,7 @@ per-unit escalation produces 3.</p>
 <p>Both third-party image units are in state <code>no-vendor-request</code>: the deadline is running
 against work that has not been started, because no request to either vendor is on record. Recording
 those two requests with a follow-up date would move both units to
-<code>waiting-on-vendor</code> (§10.1 of the Work Instruction).</p>
+<code>waiting-on-vendor</code> (WI §6.3).</p>
 
 <h2>A.5 Currency and obsolescence, measured</h2>
 
@@ -223,7 +223,7 @@ while any candidate is unclassified.</p>
 <h2>A.7 Product-specific open items</h2>
 
 <p>These belong to the products rather than to the process. Each is tracked in its ticket; the Work
-Instruction states only the generic class of decision (§15.2).</p>
+Instruction states only the generic class of decision (WI §9).</p>
 
 <table>
 <tr><th style="width:14rem">Product</th><th>Item</th><th>Ticket</th></tr>
@@ -277,7 +277,7 @@ Instruction states only the generic class of decision (§15.2).</p>
 </table>
 
 <p>Every record sets <code>grq-4</code> to fulfilled with <code>vulnerabilities_count: 0</code>.
-Whether the comparison in §9.5 of the Work Instruction fires in practice depends on those libraries
+Whether the comparison in WI §7.1, stage #4 step 5 fires in practice depends on those libraries
 appearing in a product SBOM; on the products measured so far, the findings are located in third-party
 images that carry no SOUP record.</p>
 
