@@ -90,7 +90,12 @@ TARGETS=$(jq -c '
       | {name:.environment, version:.ref, sbom:.sbom,
          live_since:(.deployed_at // null)} ) ]' "$DEPLOYED")
 
-UNSCANNABLE=$(jq -c '[ .unresolvable[]? | {name:.environment, version:.ref, why:.why} ]' "$DEPLOYED")
+# The same production filter as the targets. Without it, a Development or QA environment
+# with no SBOM keeps every record at `incomplete` forever, and an alert that always fires
+# carries no information. `mobile` and the `*` wildcard entry are production by definition.
+UNSCANNABLE=$(jq -c '[ .unresolvable[]?
+  | select((.environment | test("prod|study|mobile"; "i")) or .environment == "*")
+  | {name:.environment, version:.ref, why:.why} ]' "$DEPLOYED")
 
 N_TARGETS=$(jq 'length' <<<"$TARGETS")
 N_UNSCANNABLE=$(jq 'length' <<<"$UNSCANNABLE")

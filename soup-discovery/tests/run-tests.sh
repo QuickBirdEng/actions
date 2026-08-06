@@ -1666,6 +1666,59 @@ PYEOF
   contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
 }
 
+# Regression (found on the runner, not in the review): with contents:read only, the
+# environments list answers and every per-environment deployments fetch 403s. The old
+# `|| continue` made Production silently vanish from both lists.
+test_resolve_deployed_names_unreadable_environments() {
+  make_fake_gh
+  fake_gh_fixtures "$TMP/fx3"
+  # fake gh: env list works, per-env deployment fetch fails like a 403 would
+  cat > "$TMP/fakebin/gh" <<'FAKE'
+#!/usr/bin/env bash
+EP=""
+for a in "$@"; do case "$a" in repos/*) EP="$a"; break;; esac; done
+case "$EP" in
+  repos/*/releases?per_page=100) echo '[]' ;;
+  repos/*/environments) printf 'Production\n' ;;
+  repos/*/deployments?environment=*) exit 1 ;;
+  repos/*/git/matching-refs/tags) echo '[]' ;;
+  *) exit 1 ;;
+esac
+FAKE
+  chmod +x "$TMP/fakebin/gh"
+  out=$(FAKE_DIR="$TMP/fx3" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
+  contains "$(jq -r '.unresolvable[].why' <<<"$out")" "could not be read"
+}
+
+# Regression: an environment whose newest records are all non-tag refs disappeared from
+# both lists — real on a repo whose Production env is also written by a content-migration
+# workflow dispatching from branches.
+test_resolve_deployed_names_tagless_environments() {
+  make_fake_gh
+  fake_gh_fixtures "$TMP/fx4"
+  cat > "$TMP/fx4/deployments.json" <<'EOF'
+[{"environment":"Study","ref":"some-branch","sha":"d","created_at":"2026-08-01T10:00:00Z","id":7}]
+EOF
+  cat > "$TMP/fx4/tags.json" <<'EOF'
+[]
+EOF
+  out=$(FAKE_DIR="$TMP/fx4" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
+  contains "$(jq -r '.unresolvable[] | select(.environment=="Study") | .why' <<<"$out")" "none from a tag"
+}
+
+# Regression: a Development environment without an SBOM kept every record at `incomplete`.
+# The unscannable list follows the same production filter as the targets.
+test_monitor_unscannable_filters_to_production() {
+  echo '{"unresolvable":[
+    {"environment":"Development","ref":"x","why":"no sbom"},
+    {"environment":"Production","ref":"v1","why":"no sbom"},
+    {"environment":"mobile","ref":"v1","why":"no asset"},
+    {"environment":"*","ref":null,"why":"nothing states what runs"}]}' > "$TMP/uf.json"
+  n=$(jq '[ .unresolvable[]?
+    | select((.environment | test("prod|study|mobile"; "i")) or .environment == "*") ] | length' "$TMP/uf.json")
+  assert "$n" "3"
+}
+
 # Regression: the monitor filtered targets on /prod/ only. A Study-only product fell out of
 # both lists and the record said all_clear with nothing scanned.
 test_monitor_targets_include_study() {

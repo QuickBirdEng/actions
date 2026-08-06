@@ -55,13 +55,24 @@ mobile=$(gh api "repos/$REPO/releases?per_page=100" 2>/dev/null \
 # environment deploys most often. An environment that deploys rarely (Study on a product
 # that ships to prod daily) fell off that page and silently vanished from the answer —
 # not as "unresolvable", but as if it did not exist.
+# Environments whose deployment records could not be read. The environments list is
+# readable with plain repository read, the deployments themselves need the `deployments`
+# permission — a workflow that grants only `contents: read` gets the list and a 403 for
+# every fetch. The first end-to-end run hit exactly that, and the `|| continue` this block
+# used to have made Production silently vanish from the answer instead of naming the
+# problem. Silence is the one failure mode this script exists to prevent.
+UNREADABLE='[]'
 ENV_NAMES=$(gh api "repos/$REPO/environments" --jq '.environments[].name' 2>/dev/null || true)
 if [[ -n "$ENV_NAMES" ]]; then
   deployments='[]'
   while IFS= read -r e; do
     [[ -z "$e" ]] && continue
-    page=$(gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" 2>/dev/null) || continue
-    deployments=$(jq -c --argjson p "$page" '. + $p' <<<"$deployments")
+    if page=$(gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" 2>/dev/null); then
+      deployments=$(jq -c --argjson p "$page" '. + $p' <<<"$deployments")
+    else
+      UNREADABLE=$(jq -c --arg e "$e" '. + [{environment:$e, ref:null,
+        why:"deployment records for this environment could not be read — the token likely lacks the deployments permission. Not knowing what runs here is not the same as nothing running here."}]' <<<"$UNREADABLE")
+    fi
   done <<<"$ENV_NAMES"
 else
   # No declared environments (or no permission to list them): fall back to the newest 100
@@ -71,12 +82,15 @@ else
 fi
 
 if [[ "$(jq 'length' <<<"$deployments")" == "0" && "$mobile" == "null" ]]; then
-  jq -n --arg repo "$REPO" '{
+  # The specific reasons win over the generic one: "every per-environment fetch failed"
+  # names a permissions problem someone can fix, "nothing states what is running" does not.
+  jq -n --arg repo "$REPO" --argjson unreadable "$UNREADABLE" '{
     schema: "quickbird.deployed-version/v1",
     repo: $repo,
     environments: [],
     mobile: null,
-    unresolvable: [{environment: "*", why: "no GitHub deployments and no production release artifact — nothing states what is running, and the latest tag is not evidence of it"}]
+    unresolvable: (if ($unreadable | length) > 0 then $unreadable
+                   else [{environment: "*", why: "no GitHub deployments and no production release artifact — nothing states what is running, and the latest tag is not evidence of it"}] end)
   }'
   echo "::warning::$REPO: nothing states what is running — the deployed version is unknown" >&2
   exit 0
@@ -122,7 +136,14 @@ while IFS= read -r group; do
     NONTAG=$(jq -c --arg e "$env" --arg r "$ref" --arg a "$at" \
       '. + [{environment:$e, ref:$r, at:$a}]' <<<"$NONTAG")
   done < <(jq -r 'reverse | .[] | "\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$group")
-  [[ -n "$chosen" ]] && picked=$(jq -c --argjson c "$chosen" '. + [$c]' <<<"$picked")
+  if [[ -n "$chosen" ]]; then
+    picked=$(jq -c --argjson c "$chosen" '. + [$c]' <<<"$picked")
+  else
+    # Every record for this environment is a non-tag ref. The environment is real and
+    # something deploys to it; dropping it here would hide it from both lists.
+    UNREADABLE=$(jq -c --arg e "$env" --argjson n "$skipped" '. + [{environment:$e, ref:null,
+      why:"\($n) deployment record(s), none from a tag — nothing states which application release runs here"}]' <<<"$UNREADABLE")
+  fi
 done < <(jq -c '.[]' <<<"$latest")
 latest="$picked"
 
@@ -170,7 +191,8 @@ while IFS=$'\t' read -r env ref sha at id; do
            sbom_status:$sstate}]' <<<"$out")
 done < <(jq -r '.[] | "\(.env)\t\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$latest")
 
-jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argjson nontag "$NONTAG" '{
+jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argjson nontag "$NONTAG" \
+      --argjson unreadable "$UNREADABLE" '{
   schema: "quickbird.deployed-version/v1",
   repo: $repo,
   # The apps and the backend are separately live and can differ — that is the concrete
@@ -189,7 +211,8 @@ jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argj
   non_release_deployments: $nontag,
   scannable: ([$envs[] | select(.sbom != null) | .environment]
               + (if ($mobile != null and $mobile.sbom != null) then ["mobile"] else [] end)),
-  unresolvable: ([$envs[] | select(.sbom == null) | {environment, ref, why: .sbom_status}]
+  unresolvable: ($unreadable
+                 + [$envs[] | select(.sbom == null) | {environment, ref, why: .sbom_status}]
                  + (if $mobile != null and $mobile.sbom == null
                     then [{environment: "mobile", ref: $mobile.tag,
                            why: "production release carries no SBOM asset"}] else [] end)
