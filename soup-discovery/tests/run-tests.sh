@@ -1672,15 +1672,17 @@ PYEOF
 test_resolve_deployed_names_unreadable_environments() {
   make_fake_gh
   fake_gh_fixtures "$TMP/fx3"
-  # fake gh: env list works, per-env deployment fetch fails like a 403 would
+  # fake gh: env list works, per-env deployment fetch fails like real gh does — the error
+  # BODY goes to stdout and the exit code is 1. Modelling only the exit code hid the second
+  # runner finding below.
   cat > "$TMP/fakebin/gh" <<'FAKE'
 #!/usr/bin/env bash
 EP=""
 for a in "$@"; do case "$a" in repos/*) EP="$a"; break;; esac; done
 case "$EP" in
   repos/*/releases?per_page=100) echo '[]' ;;
-  repos/*/environments) printf 'Production\n' ;;
-  repos/*/deployments?environment=*) exit 1 ;;
+  repos/*/environments) echo '{"environments":[{"name":"Production"}]}' ;;
+  repos/*/deployments?environment=*) echo '{"message":"Resource not accessible by integration"}'; exit 1 ;;
   repos/*/git/matching-refs/tags) echo '[]' ;;
   *) exit 1 ;;
 esac
@@ -1688,6 +1690,37 @@ FAKE
   chmod +x "$TMP/fakebin/gh"
   out=$(FAKE_DIR="$TMP/fx3" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
   contains "$(jq -r '.unresolvable[].why' <<<"$out")" "could not be read"
+}
+
+# Regression (third runner finding): gh api prints the RESPONSE BODY to stdout on an HTTP
+# error. A 403 on /environments therefore produced a phantom environment named
+# {"message":...}, whose filtered query politely returned [] — and every real environment
+# vanished without an error anywhere. The names must come from the deployment records when
+# the listing is refused.
+test_resolve_deployed_survives_error_body_on_stdout() {
+  make_fake_gh
+  fake_gh_fixtures "$TMP/fx5"
+  cat > "$TMP/fakebin/gh" <<'FAKE'
+#!/usr/bin/env bash
+EP=""
+for a in "$@"; do case "$a" in repos/*) EP="$a"; break;; esac; done
+case "$EP" in
+  repos/*/releases?per_page=100) echo '[]' ;;
+  repos/*/environments) echo '{"message":"Resource not accessible by integration","status":"403"}'; exit 1 ;;
+  repos/*/deployments?environment=*)
+    env_name=$(printf '%s' "$EP" | sed -E 's/.*environment=([^&]*).*/\1/')
+    jq -c --arg e "$env_name" '[.[] | select(.environment == $e)]' "$FAKE_DIR/deployments.json" ;;
+  repos/*/deployments?per_page=100) cat "$FAKE_DIR/deployments.json" ;;
+  repos/*/git/matching-refs/tags) cat "$FAKE_DIR/tags.json" ;;
+  repos/*/deployments/*/statuses?per_page=1) echo '[{"state":"success"}]' ;;
+  repos/*/releases/tags/*) exit 1 ;;
+  *) echo "fake gh: unhandled $EP" >&2; exit 1 ;;
+esac
+FAKE
+  chmod +x "$TMP/fakebin/gh"
+  out=$(FAKE_DIR="$TMP/fx5" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo 2>/dev/null) || return 1
+  # Study must be found via the names derived from the unfiltered page
+  contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
 }
 
 # Regression: an environment whose newest records are all non-tag refs disappeared from

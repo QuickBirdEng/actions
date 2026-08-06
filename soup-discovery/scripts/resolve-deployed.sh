@@ -62,24 +62,37 @@ mobile=$(gh api "repos/$REPO/releases?per_page=100" 2>/dev/null \
 # used to have made Production silently vanish from the answer instead of naming the
 # problem. Silence is the one failure mode this script exists to prevent.
 UNREADABLE='[]'
-ENV_NAMES=$(gh api "repos/$REPO/environments" --jq '.environments[].name' 2>/dev/null || true)
-if [[ -n "$ENV_NAMES" ]]; then
-  deployments='[]'
-  while IFS= read -r e; do
-    [[ -z "$e" ]] && continue
-    if page=$(gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" 2>/dev/null); then
-      deployments=$(jq -c --argjson p "$page" '. + $p' <<<"$deployments")
-    else
-      UNREADABLE=$(jq -c --arg e "$e" '. + [{environment:$e, ref:null,
-        why:"deployment records for this environment could not be read — the token likely lacks the deployments permission. Not knowing what runs here is not the same as nothing running here."}]' <<<"$UNREADABLE")
-    fi
-  done <<<"$ENV_NAMES"
-else
-  # No declared environments (or no permission to list them): fall back to the newest 100
-  # records of the whole history, which is better than nothing and says so below.
-  deployments=$(gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null) || {
-    echo "::error::cannot read deployments for $REPO" >&2; exit 1; }
+# Two gh behaviours shape this block, both proven on a real runner. First: `gh api` prints
+# the RESPONSE BODY to stdout even on an HTTP error, so capturing stdout without checking
+# the exit code turns {"message":"Resource not accessible..."} into data — here it became a
+# phantom environment name, the filtered query for it politely returned [], and every real
+# environment vanished without a single error. Second: the workflow token can be allowed to
+# read deployments while /environments still answers 403, so the environment names have to
+# come from the deployment records themselves when the listing is refused.
+ENV_NAMES=""
+if ENVS_JSON=$(gh api "repos/$REPO/environments" 2>/dev/null); then
+  ENV_NAMES=$(jq -r '.environments[]?.name // empty' <<<"$ENVS_JSON" 2>/dev/null || true)
 fi
+if [[ -z "$ENV_NAMES" ]]; then
+  # Listing refused or empty: derive the names from the newest records of the whole
+  # history. An environment that has not deployed within these records stays invisible —
+  # said here once rather than silently.
+  page0=$(gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null) || {
+    echo "::error::cannot read deployments for $REPO — the token lacks the deployments permission" >&2; exit 1; }
+  ENV_NAMES=$(jq -r '[.[].environment] | unique | .[]' <<<"$page0" 2>/dev/null || true)
+  [[ -n "$ENV_NAMES" ]] && echo "::warning::$REPO: the environments listing is not readable with this token — environment names derived from the newest 100 deployment records; an environment quiet for longer than that is not visible" >&2
+fi
+deployments='[]'
+while IFS= read -r e; do
+  [[ -z "$e" ]] && continue
+  if page=$(gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" 2>/dev/null) \
+     && jq -e 'type == "array"' <<<"$page" >/dev/null 2>&1; then
+    deployments=$(jq -c --argjson p "$page" '. + $p' <<<"$deployments")
+  else
+    UNREADABLE=$(jq -c --arg e "$e" '. + [{environment:$e, ref:null,
+      why:"deployment records for this environment could not be read — the token likely lacks the deployments permission. Not knowing what runs here is not the same as nothing running here."}]' <<<"$UNREADABLE")
+  fi
+done <<<"$ENV_NAMES"
 
 if [[ "$(jq 'length' <<<"$deployments")" == "0" && "$mobile" == "null" ]]; then
   # The specific reasons win over the generic one: "every per-environment fetch failed"
@@ -151,7 +164,8 @@ out='[]'
 while IFS=$'\t' read -r env ref sha at id; do
   [[ -z "$env" ]] && continue
 
-  state=$(gh api "repos/$REPO/deployments/$id/statuses?per_page=1" --jq '.[0].state // "unknown"' 2>/dev/null)
+  state=$(gh api "repos/$REPO/deployments/$id/statuses?per_page=1" 2>/dev/null \
+          | jq -r '.[0].state // "unknown"' 2>/dev/null || echo "unknown")
 
   ref_is_tag=false
   is_tag "$ref" && ref_is_tag=true
