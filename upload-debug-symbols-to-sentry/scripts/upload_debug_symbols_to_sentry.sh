@@ -7,6 +7,9 @@ set -euo pipefail
 # empty --url would swallow the subcommand that follows it, so default it here.
 url="${INPUT_URL:-https://sentry.io}"
 
+# sentry-cli picks the token up from the environment, keeping it out of argv.
+export SENTRY_AUTH_TOKEN="${INPUT_AUTH_TOKEN:-}"
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 upload_debug_files() {

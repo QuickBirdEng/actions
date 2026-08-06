@@ -28,10 +28,12 @@ trap 'rm -f "$credentials"' EXIT
 endpoint="${SPACES_ENDPOINT:-https://${INPUT_SPACE_NAME}.${INPUT_SPACE_REGION}.digitaloceanspaces.com}"
 prefix="${GITHUB_REPOSITORY##*/}/debug-symbols/${build_number}"
 deleted=0
+requested=0
 
 echo "Deleting debug symbols under '$prefix/'"
 
 for platform in $INPUT_PLATFORMS; do
+    requested=$((requested + 1))
     archive="debug-symbols-${platform}.tar.gz"
 
     curl_status=0
@@ -58,4 +60,4 @@ for platform in $INPUT_PLATFORMS; do
     esac
 done
 
-echo "Deleted $deleted of $(echo "$INPUT_PLATFORMS" | wc -w | tr -d ' ') key(s)"
+echo "Deleted $deleted of $requested key(s)"

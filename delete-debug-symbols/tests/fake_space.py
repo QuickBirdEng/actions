@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Minimal stand-in for a DO Space: serves GET and DELETE over a directory.
 
 Usage: fake_space.py <root> <port>

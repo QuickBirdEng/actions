@@ -3,6 +3,9 @@ set -euo pipefail
 
 url="${INPUT_URL:-https://sentry.io}"
 
+# sentry-cli picks the token up from the environment, keeping it out of argv.
+export SENTRY_AUTH_TOKEN="${INPUT_AUTH_TOKEN:-}"
+
 sentry-cli --url "$url" releases --org "$INPUT_ORGANIZATION" new "$INPUT_RELEASE"
 
 # ── commit association ────────────────────────────────────────────────────────

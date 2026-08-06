@@ -49,7 +49,7 @@ run_upload() {
     cd "$WORKSPACE"
     run env \
         PATH="${STUB_DIR}:${PATH}" \
-        SENTRY_AUTH_TOKEN="secret-token" \
+        INPUT_AUTH_TOKEN="secret-token" \
         INPUT_URL="${INPUT_URL-https://sentry.quickbirdstudios.com}" \
         INPUT_ORGANIZATION="quickbird" \
         INPUT_PROJECT="kaarlo" \
@@ -64,7 +64,7 @@ run_upload() {
 run_release() {
     run env \
         PATH="${STUB_DIR}:${PATH}" \
-        SENTRY_AUTH_TOKEN="secret-token" \
+        INPUT_AUTH_TOKEN="secret-token" \
         INPUT_URL="${INPUT_URL-https://sentry.quickbirdstudios.com}" \
         INPUT_ORGANIZATION="quickbird" \
         INPUT_RELEASE="${INPUT_RELEASE:-1.4.0+1764500000}" \

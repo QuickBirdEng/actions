@@ -53,7 +53,7 @@ runs:
     - name: Upload debug symbols
       shell: bash
       env:
-        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+        INPUT_AUTH_TOKEN: ${{ inputs.auth-token }}
         INPUT_URL: ${{ inputs.url }}
         INPUT_ORGANIZATION: ${{ inputs.organization }}
         INPUT_PROJECT: ${{ inputs.project }}
@@ -67,7 +67,7 @@ runs:
       if: ${{ inputs.release != '' }}
       shell: bash
       env:
-        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+        INPUT_AUTH_TOKEN: ${{ inputs.auth-token }}
         INPUT_URL: ${{ inputs.url }}
         INPUT_ORGANIZATION: ${{ inputs.organization }}
         INPUT_RELEASE: ${{ inputs.release }}
