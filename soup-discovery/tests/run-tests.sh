@@ -1666,6 +1666,21 @@ PYEOF
   contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
 }
 
+# The android closure: syft reads zero components out of an AAB (measured), so the gradle
+# lockfile is the only faithful source. With one present, discovery must route to it
+# instead of demanding the built artifact.
+test_discover_android_prefers_gradle_lockfile() {
+  mkdir -p "$TMP/mob/app/android/app"
+  printf 'name: app\n' > "$TMP/mob/app/pubspec.yaml"
+  : > "$TMP/mob/app/android/build.gradle"
+  : > "$TMP/mob/app/android/app/build.gradle"
+  : > "$TMP/mob/app/android/app/gradle.lockfile"
+  ( cd "$TMP/mob" && git init -q . && git add -A )
+  DISCOVER_OUTPUT="$TMP/mob/cand.json" bash "$S/discover.sh" "$TMP/mob" >/dev/null 2>&1 || return 1
+  src=$(jq -r '.candidates[] | select(.id=="app-android") | .scan_source' "$TMP/mob/cand.json")
+  assert "$src" "file:app/android/app/gradle.lockfile"
+}
+
 # Regression (found on the runner, not in the review): with contents:read only, the
 # environments list answers and every per-environment deployments fetch 403s. The old
 # `|| continue` made Production silently vanish from both lists.

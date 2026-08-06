@@ -99,8 +99,23 @@ while IFS= read -r f; do
     app_root="${f%%/android/*}"
     [[ "$app_root" == "$f" ]] && app_root=$(dirname "$dir")
     [[ -z "$app_root" || "$app_root" == "." ]] && app_root="app"
-    add "$(tr '/' '-' <<<"$app_root")-android" "android-gradle" "apk:$app_root/android" "$f" "true" \
-        "Android build of a mobile app — no installDist; the shipped closure comes from the built APK/AAB, and the Dart side from pubspec.lock"
+    # Gradle dependency locking wins over the built artifact. Measured: syft reads ZERO
+    # components out of an AAB — dex bytecode carries no package metadata — so scanning the
+    # bundle would close the gap by claiming an empty inventory, which is worse than the gap.
+    # The lockfile is the resolved android closure; enable it once with
+    #   cd <app>/android && ./gradlew :app:dependencies --write-locks
+    # and this branch picks it up on the next run. Until then the candidate stays a named gap.
+    android_lock=""
+    for cand in "$app_root/android/app/gradle.lockfile" "$app_root/android/gradle.lockfile"; do
+      [[ -f "$cand" ]] && { android_lock="$cand"; break; }
+    done
+    if [[ -n "$android_lock" ]]; then
+      add "$(tr '/' '-' <<<"$app_root")-android" "android-gradle" "file:$android_lock" "$f" "true" \
+          "gradle dependency locking is on — the lockfile is the resolved android closure; the Dart side comes from pubspec.lock"
+    else
+      add "$(tr '/' '-' <<<"$app_root")-android" "android-gradle" "apk:$app_root/android" "$f" "true" \
+          "Android build of a mobile app — no installDist; enable gradle dependency locking (./gradlew :app:dependencies --write-locks) for the resolved closure, or provide the built artifact via SBOM_ARTIFACT_; the Dart side comes from pubspec.lock"
+    fi
     continue
   fi
 
