@@ -210,8 +210,19 @@ def build(bundle, out_path):
             who = ann.get("annotator", {}).get("individual", {}).get("name", "—")
             when = (ann.get("timestamp") or "")[:10]
             reqtxt = f"{met}/{len(reqs)} met"
-            if unmet:
-                reqtxt += f'<br/><font color="#b45309">open: {esc(", ".join(sorted(unmet)))}</font>'
+            # An unfulfilled requirement WITH a recorded reason is a documented deviation —
+            # the record schema demands exactly that — and it must not read like an
+            # unresolved to-do. "open: version-check" hid a perfectly good justification and
+            # looked identical to the one case that actually blocks: no reason recorded.
+            for key in sorted(unmet):
+                reason = p.get(f"quickbird:soup:req:{key}:reason", "").strip()
+                if reason:
+                    short = reason if len(reason) <= 90 else reason[:87] + "…"
+                    reqtxt += (f'<br/><font color="#b45309">not met: {esc(key)}</font> '
+                               f'<font color="#5b6472">— {esc(short)}</font>')
+                else:
+                    reqtxt += (f'<br/><font color="#b91c1c"><b>not met: {esc(key)} — '
+                               f'no reason recorded</b></font>')
             # A requirement recorded as met that today's scan contradicts. Shown in the same cell
             # as the requirement count, because the reader needs both facts together: what the
             # record asserts and what holds now. Otherwise this is precisely the discrepancy an
