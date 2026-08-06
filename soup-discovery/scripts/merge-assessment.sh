@@ -178,7 +178,19 @@ jq --slurpfile recs "$TMP/records.json" '
   | ( $all_vex | from_entries ) as $vexmap
 
   | .components = ( $pairs | map(
-      if .r == null then .c
+      if .r == null then
+        # No approval applies — but if a DRIFT record names this component, say so on the
+        # component itself. Whoever reads the entry in the document or the PDF must see
+        # "an approval exists and does not cover this version" without hunting through
+        # the metadata.
+        .c as $c
+        | ( $drift | map(select(name_matches({package: .package}; $c))) | first ) as $dr
+        | if $dr == null then $c
+          else $c + { properties: ( (($c.properties // [])
+                 + [ { name: "quickbird:soup:approval-drift",
+                       value: "a SOUP record approves family \($dr.family), but this build ships \($c.version // "?") — the approval does not apply to this version (WI §7 #4 review event)" } ])
+                 | sort_by(.name, (.value // "")) ) }
+          end
       else
         # Bind the record before piping into .c — after `.c |` the context is the
         # component, so a bare .r would resolve against the component and silently

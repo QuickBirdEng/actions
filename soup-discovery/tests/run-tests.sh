@@ -1708,7 +1708,9 @@ EOF
   out=$(bash "$S/merge-assessment.sh" "$TMP/dr/bom.json" "$TMP/dr/soups" "$TMP/dr/out.json" 2>&1)
   contains "$out" "approved family 1.0.20241014, shipped 1.0.20210914" || return 1
   # and it is NOT counted among the plain orphans
-  contains "$out" "0 SOUP record(s) match no component" || ! grep -q "match no component" <<<"$out"
+  contains "$out" "0 SOUP record(s) match no component" || ! grep -q "match no component" <<<"$out" || return 1
+  # the component itself says so — a reader of the document must not have to hunt the metadata
+  contains "$(jq -r '[.components[0].properties[]? | select(.name=="quickbird:soup:approval-drift")][0].value' "$TMP/dr/out.json")" "does not apply to this version"
 }
 
 # The android closure: syft reads zero components out of an AAB (measured), so the gradle

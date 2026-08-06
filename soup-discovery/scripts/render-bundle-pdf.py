@@ -242,6 +242,16 @@ def build(bundle, out_path):
             ])
         el.append(table(rows, [45 * mm, 22 * mm, 25 * mm, 38 * mm, 40 * mm]))
 
+    mismatches = prop_all(meta, "quickbird:soup:record-version-mismatch")
+    if mismatches:
+        el.append(Spacer(1, 6))
+        el.append(Paragraph(
+            f'<font color="#b91c1c"><b>{len(mismatches)} SOUP approval(s) do not cover the '
+            f'shipped version.</b></font> The component ships now, under an approval that '
+            f'applies to a different version family — a review event per WI §7 #4:', body))
+        for m in mismatches:
+            el.append(Paragraph(f'&bull; {esc(m)}', small))
+
     orphans = prop_all(meta, "quickbird:soup:orphaned-record")
     if orphans:
         el.append(Spacer(1, 6))

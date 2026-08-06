@@ -195,9 +195,18 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   FINDINGS=$(jq -c --argjson a "$act" '. + $a' <<<"$FINDINGS")
   SUPPRESSED=$(jq -c --argjson s "$sup" '. + $s' <<<"$SUPPRESSED")
   UNKNOWN=$(jq -c --argjson u "$unk" '. + $u' <<<"$UNKNOWN")
+  # WI §7.1 stage #4 step 5 — whether the SOUP approvals still match what the scan finds.
+  # The dated record is the evidence of that check, so its result belongs in it, not only
+  # in a log line nobody retains.
+  SOUP_CHECK=$(jq -c '{
+      matched:  ([.metadata.properties[]? | select(.name=="quickbird:soup:records-matched")][0].value // "0"),
+      orphaned: ([.metadata.properties[]? | select(.name=="quickbird:soup:records-orphaned")][0].value // "0"),
+      version_mismatch: [ .metadata.properties[]? | select(.name=="quickbird:soup:record-version-mismatch") | .value ]
+    }' "$final" 2>/dev/null || echo '{}')
   SCANNED=$(jq -c --arg n "$name" --arg v "$version" --arg tier "$BOM_TIER" \
+    --argjson soup "$SOUP_CHECK" \
     --argjson t "$(jq '[.vulnerabilities[]?] | length' "$final")" \
-    '. + [{name:$n, version:$v, vulnerabilities:$t,
+    '. + [{name:$n, version:$v, vulnerabilities:$t, soup_records:$soup,
            # Which kind of document this scan rests on. A staging-tier bundle is the right
            # document when a pre-release tag is what got deployed, but the record has to say
            # so rather than leaving a reader to assume it was the release bundle.
