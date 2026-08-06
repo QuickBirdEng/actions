@@ -275,7 +275,11 @@ def build(bundle, out_path):
                           f'<br/>{esc(when)}<br/><font size="6">{esc(why[:90])}</font>')
             else:
                 whotxt = f"{esc(who)}<br/>{esc(when)}"
-            if latest and cstatus not in ("", "current"):
+            # The Latest column is information; the signal colour belongs to the record
+            # state. Colouring every behind/stale value painted half the table orange and
+            # made a clean 7/7 approval look like a finding — orange now marks only the
+            # rows whose requirements are not met, where the newer version is part of WHY.
+            if latest and unmet:
                 latest_txt = f'<font color="#b45309">{esc(latest)}</font>'
             else:
                 latest_txt = esc(latest) if latest else "—"
