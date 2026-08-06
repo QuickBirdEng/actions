@@ -110,8 +110,14 @@ while IFS=$'\t' read -r id source resolvable; do
       if [[ ! -f "$mdir/pom.xml" ]]; then
         log "  gap  $id — no pom.xml in $arg"; GAPS+=("$id"); continue
       fi
-      if ! command -v mvn >/dev/null 2>&1; then
-        log "  gap  $id — maven not available on this runner"; GAPS+=("$id"); continue
+      # The repository-pinned wrapper wins: it needs no maven on the runner and builds with
+      # the version the module was written against. `mvn wrapper:wrapper` in the module is
+      # all a project needs to close this gap — cheaper than provisioning every runner.
+      MVN_CMD="mvn"
+      if [[ -x "$mdir/mvnw" ]]; then
+        MVN_CMD="./mvnw"
+      elif ! command -v mvn >/dev/null 2>&1; then
+        log "  gap  $id — neither ./mvnw in the module nor maven on this runner (fix: run 'mvn wrapper:wrapper' in the module, or provision maven)"; GAPS+=("$id"); continue
       fi
       # package alone is not enough. Without a shade/assembly plugin, target/ holds only
       # the artifact jar — scanning it found 2 components for an extension that has 8
@@ -122,8 +128,8 @@ while IFS=$'\t' read -r id source resolvable; do
       # includeScope=runtime deliberately drops `provided` dependencies: the Keycloak SPI
       # jars are supplied by the Keycloak runtime, so they ship in the Keycloak image's BOM
       # rather than in the extension's. Counting them here would double-count them.
-      log "  build $id (mvn package + copy-dependencies)"
-      ( cd "$mdir" && mvn -q -B package -DskipTests \
+      log "  build $id ($MVN_CMD package + copy-dependencies)"
+      ( cd "$mdir" && $MVN_CMD -q -B package -DskipTests \
           dependency:copy-dependencies -DincludeScope=runtime \
           -DoutputDirectory=target/sbom-deps ) >&2 || {
         log "  gap  $id — mvn build failed"; GAPS+=("$id"); continue; }

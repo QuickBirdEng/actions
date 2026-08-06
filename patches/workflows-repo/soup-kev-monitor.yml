@@ -56,6 +56,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # gh is required here and the self-hosted runners do not ship it (proven on the first
+      # e2e run). Fetched once into the tool cache, which persists on a self-hosted runner —
+      # after the first run this is a no-op. Provisioning gh on the runner image makes this
+      # a no-op from the start; nothing breaks either way.
+      - name: Ensure gh
+        shell: bash
+        run: |
+          command -v gh >/dev/null 2>&1 && exit 0
+          V=2.63.2
+          case "$(uname -m)" in aarch64|arm64) A=arm64;; *) A=amd64;; esac
+          CACHE="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/gh-cli/$V-$A"
+          if [ ! -x "$CACHE/bin/gh" ]; then
+            mkdir -p "$CACHE"
+            curl -sSL --fail --retry 3 \
+              "https://github.com/cli/cli/releases/download/v$V/gh_${V}_linux_$A.tar.gz" \
+              | tar -xz -C "$CACHE" --strip-components=1
+          fi
+          echo "$CACHE/bin" >> "$GITHUB_PATH"
+
       - name: KEV monitor
         id: monitor
         uses: QuickBirdEng/actions/kev-monitor@main

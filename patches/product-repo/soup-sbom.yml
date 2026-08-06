@@ -35,6 +35,16 @@ permissions:
 
 jobs:
   sbom:
+    # Optional, for products with a mobile build: the Android closure needs the built
+    # artifact, which the SBOM run cannot produce itself. Hand it over by downloading the
+    # build output this release already carries and pointing the pipeline at it:
+    #
+    #   env:
+    #     SBOM_ARTIFACT_app_android: build/app-release.apk   # id with non-alphanumerics as _
+    #
+    # plus a step before the action that fetches <tag>-android-*.tar.gz from the release
+    # and extracts the APK to that path. Without it, the Android candidate is a named gap
+    # and the Dart side is still covered by pubspec.lock.
     # On workflow_run: only for a successful release run with a resolvable ref. No tag-shape
     # check here — the shape is per product (`tag_pattern` in .soup-policy.yml) and the tier
     # resolution downstream classifies QA tags as staging and everything else on its own.
