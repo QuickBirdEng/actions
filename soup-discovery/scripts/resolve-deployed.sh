@@ -25,6 +25,9 @@ ASSET_PATTERN="${SBOM_ASSET_PATTERN:-sbom-%s.cdx.json}"
 
 for t in gh jq; do command -v "$t" >/dev/null 2>&1 || { echo "::error::$t required" >&2; exit 1; }; done
 
+TMPD=$(mktemp -d) || exit 1
+trap 'rm -rf "$TMPD"' EXIT
+
 # --- mobile: the last production build is what is live ----------------------
 # For the apps there is no deployment record, because the release goes straight to the
 # stores. The convention that already exists in the release assets carries the answer:
@@ -77,24 +80,41 @@ if [[ -z "$ENV_NAMES" ]]; then
   # Listing refused or empty: derive the names from the newest records of the whole
   # history. An environment that has not deployed within these records stays invisible —
   # said here once rather than silently.
-  page0=$(gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null) || {
+  gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null > "$TMPD/page0.json" || {
     echo "::error::cannot read deployments for $REPO — the token lacks the deployments permission" >&2; exit 1; }
-  ENV_NAMES=$(jq -r '[.[].environment] | unique | .[]' <<<"$page0" 2>/dev/null || true)
+  ENV_NAMES=$(jq -r '[.[].environment] | unique | .[]' "$TMPD/page0.json" 2>/dev/null || true)
   [[ -n "$ENV_NAMES" ]] && echo "::warning::$REPO: the environments listing is not readable with this token — environment names derived from the newest 100 deployment records; an environment quiet for longer than that is not visible" >&2
 fi
-deployments='[]'
+# Pages accumulate in FILES, never in a variable passed back through --argjson: Linux caps
+# a single process argument at 128KB (MAX_ARG_STRLEN), and one hundred deployment records
+# exceed that comfortably. On the runner jq died with "Argument list too long", the failed
+# command substitution left an empty string, and every environment vanished downstream with
+# no error in the output — while the same script passed on macOS, whose limit is larger.
+# Found by running the script on the runner with stderr visible; nothing else showed it.
+i=0
 while IFS= read -r e; do
   [[ -z "$e" ]] && continue
-  if page=$(gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" 2>/dev/null) \
-     && jq -e 'type == "array"' <<<"$page" >/dev/null 2>&1; then
-    deployments=$(jq -c --argjson p "$page" '. + $p' <<<"$deployments")
+  i=$((i+1))
+  if gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" \
+       2>/dev/null > "$TMPD/env-$i.json" \
+     && jq -e 'type == "array"' "$TMPD/env-$i.json" >/dev/null 2>&1; then
+    :
   else
+    rm -f "$TMPD/env-$i.json"
     UNREADABLE=$(jq -c --arg e "$e" '. + [{environment:$e, ref:null,
       why:"deployment records for this environment could not be read — the token likely lacks the deployments permission. Not knowing what runs here is not the same as nothing running here."}]' <<<"$UNREADABLE")
   fi
 done <<<"$ENV_NAMES"
+DEPLOY_ALL="$TMPD/deployments.json"
+if ls "$TMPD"/env-*.json >/dev/null 2>&1; then
+  jq -c -s 'add // []' "$TMPD"/env-*.json > "$DEPLOY_ALL"
+elif [[ -s "$TMPD/page0.json" ]]; then
+  cp "$TMPD/page0.json" "$DEPLOY_ALL"
+else
+  echo '[]' > "$DEPLOY_ALL"
+fi
 
-if [[ "$(jq 'length' <<<"$deployments")" == "0" && "$mobile" == "null" ]]; then
+if [[ "$(jq 'length' "$DEPLOY_ALL")" == "0" && "$mobile" == "null" ]]; then
   # The specific reasons win over the generic one: "every per-environment fetch failed"
   # names a permissions problem someone can fix, "nothing states what is running" does not.
   jq -n --arg repo "$REPO" --argjson unreadable "$UNREADABLE" '{
@@ -108,7 +128,8 @@ if [[ "$(jq 'length' <<<"$deployments")" == "0" && "$mobile" == "null" ]]; then
   echo "::warning::$REPO: nothing states what is running — the deployed version is unknown" >&2
   exit 0
 fi
-[[ "$(jq 'length' <<<"$deployments")" == "0" ]] && deployments='[]' 
+# From here on only the five fields the grouping needs survive — the full records with
+# their payloads are what blew past the argument limit. 
 
 # A GitHub deployment record does not mean an application was deployed. *Any* workflow that
 # declares an environment creates one — including jobs that ship no code at all. One product's
@@ -122,7 +143,7 @@ fi
 # deployment is one whose ref is a tag. Records with a non-tag ref are reported separately
 # as informational rather than treated as the live version.
 latest=$(jq -c '[.[] | {env: .environment, ref: .ref, sha: .sha, at: .created_at, id: .id}]
-                | group_by(.env) | map(sort_by(.at))' <<<"$deployments")
+                | group_by(.env) | map(sort_by(.at))' "$DEPLOY_ALL")
 [[ -n "$WANT_ENV" ]] && latest=$(jq -c --arg e "$WANT_ENV" 'map(select(.[0].env == $e))' <<<"$latest")
 
 # Fetch the tag list once. Checking each record with its own API call meant 100 requests

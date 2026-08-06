@@ -1752,6 +1752,26 @@ test_monitor_unscannable_filters_to_production() {
   assert "$n" "3"
 }
 
+# Regression (found on the runner): Linux caps a single process argument at 128KB, and
+# passing accumulated deployment pages through --argjson blew that limit — jq died, the
+# failed substitution left an empty string, and every environment silently vanished. This
+# fixture makes one environment page ~400KB. On macOS the old code passed anyway (larger
+# limit); the test still pins the file-based accumulation against regressions, and fails
+# properly on any Linux machine the suite runs on.
+test_resolve_deployed_survives_large_deployment_pages() {
+  make_fake_gh
+  fake_gh_fixtures "$TMP/fx6"
+  python3 - "$TMP/fx6/deployments.json" <<'PYEOF'
+import json, sys
+pad = "x" * 4000
+rows = [{"environment":"Study","ref":"v1.2.0","sha":"abc","created_at":f"2026-07-01T{i%24:02d}:00:00Z",
+         "id": i, "payload": pad} for i in range(100)]
+json.dump(rows, open(sys.argv[1], "w"))
+PYEOF
+  out=$(FAKE_DIR="$TMP/fx6" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo 2>/dev/null) || return 1
+  contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
+}
+
 # Regression: the monitor filtered targets on /prod/ only. A Study-only product fell out of
 # both lists and the record said all_clear with nothing scanned.
 test_monitor_targets_include_study() {
