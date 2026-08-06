@@ -508,7 +508,12 @@ test_assessment_rejects_different_major() {
   jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"p"}},
           components:[{"bom-ref":"c",type:"library",name:"lib",version:"2.0.0"}]}' > "$TMP/ab2.json"
   bash "$S/merge-assessment.sh" "$TMP/ab2.json" "$TMP/soups2" "$TMP/ao2.json" >/dev/null 2>&1 || return 1
-  assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:soup:records-orphaned")][0].value' "$TMP/ao2.json")" "1"
+  # not approved (family does not cover 2.0.0) — and reported as version DRIFT, not as an
+  # orphan: the name ships, the approval does not apply. The old lumping hid exactly the
+  # wireguard case (approved 1.0.20241014, deployed 1.0.20210914).
+  assert "$(jq -r '[.components[0].properties[]?|select(.name=="quickbird:soup:approved")] | length' "$TMP/ao2.json")" "0" || return 1
+  assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:soup:records-orphaned")][0].value' "$TMP/ao2.json")" "0" || return 1
+  assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:soup:records-version-mismatch")][0].value' "$TMP/ao2.json")" "1"
 }
 
 test_assessment_record_path_is_relative() {
@@ -1664,6 +1669,46 @@ json.dump(rows, open(sys.argv[1],"w"))
 PYEOF
   out=$(FAKE_DIR="$TMP/fx2" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
   contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
+}
+
+# A record for an image must match the artifact scanned from that image, keyed on the
+# scan target — the artifact component is named after the candidate id, not the image.
+test_record_matches_image_artifact_by_target() {
+  mkdir -p "$TMP/img/soups/tools"
+  cat > "$TMP/img/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[{"bom-ref":"quickbird:artifact:web-keycloak-image-1","type":"container",
+   "name":"web-keycloak-image-1","version":"26.5.4",
+   "properties":[{"name":"quickbird:scan:target","value":"registry:quay.io/keycloak/keycloak:26.5.4"}]}],
+ "vulnerabilities":[]}
+EOF
+  cat > "$TMP/img/soups/tools/keycloak.json" <<'EOF'
+{"package":"keycloak","version":"26.x.x","metadata":{"input_version":"26.4.2","approval":{"by":"X","date":"2026-01-01"}}}
+EOF
+  bash "$S/merge-assessment.sh" "$TMP/img/bom.json" "$TMP/img/soups" "$TMP/img/out.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.components[] | select(.properties[]? | .name=="quickbird:soup:approved")] | length' "$TMP/img/out.json")" "1"
+}
+
+# An orphan whose name ships in a different version family is approval drift, not a stale
+# record — wireguard approved as 1.0.20241014 while 1.0.20210914 is deployed.
+test_record_family_drift_is_reported_distinctly() {
+  mkdir -p "$TMP/dr/soups/tools"
+  cat > "$TMP/dr/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[{"bom-ref":"quickbird:artifact:deployed-wireguard","type":"container",
+   "name":"deployed-wireguard-1.0.20210914","version":"1.0.20210914",
+   "properties":[{"name":"quickbird:scan:target","value":"registry:linuxserver/wireguard:1.0.20210914"}]}],
+ "vulnerabilities":[]}
+EOF
+  cat > "$TMP/dr/soups/tools/wireguard.json" <<'EOF'
+{"package":"wireguard","version":"1.0.20241014","metadata":{"input_version":"1.0.20241014","approval":{"by":"X","date":"2026-01-01"}}}
+EOF
+  out=$(bash "$S/merge-assessment.sh" "$TMP/dr/bom.json" "$TMP/dr/soups" "$TMP/dr/out.json" 2>&1)
+  contains "$out" "approved family 1.0.20241014, shipped 1.0.20210914" || return 1
+  # and it is NOT counted among the plain orphans
+  contains "$out" "0 SOUP record(s) match no component" || ! grep -q "match no component" <<<"$out"
 }
 
 # The android closure: syft reads zero components out of an AAB (measured), so the gradle

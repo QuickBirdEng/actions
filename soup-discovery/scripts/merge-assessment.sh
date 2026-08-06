@@ -75,10 +75,26 @@ jq --slurpfile recs "$TMP/records.json" '
       else $ver == $p
       end;
 
+  # A component may also BE an image: the artifact subjects carry the scanned reference in
+  # quickbird:scan:target. A record for "keycloak" must match the artifact scanned from
+  # quay.io/keycloak/keycloak:26.5.4 even though the artifact component is named after the
+  # candidate id — measured on a real product, four image records fell out of the join this
+  # way and were reported as "matches no component" while the image sat fully scanned in
+  # the same document.
+  def image_name($c):
+    ([ ($c.properties // [])[] | select(.name == "quickbird:scan:target") | .value ] | first) as $t
+    | if $t == null then null
+      else $t | sub("^registry:"; "") | split("@")[0] | split(":")[0] | split("/") | last
+      end;
+
+  def name_matches($r; $c):
+    (($r.package // "") == ($c.name // ""))
+    or (($r.package // "") != "" and ($r.package // "") == image_name($c));
+
   def match_record($records; $c):
     $records
     | map(select(
-        (.package // "") == ($c.name // "")
+        name_matches(.; $c)
         and version_matches(.version; $c.version)
       ))
     | first;
@@ -134,6 +150,19 @@ jq --slurpfile recs "$TMP/records.json" '
   | ( $pairs | map(select(.r != null)) ) as $matched
   | ( [ $matched[].r.package ] | unique ) as $matched_names
   | ( $records | map(select(((.package // "") as $p | ($matched_names | index($p)) == null))) ) as $orphans
+  # An orphan whose name IS in the build — as a component or as a scanned image — but whose
+  # version family does not cover what ships is not a stale record: it is approval drift,
+  # and it deserves its own message. wireguard approved as 1.0.20241014 while the deployed
+  # image is 1.0.20210914 must not read like a record someone forgot to delete.
+  | ( [ .components[]? ] ) as $comps
+  | ( $orphans | map(
+        . as $r
+        | ([ $comps[] | select(name_matches($r; .)) | (.version // "?") ] | unique) as $shipped
+        | select(($shipped | length) > 0)
+        | { package: .package, family: (.version // ""), shipped: $shipped }
+      ) ) as $drift
+  | ( ($drift | map(.package)) ) as $drift_names
+  | ( $orphans | map(select((.package // "") as $p | ($drift_names | index($p)) == null)) ) as $orphans
   | ( $records | map(select(.vex != null)) | map(vex_entries(.)) | add // [] ) as $all_vex
   # CVE -> the component refs whose OWN record carries a VEX for it. A statement in the
   # record of package A used to suppress the same CVE on package B: the map was keyed on
@@ -218,14 +247,18 @@ jq --slurpfile recs "$TMP/records.json" '
   | .metadata.properties = ( ((.metadata.properties // [])
       + [ { name: "quickbird:soup:records-total",    value: ($records | length | tostring) },
           { name: "quickbird:soup:records-matched",  value: ($matched  | length | tostring) },
-          { name: "quickbird:soup:records-orphaned", value: ($orphans  | length | tostring) } ]
-      + ( $orphans | map({ name: "quickbird:soup:orphaned-record", value: (.package // "?") })) )
+          { name: "quickbird:soup:records-orphaned", value: ($orphans  | length | tostring) },
+          { name: "quickbird:soup:records-version-mismatch", value: ($drift | length | tostring) } ]
+      + ( $orphans | map({ name: "quickbird:soup:orphaned-record", value: (.package // "?") }))
+      + ( $drift   | map({ name: "quickbird:soup:record-version-mismatch",
+                           value: "\(.package): approved family \(.family), shipped \(.shipped | join(", "))" })) )
       | sort_by(.name, (.value // "")) )
 
   | . + { _report: {
             records: ($records | length),
             matched: ($matched | length),
             orphaned: ($orphans | map(.package)),
+            version_mismatch: $drift,
             components_without_record: ($pairs | map(select(.r == null)) | length),
             vex_statements: ($all_vex | length),
             vex_applied: ([ .vulnerabilities[]? | select(.analysis != null) ] | length),
@@ -253,6 +286,15 @@ if [[ "$INVALID" != "0" ]]; then
   STATUS=1
 fi
 [[ "$PARTIAL" != "0" ]] && echo "::warning::$PARTIAL vulnerability/ies have a not_affected that covers only some of their affected components — not suppressed" >&2
+
+# Approval drift first: the record names something the build ships, but the approved
+# family does not cover the shipped version. Louder than an orphan, because the component
+# is live NOW under an approval that does not apply to it.
+DRIFT=$(jq -r '.version_mismatch | length' <<<"$REPORT")
+if [[ "$DRIFT" != "0" ]]; then
+  echo "::warning::$DRIFT SOUP record(s) cover a different version family than the build ships — the approval does not apply to what is live" >&2
+  jq -r '.version_mismatch[] | "::warning::  \(.package): approved family \(.family), shipped \(.shipped | join(", ")) — re-check the record against the shipped version (WI §7 #4)"' <<<"$REPORT" >&2
+fi
 
 # A record that matches nothing means the SOUP list and the build disagree. Nothing
 # checks this today, which is exactly why stale records accumulate.
