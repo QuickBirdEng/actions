@@ -120,11 +120,18 @@ runs:
   steps:
     - name: Check prerequisites
       shell: bash
+      env:
+        IN_PUBLISH: ${{ inputs.publish-to-release }}
       run: |
         missing=()
         # docker: images are scanned by pulling them. python3: classification, currency and
-        # the PDF. Both failed at runtime before this check named them.
+        # the PDF. gh: attaching the bundle to the release — required only when publishing,
+        # and checked HERE so a runner without it fails in the first second rather than
+        # after the whole pipeline has run, which is how the tag e2e found it.
         for t in jq yq curl docker python3; do command -v "$t" >/dev/null 2>&1 || missing+=("$t"); done
+        if [ "$IN_PUBLISH" = "true" ]; then
+          command -v gh >/dev/null 2>&1 || missing+=("gh (needed to attach the bundle to the release)")
+        fi
         if [ ${#missing[@]} -gt 0 ]; then
           echo "::error::missing required tools: ${missing[*]}"
           echo "::error::install them on the runner, or use a runner image that has them"
