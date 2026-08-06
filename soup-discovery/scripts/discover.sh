@@ -102,9 +102,10 @@ while IFS= read -r f; do
     # Gradle dependency locking wins over the built artifact. Measured: syft reads ZERO
     # components out of an AAB — dex bytecode carries no package metadata — so scanning the
     # bundle would close the gap by claiming an empty inventory, which is worse than the gap.
-    # The lockfile is the resolved android closure; enable it once with
-    #   cd <app>/android && ./gradlew :app:dependencies --write-locks
-    # and this branch picks it up on the next run. Until then the candidate stays a named gap.
+    # The lockfile is the resolved android closure. Enabling it is a build-config decision,
+    # not a one-liner: locking must be activated for the runtime configurations first
+    # (dependencyLocking { } in the app module), THEN --write-locks persists the file.
+    # Once android/app/gradle.lockfile is committed, this branch picks it up automatically.
     android_lock=""
     for cand in "$app_root/android/app/gradle.lockfile" "$app_root/android/gradle.lockfile"; do
       [[ -f "$cand" ]] && { android_lock="$cand"; break; }
@@ -114,7 +115,7 @@ while IFS= read -r f; do
           "gradle dependency locking is on — the lockfile is the resolved android closure; the Dart side comes from pubspec.lock"
     else
       add "$(tr '/' '-' <<<"$app_root")-android" "android-gradle" "apk:$app_root/android" "$f" "true" \
-          "Android build of a mobile app — no installDist; enable gradle dependency locking (./gradlew :app:dependencies --write-locks) for the resolved closure, or provide the built artifact via SBOM_ARTIFACT_; the Dart side comes from pubspec.lock"
+          "Android build of a mobile app — no installDist. The resolved closure needs gradle dependency locking: activate dependencyLocking for the runtime configurations in the app module, run ./gradlew :app:dependencies --write-locks, commit the lockfile — discovery then switches to it automatically. The Dart side is covered by pubspec.lock."
     fi
     continue
   fi
