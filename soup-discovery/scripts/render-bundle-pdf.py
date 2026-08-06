@@ -40,6 +40,18 @@ def props(obj):
     return {p["name"]: p["value"] for p in obj.get("properties", []) or []}
 
 
+TRACK_COLOR = {"kev": "#b91c1c", "immediate": "#b91c1c",
+               "expedited": "#b45309", "planned": "#1f4e79", "monitor": "#6b7280"}
+
+
+def vuln_link(v):
+    """A stable link for a vulnerability — the source URL when the document carries one,
+    osv.dev otherwise (it resolves CVE aliases)."""
+    url = ((v.get("source") or {}).get("url")
+           or f"https://osv.dev/vulnerability/{v.get('id', '')}")
+    return f'<link href="{esc(url)}"><font color="#1f4e79"><u>{esc(v.get("id", "?"))}</u></font></link>'
+
+
 def prop_all(obj, name):
     return [p["value"] for p in obj.get("properties", []) or [] if p["name"] == name]
 
@@ -186,6 +198,12 @@ def build(bundle, out_path):
 
     # --------------------------------------------------------- SOUP assessment
     assessed = [c for c in components if props(c).get("quickbird:soup:record")]
+    comp_by_ref = {c.get("bom-ref"): c for c in components}
+    vulns_by_ref = {}
+    for v in vulns:
+        for a in v.get("affects", []) or []:
+            if a.get("ref"):
+                vulns_by_ref.setdefault(a["ref"], []).append(v)
     el.append(PageBreak())
     el.append(Paragraph("SOUP assessment", h2))
     if not assessed:
@@ -199,7 +217,7 @@ def build(bundle, out_path):
             f"remainder are transitive dependencies, which are in scope for vulnerability "
             f"monitoring but are not separately approved.", small))
         el.append(Spacer(1, 6))
-        rows = [["Component", "Version", "Approved for", "Approver / date", "Requirements"]]
+        rows = [["Component", "Version", "Latest", "Approved for", "Approver / date", "Requirements"]]
         for c in sorted(assessed, key=lambda x: (x.get("name") or "").lower()):
             p = props(c)
             reqs = {k: v for k, v in p.items()
@@ -210,27 +228,40 @@ def build(bundle, out_path):
             who = ann.get("annotator", {}).get("individual", {}).get("name", "—")
             when = (ann.get("timestamp") or "")[:10]
             reqtxt = f"{met}/{len(reqs)} met"
+            latest = p.get("quickbird:currency:latest", "")
+            cstatus = p.get("quickbird:currency:status", "")
             # An unfulfilled requirement WITH a recorded reason is a documented deviation —
             # the record schema demands exactly that — and it must not read like an
-            # unresolved to-do. "open: version-check" hid a perfectly good justification and
-            # looked identical to the one case that actually blocks: no reason recorded.
+            # unresolved to-do. Each one states WHAT the requirement asks, what holds
+            # instead, and the recorded reason; red bold stays reserved for a missing one.
             for key in sorted(unmet):
                 reason = p.get(f"quickbird:soup:req:{key}:reason", "").strip()
+                desc = p.get(f"quickbird:soup:req:{key}:description", "").strip()
+                fact = ""
+                if key == "version-check" and latest:
+                    fact = f' Shipped: {esc(c.get("version") or "?")}, latest: {esc(latest)}.'
+                head = f'not met: {esc(key)}' + (f' ({esc(desc)})' if desc else "")
                 if reason:
-                    short = reason if len(reason) <= 90 else reason[:87] + "…"
-                    reqtxt += (f'<br/><font color="#b45309">not met: {esc(key)}</font> '
-                               f'<font color="#5b6472">— {esc(short)}</font>')
+                    short = reason if len(reason) <= 110 else reason[:107] + "…"
+                    reqtxt += (f'<br/><font color="#b45309">{head}.</font>{fact} '
+                               f'<font color="#5b6472">Reason: {esc(short)}</font>')
                 else:
-                    reqtxt += (f'<br/><font color="#b91c1c"><b>not met: {esc(key)} — '
-                               f'no reason recorded</b></font>')
+                    reqtxt += (f'<br/><font color="#b91c1c"><b>{head} — no reason '
+                               f'recorded.</b></font>{fact}')
             # A requirement recorded as met that today's scan contradicts. Shown in the same cell
             # as the requirement count, because the reader needs both facts together: what the
             # record asserts and what holds now. Otherwise this is precisely the discrepancy an
             # auditor assembles by hand from two documents.
             if p.get("quickbird:soup:recheck") == "grq-4":
                 n = p.get("quickbird:soup:recheck-findings", "?")
+                highs = [v for v in vulns_by_ref.get(c.get("bom-ref"), [])
+                         if props(v).get("quickbird:vuln:kev") == "true"
+                         or float(props(v).get("quickbird:finding:cvss") or 0) >= 7.0]
+                links = ", ".join(vuln_link(v) for v in highs[:6])
+                more = f" and {len(highs) - 6} more" if len(highs) > 6 else ""
                 reqtxt += (f'<br/><font color="#b45309"><b>grq-4 recorded met, but {esc(n)} '
-                           f'High+ finding(s) open today — re-check</b></font>')
+                           f'High+ finding(s) open today — re-check</b></font>'
+                           + (f'<br/>{links}{more}' if links else ""))
             # A temporary approval is a provisional decision: an approver signed off an
             # unfulfilled requirement on a branch, with a recorded reason. Rendering it the same
             # as a full approval would put a provisional sign-off into the document an auditor
@@ -244,14 +275,19 @@ def build(bundle, out_path):
                           f'<br/>{esc(when)}<br/><font size="6">{esc(why[:90])}</font>')
             else:
                 whotxt = f"{esc(who)}<br/>{esc(when)}"
+            if latest and cstatus not in ("", "current"):
+                latest_txt = f'<font color="#b45309">{esc(latest)}</font>'
+            else:
+                latest_txt = esc(latest) if latest else "—"
             rows.append([
                 Paragraph(esc(c.get("name")), cell),
                 Paragraph(esc(c.get("version")), cell),
+                Paragraph(latest_txt, cell),
                 Paragraph(esc(p.get("quickbird:soup:approved-family", "—")), cell),
                 Paragraph(whotxt, cell),
                 Paragraph(reqtxt, cell),
             ])
-        el.append(table(rows, [45 * mm, 22 * mm, 25 * mm, 38 * mm, 40 * mm]))
+        el.append(table(rows, [40 * mm, 19 * mm, 19 * mm, 22 * mm, 32 * mm, 38 * mm]))
 
     mismatches = prop_all(meta, "quickbird:soup:record-version-mismatch")
     if mismatches:
@@ -297,10 +333,49 @@ def build(bundle, out_path):
 
         def vrow(v):
             p = props(v)
-            cvss = next((r.get("vector") or str(r.get("score", ""))
-                         for r in v.get("ratings", []) if r.get("source", {}).get("name") != "EPSS"), "—")
+            vector = next((r.get("vector") or str(r.get("score", ""))
+                           for r in v.get("ratings", []) if r.get("source", {}).get("name") != "EPSS"), "")
             epss = next((r.get("score") for r in v.get("ratings", [])
                          if r.get("source", {}).get("name") == "EPSS"), None)
+
+            # The classification, not just the vector: the vector states severity in the
+            # abstract, the track and the two dated deadlines state what this process
+            # requires — which is what a reader of the assessment needs first.
+            track = p.get("quickbird:finding:track", "")
+            cls_lines = []
+            if track:
+                color = TRACK_COLOR.get(track, "#16181d")
+                score = p.get("quickbird:finding:cvss", "")
+                cls_lines.append(f'<font color="{color}"><b>{esc(track)}</b></font>'
+                                 + (f' · CVSS {esc(score)}' if score else ""))
+                for clock, label in (("mitigation", "mit"), ("remediation", "rem")):
+                    due = p.get(f"quickbird:finding:{clock}-due", "")
+                    if due:
+                        overdue = p.get(f"quickbird:finding:{clock}-overdue") == "true"
+                        d = esc(due[:10])
+                        cls_lines.append(f'<font color="#b91c1c"><b>{label} due {d} — overdue</b></font>'
+                                         if overdue else f'{label} due {d}')
+            elif v.get("analysis"):
+                cls_lines.append('<font color="#15803d">suppressed by VEX</font>')
+            else:
+                cls_lines.append("—")
+            if vector:
+                cls_lines.append(f'<font color="#6b7280">{esc(vector)[:44]}</font>')
+            cls = "<br/>".join(cls_lines)
+
+            # Where it comes from: the affected component and the artefact that carries it.
+            srcs = []
+            for a in (v.get("affects") or [])[:3]:
+                c = comp_by_ref.get(a.get("ref"))
+                if not c:
+                    continue
+                art = props(c).get("quickbird:component:artifact", "")
+                art = art.replace("quickbird:artifact:", "").split(", ")[0]
+                srcs.append(f'{esc(c.get("name") or "?")}@{esc(c.get("version") or "?")}'
+                            + (f'<br/><font color="#6b7280">in {esc(art)}</font>' if art else ""))
+            n_more = max(0, len(v.get("affects") or []) - 3)
+            where = "<br/>".join(srcs) + (f'<br/>… and {n_more} more' if n_more else "")
+            where = where or "—"
             an = v.get("analysis") or {}
             state = an.get("state", "")
             if state == "not_affected":
@@ -317,11 +392,11 @@ def build(bundle, out_path):
             if epss is not None:
                 flags.append(f"EPSS {epss:.2f}")
             return [
-                Paragraph(esc(v.get("id")), cell),
-                Paragraph(esc(cvss)[:40], cell),
+                Paragraph(vuln_link(v), cell),
+                Paragraph(cls, cell),
                 Paragraph("<br/>".join(flags) or "—", cell),
                 Paragraph(st, cell),
-                Paragraph(str(len(v.get("affects", []) or [])), cell),
+                Paragraph(where, cell),
             ]
 
         # KEV and unassessed first — those are the ones that need action.
@@ -330,9 +405,9 @@ def build(bundle, out_path):
                     or not v.get("analysis")]
         rest = [v for v in vulns if v not in priority]
         shown = priority[:120]
-        rows = [["CVE", "CVSS vector", "Signals", "Assessment", "Affects"]]
+        rows = [["CVE", "Classification", "Signals", "Assessment", "Where"]]
         rows += [vrow(v) for v in sorted(shown, key=lambda x: x.get("id", ""))]
-        el.append(table(rows, [30 * mm, 52 * mm, 22 * mm, 46 * mm, 20 * mm]))
+        el.append(table(rows, [28 * mm, 42 * mm, 20 * mm, 36 * mm, 44 * mm]))
         if len(priority) > len(shown):
             el.append(Paragraph(
                 f"… and {len(priority)-len(shown)} further vulnerabilities needing attention. "

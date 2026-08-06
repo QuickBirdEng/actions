@@ -452,13 +452,37 @@ def main():
         "suppressed": suppressed,
     }
 
-    # Stamp the contradiction onto the components in the bundle. Written in place so the PDF and
-    # any other consumer see it without a second input file — the alternative was passing the
-    # findings document to the renderer, which would break the property that the PDF is a pure
-    # function of the bundle and therefore cannot drift from it.
-    if args.annotate_bom and recheck_list:
+    # Stamp the classification back into the bundle. Written in place so the PDF and any
+    # other consumer see it without a second input file — the alternative was passing the
+    # findings document to the renderer, which would break the property that the PDF is a
+    # pure function of the bundle and therefore cannot drift from it. Annex B B.7 documents
+    # these properties; until this block wrote them onto the vulnerabilities, only the
+    # separate findings document carried them and a bundle reader saw a bare vector string.
+    if args.annotate_bom:
         try:
             target = json.load(open(args.annotate_bom, encoding="utf-8"))
+            by_id = {f["id"]: f for f in findings}
+            for v in target.get("vulnerabilities", []) or []:
+                f = by_id.get(v.get("id"))
+                if not f:
+                    continue
+                extra = [
+                    {"name": "quickbird:finding:track", "value": f["track"]},
+                    {"name": "quickbird:finding:rule", "value": str(f["rule"])},
+                    {"name": "quickbird:finding:why", "value": f["why"]},
+                    {"name": "quickbird:finding:clock-start", "value": f["clock_start"]},
+                ]
+                if f.get("cvss") is not None:
+                    extra.append({"name": "quickbird:finding:cvss", "value": str(f["cvss"])})
+                for clock in ("mitigation", "remediation"):
+                    if f.get(f"{clock}_due"):
+                        extra.append({"name": f"quickbird:finding:{clock}-due",
+                                      "value": f[f"{clock}_due"]})
+                    if f.get(f"{clock}_overdue"):
+                        extra.append({"name": f"quickbird:finding:{clock}-overdue",
+                                      "value": "true"})
+                v["properties"] = sorted((v.get("properties") or []) + extra,
+                                         key=lambda x: (x["name"], x.get("value") or ""))
             by_ref = {e_key: e for e_key, e in recheck.items()}
             for c in target.get("components", []) or []:
                 e = by_ref.get(c.get("bom-ref"))

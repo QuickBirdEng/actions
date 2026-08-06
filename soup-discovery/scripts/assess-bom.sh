@@ -124,7 +124,7 @@ python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 class
 # Direct dependencies only. A transitive moves when its parent moves, so reporting it separately
 # produces work items nobody can action.
 CURRENCY="$OUT_DIR/$BASE.currency.json"
-CUR_ARGS=("$ASSESSED" "$POLICY" --out "$CURRENCY")
+CUR_ARGS=("$ASSESSED" "$POLICY" --out "$CURRENCY" --annotate-bom "$ASSESSED")
 [[ -n "$SOUPS" && -d "$SOUPS" ]] && CUR_ARGS+=(--soups "$SOUPS")
 if [[ "${SKIP_CURRENCY:-0}" == "1" ]]; then
   log "6/7 currency   skipped (SKIP_CURRENCY=1)"

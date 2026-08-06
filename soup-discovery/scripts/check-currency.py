@@ -172,6 +172,35 @@ def behind(current, latest):
     return (0, 0, max(0, l[2] - c[2]))
 
 
+def annotate_bom(path, notes):
+    """Stamp currency facts onto the components of a bundle, keyed by purl.
+
+    notes: purl -> {latest, published, status, detail}. Written in place, same reasoning as
+    the classifier annotation: the PDF is a pure function of the bundle, so anything it is
+    expected to show — here the latest available version next to the shipped one — has to
+    live in the bundle rather than in a side file.
+    """
+    with open(path, encoding="utf-8") as fh:
+        bom = json.load(fh)
+    hit = 0
+    for c in bom.get("components", []) or []:
+        n = notes.get(c.get("purl") or "")
+        if not n:
+            continue
+        extra = [{"name": "quickbird:currency:status", "value": n["status"]}]
+        if n.get("latest"):
+            extra.append({"name": "quickbird:currency:latest", "value": str(n["latest"])})
+        if n.get("detail"):
+            extra.append({"name": "quickbird:currency:detail", "value": n["detail"]})
+        c["properties"] = sorted((c.get("properties") or []) + extra,
+                                 key=lambda x: (x["name"], x.get("value") or ""))
+        hit += 1
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(bom, fh, indent=2)
+        fh.write("\n")
+    return hit
+
+
 def load_soup_reasons(soups_dir):
     """package -> reason, for the per-SOUP override the policy allows (WI §4.3)."""
     import glob
@@ -194,6 +223,7 @@ def main():
     ap.add_argument("bom")
     ap.add_argument("policy")
     ap.add_argument("--soups")
+    ap.add_argument("--annotate-bom", help="stamp latest/status per component into this bundle")
     ap.add_argument("--out", default="-")
     # Every other script in the pipeline takes --now for the same reason: an age check without a
     # fixed clock cannot be tested deterministically, and the expected values would drift.
@@ -281,12 +311,15 @@ def main():
         return c, latest, published, err
 
     results, unknown = [], []
+    notes = {}
     with ThreadPoolExecutor(max_workers=args.jobs) as ex:
         for c, latest, published, err in ex.map(check, direct):
             name, cur = c.get("name"), c.get("version")
             if latest is None:
                 unknown.append({"name": name, "version": cur, "purl": c.get("purl"),
                                 "why": err or "no latest version returned"})
+                notes[c.get("purl") or ""] = {"status": "unknown",
+                                              "detail": err or "no latest version returned"}
                 continue
 
             age = age_days(published, now)
@@ -295,10 +328,21 @@ def main():
             if b is None:
                 unknown.append({"name": name, "version": cur, "latest": latest,
                                 "why": "version is not semver-comparable"})
+                notes[c.get("purl") or ""] = {"status": "unknown", "latest": latest,
+                                              "detail": "version is not semver-comparable"}
                 continue
             over = ((max_major is not None and b[0] > max_major)
                     or (max_minor is not None and b[1] > max_minor)
                     or (max_patch is not None and b[2] > max_patch))
+
+            status = ("stale-and-behind" if (is_stale and over)
+                      else "stale" if is_stale else "behind" if over else "current")
+            note = {"status": status, "latest": latest}
+            if over:
+                note["detail"] = f"behind by {b[0]} major / {b[1]} minor / {b[2]} patch"
+            elif is_stale:
+                note["detail"] = f"no upstream release in {age} days"
+            notes[c.get("purl") or ""] = note
 
             if not over and not is_stale:
                 continue
@@ -381,6 +425,13 @@ def main():
         "stale_images": stale_images,
         "unknown": unknown,
     }
+
+    if args.annotate_bom:
+        try:
+            n = annotate_bom(args.annotate_bom, notes)
+            print(f"currency: annotated {n} component(s) in the bundle", file=sys.stderr)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"::warning::could not annotate {args.annotate_bom}: {e}", file=sys.stderr)
 
     for e in stale_images:
         print(f"::warning::{e['name']} {e['version']}: image last built {e['built'][:10]}, "

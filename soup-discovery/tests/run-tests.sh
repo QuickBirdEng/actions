@@ -1671,6 +1671,40 @@ PYEOF
   contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
 }
 
+# The bundle carries the classification, not only the findings side-file — the PDF is a
+# pure function of the bundle, so what it must show has to be in it.
+test_classify_annotates_vulnerabilities_in_the_bundle() {
+  cat > "$TMP/anv.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[],
+ "vulnerabilities":[{"id":"CVE-77","affects":[{"ref":"a"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}]}]}
+EOF
+  python3 "$S/classify-findings.py" "$TMP/anv.json" "$TMP/cp.json" \
+    --annotate-bom "$TMP/anv.json" --now "2026-08-06T12:00:00+00:00" --out "$TMP/anvf.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.vulnerabilities[0].properties[] | select(.name=="quickbird:finding:track")][0].value' "$TMP/anv.json")" "immediate" || return 1
+  contains "$(jq -r '[.vulnerabilities[0].properties[].name] | join(",")' "$TMP/anv.json")" "quickbird:finding:mitigation-due"
+}
+
+# Currency annotation is a pure function over collected notes — testable without a registry.
+test_currency_annotate_bom_stamps_latest() {
+  cat > "$TMP/cur-ann.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+  {"bom-ref":"a","type":"library","name":"pkg","version":"1.0.0","purl":"pkg:npm/pkg@1.0.0"}]}
+EOF
+  python3 - "$S/check-currency.py" "$TMP/cur-ann.json" <<'PYEOF'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("cc", sys.argv[1])
+cc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cc)
+n = cc.annotate_bom(sys.argv[2], {"pkg:npm/pkg@1.0.0": {"status": "behind", "latest": "2.1.0",
+                                                        "detail": "behind by 1 major / 0 minor / 0 patch"}})
+assert n == 1, n
+bom = json.load(open(sys.argv[2]))
+props = {p["name"]: p["value"] for p in bom["components"][0]["properties"]}
+assert props["quickbird:currency:latest"] == "2.1.0", props
+assert props["quickbird:currency:status"] == "behind", props
+PYEOF
+}
+
 # A record for an image must match the artifact scanned from that image, keyed on the
 # scan target — the artifact component is named after the candidate id, not the image.
 test_record_matches_image_artifact_by_target() {
