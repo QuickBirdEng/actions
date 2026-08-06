@@ -19,6 +19,13 @@ on:
   # record is questioned, and how a product is checked on the day it is onboarded.
   workflow_dispatch:
 
+# deployments: the monitor answers "what is running" from the deployment records, and with
+# contents:read alone the per-environment fetch 403s — the environment then shows up as a
+# named gap instead of a version. Proven on the first end-to-end run.
+permissions:
+  contents: read
+  deployments: read
+
 jobs:
   kev:
     uses: QuickBirdEng/workflows/.github/workflows/soup-kev-monitor.yml@main

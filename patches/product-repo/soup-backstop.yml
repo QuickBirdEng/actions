@@ -23,6 +23,12 @@ on:
         default: '92'
         type: string
 
+# deployments: the reconciliation checks the maintenance windows against the production
+# deployment records — same requirement, same reason as the monitor.
+permissions:
+  contents: read
+  deployments: read
+
 jobs:
   backstop:
     uses: QuickBirdEng/workflows/.github/workflows/soup-backstop.yml@main
