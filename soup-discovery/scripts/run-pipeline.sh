@@ -183,6 +183,11 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers; do
   python3 "$HERE/mark-scope.py" "$final" --ecosystem "$ecosystem" \
     --repo "$REPO" --markers "$markers" >&2 \
     || log "::warning::$id: dependency scope could not be determined"
+  # The dependency graph, read from the same lockfile — the via-path in the reports.
+  # Same degradation contract: a failure leaves edges undetermined, not the run failed.
+  python3 "$HERE/mark-graph.py" "$final" --ecosystem "$ecosystem" \
+    --repo "$REPO" --markers "$markers" >&2 \
+    || log "::warning::$id: dependency graph could not be derived"
   rm -f "$raw" "$native"
   BOMS+=("$final")
 done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)\t\(.ecosystem)\t\(.markers | join(","))"' "$PLAN")

@@ -6,7 +6,7 @@ classification, deadlines, latest versions) belongs to the Dependency & Vulnerab
 Report; this document states what the build is made of, and nothing that ages:
 
     1  Direct dependencies      the deliberate choices, with supplier/licence and record
-    2  Transitive and OS        every component, with identifier and containing artefact
+    2  Transitive and OS        every component, with identifier, via-path and artefact
     3  Scanned artefacts        each source with its identity (digest, build date)
 
 Sections 1 and 2 are subdivided by platform (Web, Flutter app, Android/JVM, ...) — the
@@ -21,6 +21,7 @@ Usage: render-sbom-pdf.py <bundle.cdx.json> <out.pdf>
 import hashlib
 import json
 import sys
+from collections import deque
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -96,6 +97,53 @@ def license_of(c):
         if lic.get("id") or lic.get("name"):
             return lic.get("id") or lic.get("name")
     return None
+
+
+def build_reverse_graph(bundle):
+    """target ref -> sorted list of refs that depend on it. Sorted so the walk — and with
+    it the rendered path — is deterministic across runs."""
+    rev = {}
+    for d in bundle.get("dependencies") or []:
+        src = d.get("ref")
+        for tgt in d.get("dependsOn") or []:
+            rev.setdefault(tgt, []).append(src)
+    for v in rev.values():
+        v.sort()
+    return rev
+
+
+def via_path(ref, rev, names, stop_refs, cap=5):
+    """Shortest chain of parents from ref up to a direct dependency (preferred) or, absent
+    one, a top-level package — returned direct-most first. None when no edges exist."""
+    seen = {ref}
+    q = deque([(ref, [])])
+    fallback = None
+    while q:
+        cur, path = q.popleft()
+        for parent in rev.get(cur, []):
+            if parent in seen:
+                continue
+            seen.add(parent)
+            if parent not in names or str(parent).startswith("quickbird:"):
+                continue    # the product root and artifact subjects end the walk
+            chain = path + [parent]
+            if parent in stop_refs:
+                return list(reversed(chain))
+            if not rev.get(parent) and fallback is None:
+                fallback = list(reversed(chain))
+            if len(chain) < cap:
+                q.append((parent, chain))
+    return fallback
+
+
+def via_text(ref, rev, names, stop_refs):
+    chain = via_path(ref, rev, names, stop_refs)
+    if not chain:
+        return None
+    labels = [names[r] for r in chain]
+    if len(labels) > 3:
+        labels = [labels[0], "…", labels[-1]]
+    return " › ".join(labels)
 
 
 def build(bundle, bundle_path, out_path):
@@ -221,12 +269,17 @@ def build(bundle, bundle_path, out_path):
 
     # ---- 2 transitive and OS, itemised -----------------------------------------
     el.append(Paragraph("2&nbsp;&nbsp;Transitive and operating-system components", h2))
-    el.append(Paragraph(f"{len(rest)} components.", small))
+    el.append(Paragraph(
+        f"{len(rest)} components. Via names the shortest path from the direct dependency "
+        f"(or the top-level package of an image) that pulls the component in; — where the "
+        f"lockfile carries no graph.", small))
+    rev = build_reverse_graph(bundle)
+    names = {c.get("bom-ref"): (c.get("name") or "") for c in components}
     rest_groups = {}
     for c in rest:
         rest_groups.setdefault(group_of(c), []).append(c)
-    header = ["Component", "Version", "Identifier", "Contained in"]
-    widths = [42 * mm, 20 * mm, 72 * mm, 36 * mm]
+    header = ["Component", "Version", "Identifier", "Via", "Contained in"]
+    widths = [38 * mm, 16 * mm, 58 * mm, 32 * mm, 26 * mm]
     sec = 0
     for gname in GROUP_ORDER:
         members = rest_groups.get(gname)
@@ -243,10 +296,12 @@ def build(bundle, bundle_path, out_path):
             arts = ", ".join(v.strip().replace("quickbird:artifact:", "")
                              for v in p.get("quickbird:component:artifact", "").split(",")
                              if v.strip())
+            via = via_text(c.get("bom-ref"), rev, names, direct_refs)
             rows.append([
                 Paragraph(name, cell),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(esc(c.get("purl") or "—"), small),
+                Paragraph(esc(via) if via else "—", small),
                 Paragraph(esc(arts) or "—", small),
             ])
         # chunked so reportlab lays out many small tables instead of one huge one;

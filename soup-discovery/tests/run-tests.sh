@@ -1743,6 +1743,109 @@ EOF
   assert "$(scope_of "$TMP/sc-mvn/bom.json" junit-jupiter)" "transitive"
 }
 
+graph_parents_of() { jq -r --arg r "$2" '[.dependencies[]? | select((.dependsOn // []) | index($r)) | .ref] | sort | join(",")' "$1"; }
+
+# The yarn lockfile names every package's dependencies — the graph the reports walk to
+# answer which direct dependency pulls a transitive one in.
+test_graph_yarn_v1_writes_edges() {
+  mkdir -p "$TMP/gr-y/web"
+  cat > "$TMP/gr-y/web/yarn.lock" <<'EOF'
+# yarn lockfile v1
+
+
+axios@^1.0.0:
+  version "1.13.6"
+  resolved "https://registry.yarnpkg.com/axios/-/axios-1.13.6.tgz#x"
+  dependencies:
+    follow-redirects "^1.15.0"
+    "@scope/util" "^2.0.0"
+
+follow-redirects@^1.15.0, follow-redirects@^1.14.0:
+  version "1.15.11"
+  resolved "https://registry.yarnpkg.com/follow-redirects/-/follow-redirects-1.15.11.tgz#x"
+
+"@scope/util@^2.0.0":
+  version "2.3.0"
+  resolved "https://registry.yarnpkg.com/@scope/util/-/util-2.3.0.tgz#x"
+EOF
+  echo '{}' > "$TMP/gr-y/web/package.json"
+  cat > "$TMP/gr-y/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+ {"bom-ref":"pkg:npm/axios@1.13.6","type":"library","name":"axios","version":"1.13.6","purl":"pkg:npm/axios@1.13.6"},
+ {"bom-ref":"pkg:npm/follow-redirects@1.15.11","type":"library","name":"follow-redirects","version":"1.15.11","purl":"pkg:npm/follow-redirects@1.15.11"},
+ {"bom-ref":"pkg:npm/%40scope/util@2.3.0","type":"library","name":"@scope/util","version":"2.3.0","purl":"pkg:npm/%40scope/util@2.3.0"}]}
+EOF
+  python3 "$S/mark-graph.py" "$TMP/gr-y/bom.json" --ecosystem npm --repo "$TMP/gr-y" \
+    --markers "web/package.json" >/dev/null 2>&1 || return 1
+  assert "$(graph_parents_of "$TMP/gr-y/bom.json" pkg:npm/follow-redirects@1.15.11)" "pkg:npm/axios@1.13.6" || return 1
+  # quoted scoped headers and quoted dependency names resolve like plain ones
+  assert "$(graph_parents_of "$TMP/gr-y/bom.json" "pkg:npm/%40scope/util@2.3.0")" "pkg:npm/axios@1.13.6"
+}
+
+# package-lock v2/v3 resolves nearest-first, exactly as node does — the nested copy wins
+# over the hoisted one.
+test_graph_package_lock_nested_resolution() {
+  mkdir -p "$TMP/gr-pl/api"
+  cat > "$TMP/gr-pl/api/package-lock.json" <<'EOF'
+{"lockfileVersion": 3, "packages": {
+  "": {"name": "api"},
+  "node_modules/a": {"version": "1.0.0", "dependencies": {"b": "^1.0.0"}},
+  "node_modules/a/node_modules/b": {"version": "1.5.0"},
+  "node_modules/b": {"version": "2.0.0"}}}
+EOF
+  echo '{}' > "$TMP/gr-pl/api/package.json"
+  cat > "$TMP/gr-pl/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+ {"bom-ref":"pkg:npm/a@1.0.0","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"},
+ {"bom-ref":"pkg:npm/b@1.5.0","type":"library","name":"b","version":"1.5.0","purl":"pkg:npm/b@1.5.0"},
+ {"bom-ref":"pkg:npm/b@2.0.0","type":"library","name":"b","version":"2.0.0","purl":"pkg:npm/b@2.0.0"}]}
+EOF
+  python3 "$S/mark-graph.py" "$TMP/gr-pl/bom.json" --ecosystem npm --repo "$TMP/gr-pl" \
+    --markers "api/package.json" >/dev/null 2>&1 || return 1
+  assert "$(graph_parents_of "$TMP/gr-pl/bom.json" pkg:npm/b@1.5.0)" "pkg:npm/a@1.0.0" || return 1
+  assert "$(graph_parents_of "$TMP/gr-pl/bom.json" pkg:npm/b@2.0.0)" ""
+}
+
+# Running the marker twice must not duplicate edges — the monitor re-runs pipelines.
+test_graph_is_idempotent() {
+  mkdir -p "$TMP/gr-i/web"
+  cat > "$TMP/gr-i/web/yarn.lock" <<'EOF'
+# yarn lockfile v1
+
+
+a@^1.0.0:
+  version "1.0.0"
+  dependencies:
+    b "^1.0.0"
+
+b@^1.0.0:
+  version "1.2.0"
+EOF
+  echo '{}' > "$TMP/gr-i/web/package.json"
+  cat > "$TMP/gr-i/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+ {"bom-ref":"pkg:npm/a@1.0.0","type":"library","name":"a","version":"1.0.0","purl":"pkg:npm/a@1.0.0"},
+ {"bom-ref":"pkg:npm/b@1.2.0","type":"library","name":"b","version":"1.2.0","purl":"pkg:npm/b@1.2.0"}]}
+EOF
+  python3 "$S/mark-graph.py" "$TMP/gr-i/bom.json" --ecosystem npm --repo "$TMP/gr-i" \
+    --markers "web/package.json" >/dev/null 2>&1 || return 1
+  first="$(jq -S '.dependencies' "$TMP/gr-i/bom.json")"
+  contains "$first" "pkg:npm/b@1.2.0" || return 1
+  python3 "$S/mark-graph.py" "$TMP/gr-i/bom.json" --ecosystem npm --repo "$TMP/gr-i" \
+    --markers "web/package.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -S '.dependencies' "$TMP/gr-i/bom.json")" "$first"
+}
+
+# Ecosystems without a lockfile graph stay undetermined — no fabricated edges.
+test_graph_leaves_other_ecosystems_untouched() {
+  cat > "$TMP/gr-o.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+ {"bom-ref":"pkg:pub/http@1.0.0","type":"library","name":"http","version":"1.0.0","purl":"pkg:pub/http@1.0.0"}]}
+EOF
+  python3 "$S/mark-graph.py" "$TMP/gr-o.json" --ecosystem pub --repo "$TMP" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.dependencies // "absent"' "$TMP/gr-o.json")" "absent"
+}
+
 test_scope_go_respects_indirect_marker() {
   mkdir -p "$TMP/sc-go/svc"
   cat > "$TMP/sc-go/svc/go.mod" <<'EOF'

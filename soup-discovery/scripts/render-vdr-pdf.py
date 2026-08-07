@@ -8,7 +8,7 @@ open within the process / compliant or accepted with a recorded reason):
     Applied rules  every rule with its value and its source (config or default)
     1  Summary     counts and severity distribution
     2  Updates     beyond the limit first, then available within the rules
-    3  CVEs        per library, sorted by severity, with EPSS, Fixed-in and VEX
+    3  CVEs        per library, sorted by severity, with EPSS, via-path, Fixed-in and VEX
     4  Stale       deprecated/unmaintained first, then no-release-in-12-months
     5  Actions     the remediation units with their deadlines
 
@@ -29,6 +29,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from collections import deque
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -123,6 +124,53 @@ def load_project_keys(path):
 def src_chip(is_config):
     return ('<font color="#1f4e79"><b>config</b></font>' if is_config
             else '<font color="#5b6472">default</font>')
+
+
+def build_reverse_graph(bundle):
+    """target ref -> sorted list of refs that depend on it. Sorted so the walk — and with
+    it the rendered path — is deterministic across runs."""
+    rev = {}
+    for d in bundle.get("dependencies") or []:
+        src = d.get("ref")
+        for tgt in d.get("dependsOn") or []:
+            rev.setdefault(tgt, []).append(src)
+    for v in rev.values():
+        v.sort()
+    return rev
+
+
+def via_path(ref, rev, names, stop_refs, cap=5):
+    """Shortest chain of parents from ref up to a direct dependency (preferred) or, absent
+    one, a top-level package — returned direct-most first. None when no edges exist."""
+    seen = {ref}
+    q = deque([(ref, [])])
+    fallback = None
+    while q:
+        cur, path = q.popleft()
+        for parent in rev.get(cur, []):
+            if parent in seen:
+                continue
+            seen.add(parent)
+            if parent not in names or str(parent).startswith("quickbird:"):
+                continue    # the product root and artifact subjects end the walk
+            chain = path + [parent]
+            if parent in stop_refs:
+                return list(reversed(chain))
+            if not rev.get(parent) and fallback is None:
+                fallback = list(reversed(chain))
+            if len(chain) < cap:
+                q.append((parent, chain))
+    return fallback
+
+
+def via_text(ref, rev, names, stop_refs):
+    chain = via_path(ref, rev, names, stop_refs)
+    if not chain:
+        return None
+    labels = [names[r] for r in chain]
+    if len(labels) > 3:
+        labels = [labels[0], "…", labels[-1]]
+    return " › ".join(labels)
 
 
 def build(args):
@@ -336,6 +384,12 @@ def build(args):
 
     # ---- 3 libraries with CVEs -----------------------------------------------------
     el.append(Paragraph("3&nbsp;&nbsp;Libraries with CVEs", h2))
+    rev = build_reverse_graph(bundle)
+    names = {c.get("bom-ref"): (c.get("name") or "") for c in components}
+    direct_refs = {c.get("bom-ref") for c in components
+                   if props(c).get("quickbird:dependency:scope") == "direct"
+                   or (props(c).get("quickbird:soup:record")
+                       and props(c).get("quickbird:dependency:scope") != "dev")}
     groups = []
     for (name, version), g in by_comp.items():
         vs = g["vulns"]
@@ -369,6 +423,9 @@ def build(args):
             lib = esc(f"{name} @ {version}")
             if art:
                 lib += f"<br/><font color='#5b6472' size='6.5'>in {esc(art)}</font>"
+            via = via_text(c.get("bom-ref"), rev, names, direct_refs)
+            if via:
+                lib += f"<br/><font color='#5b6472' size='6.5'>via {esc(via)}</font>"
             sev = ("KEV" if kev else f"CVSS {mx:.1f}" if mx >= 0 else "unscored")
             sev_col = "#b91c1c" if (kev or mx >= 9) else "#b45309" if mx >= 7 or mx < 0 else "#5b6472"
             def epss_num(v):
