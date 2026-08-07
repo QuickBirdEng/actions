@@ -7,16 +7,20 @@ transitive, so the coverage figure (direct libraries with an approved SOUP) coul
 fail — and a record for something no longer chosen inflated it. The truth about
 directness has been sitting in the manifests all along; this reads it and stamps
 
-    quickbird:dependency:scope = direct | transitive
+    quickbird:dependency:scope = direct | dev | transitive
 
 onto every component it can decide. Components it cannot decide carry no property —
-undetermined must stay distinguishable from decided.
+undetermined must stay distinguishable from decided. `dev` is build- and test-tooling:
+deliberately chosen, present in the lockfile and therefore in the inventory, but not
+shipped in the product — under WI-006-03 it needs no SOUP record, and the first real run
+proved why the distinction matters: without it, 100 babel/eslint/test packages read as
+"chosen, shipped, never approved".
 
 Per ecosystem:
   pub             pubspec.lock marks every entry: dependency: "direct main" | "direct
                   dev" | "transitive"
-  npm             direct = keys of dependencies/devDependencies across every package.json
-                  that resolves against the scanned lockfile (the discovery markers)
+  npm             dependencies -> direct, devDependencies -> dev, across every
+                  package.json that resolves against the scanned lockfile
   jvm-maven       direct = <dependencies> declared in the module pom.xml
   android-gradle  direct = coordinates named by implementation/api/... lines in the
                   module build.gradle files (the lockfile itself mixes both)
@@ -46,7 +50,7 @@ def load_yaml(path):
 
 def direct_set_pub(markers, repo):
     """pubspec.lock: name -> 'direct main' | 'direct dev' | 'transitive'."""
-    direct, transitive = set(), set()
+    direct, dev, transitive = set(), set(), set()
     for m in markers:
         lock = Path(repo) / Path(m).parent / "pubspec.lock"
         if not lock.is_file():
@@ -54,15 +58,21 @@ def direct_set_pub(markers, repo):
         doc = load_yaml(lock)
         for name, entry in (doc.get("packages") or {}).items():
             dep = str((entry or {}).get("dependency", ""))
-            (direct if dep.startswith("direct") else transitive).add(name)
-    return direct, transitive
+            if dep == "direct dev":
+                dev.add(name)
+            elif dep.startswith("direct"):
+                direct.add(name)
+            else:
+                transitive.add(name)
+    return direct, dev, transitive
 
 
 def direct_set_npm(markers, repo):
-    """Union of dependencies/devDependencies over every package.json marker. In a
-    workspace the members' choices are direct choices of the product, so all markers
-    count — that is exactly why discovery folds members into the root candidate."""
-    direct = set()
+    """dependencies -> direct, devDependencies -> dev, over every package.json marker.
+    In a workspace the members' choices are direct choices of the product, so all
+    markers count — that is exactly why discovery folds members into the root candidate.
+    A name in both sets ships: direct wins."""
+    direct, dev = set(), set()
     for m in markers:
         pj = Path(repo) / m
         if pj.name != "package.json" or not pj.is_file():
@@ -71,9 +81,9 @@ def direct_set_npm(markers, repo):
             doc = json.loads(pj.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        for key in ("dependencies", "devDependencies"):
-            direct.update((doc.get(key) or {}).keys())
-    return direct, None
+        direct.update((doc.get("dependencies") or {}).keys())
+        dev.update((doc.get("devDependencies") or {}).keys())
+    return direct, dev - direct
 
 
 def direct_set_maven(markers, repo):
@@ -90,8 +100,12 @@ def direct_set_maven(markers, repo):
         body = re.sub(r"<dependencyManagement>.*?</dependencyManagement>", "", text, flags=re.S)
         for dep in re.findall(r"<dependency>(.*?)</dependency>", body, flags=re.S):
             a = re.search(r"<artifactId>\s*([^<]+?)\s*</artifactId>", dep)
-            if a:
-                direct.add(a.group(1))
+            if not a:
+                continue
+            scope = re.search(r"<scope>\s*([^<]+?)\s*</scope>", dep)
+            if scope and scope.group(1) in ("test", "provided"):
+                continue    # does not ship; the provided runtime carries its own record
+            direct.add(a.group(1))
     return direct, None
 
 
@@ -143,13 +157,13 @@ def main():
     markers = [m for m in args.markers.split(",") if m]
     eco = args.ecosystem
 
-    direct, transitive = None, None
+    direct, dev, transitive = None, None, None
     all_transitive = False
     all_direct = False
     if eco == "pub":
-        direct, transitive = direct_set_pub(markers, args.repo)
+        direct, dev, transitive = direct_set_pub(markers, args.repo)
     elif eco == "npm":
-        direct, _ = direct_set_npm(markers, args.repo)
+        direct, dev = direct_set_npm(markers, args.repo)
     elif eco == "jvm-maven":
         direct, _ = direct_set_maven(markers, args.repo)
     elif eco in ("android-gradle", "jvm-gradle"):
@@ -172,7 +186,7 @@ def main():
     with open(args.bom, encoding="utf-8") as fh:
         bom = json.load(fh)
 
-    n_dir = n_tra = 0
+    n_dir = n_dev = n_tra = 0
     for c in bom.get("components", []) or []:
         name = c.get("name") or ""
         if all_direct:
@@ -181,8 +195,10 @@ def main():
             scope = "transitive"
         elif direct is not None and name in direct:
             scope = "direct"
-        elif transitive is not None and name not in transitive and name not in direct:
-            # pub knows both sides; a name in neither list is undetermined
+        elif dev is not None and name in dev:
+            scope = "dev"
+        elif transitive is not None and name not in transitive:
+            # pub knows all three sides; a name in none of them is undetermined
             continue
         elif direct is not None:
             scope = "transitive"
@@ -194,13 +210,15 @@ def main():
             key=lambda x: (x["name"], x.get("value") or ""))
         if scope == "direct":
             n_dir += 1
+        elif scope == "dev":
+            n_dev += 1
         else:
             n_tra += 1
 
     with open(args.bom, "w", encoding="utf-8") as fh:
         json.dump(bom, fh, indent=2)
         fh.write("\n")
-    print(f"scope: {n_dir} direct, {n_tra} transitive ({eco})", file=sys.stderr)
+    print(f"scope: {n_dir} direct, {n_dev} dev, {n_tra} transitive ({eco})", file=sys.stderr)
     return 0
 
 

@@ -1696,26 +1696,33 @@ packages:
   http:
     dependency: "direct main"
     version: "1.0.0"
+  build_runner:
+    dependency: "direct dev"
+    version: "2.4.0"
   collection:
     dependency: transitive
     version: "1.18.0"
 EOF
-  scope_bom "$TMP/sc-pub/bom.json" http collection
+  scope_bom "$TMP/sc-pub/bom.json" http build_runner collection
   python3 "$S/mark-scope.py" "$TMP/sc-pub/bom.json" --ecosystem pub \
     --repo "$TMP/sc-pub" --markers "app/pubspec.yaml" >/dev/null 2>&1 || return 1
   assert "$(scope_of "$TMP/sc-pub/bom.json" http)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-pub/bom.json" build_runner)" "dev" || return 1
   assert "$(scope_of "$TMP/sc-pub/bom.json" collection)" "transitive"
 }
 
 test_scope_npm_joins_every_package_json() {
   mkdir -p "$TMP/sc-npm/web" "$TMP/sc-npm/web/packages/member"
-  echo '{"dependencies":{"axios":"^1.0.0"}}' > "$TMP/sc-npm/web/package.json"
+  echo '{"dependencies":{"axios":"^1.0.0"},"devDependencies":{"eslint":"^9.0.0"}}' > "$TMP/sc-npm/web/package.json"
   echo '{"dependencies":{"lodash":"^4.0.0"}}' > "$TMP/sc-npm/web/packages/member/package.json"
-  scope_bom "$TMP/sc-npm/bom.json" axios lodash follow-redirects
+  scope_bom "$TMP/sc-npm/bom.json" axios lodash eslint follow-redirects
   python3 "$S/mark-scope.py" "$TMP/sc-npm/bom.json" --ecosystem npm --repo "$TMP/sc-npm" \
     --markers "web/package.json,web/packages/member/package.json" >/dev/null 2>&1 || return 1
   assert "$(scope_of "$TMP/sc-npm/bom.json" axios)" "direct" || return 1
   assert "$(scope_of "$TMP/sc-npm/bom.json" lodash)" "direct" || return 1
+  # build tooling is a deliberate choice that does not ship — dev, not direct, so the
+  # direct-without-record finding does not demand SOUP records for eslint and babel
+  assert "$(scope_of "$TMP/sc-npm/bom.json" eslint)" "dev" || return 1
   assert "$(scope_of "$TMP/sc-npm/bom.json" follow-redirects)" "transitive"
 }
 
@@ -1724,13 +1731,16 @@ test_scope_maven_reads_declared_dependencies() {
   cat > "$TMP/sc-mvn/mod/pom.xml" <<'EOF'
 <project><dependencies>
   <dependency><groupId>io.netty</groupId><artifactId>netty-handler</artifactId></dependency>
+  <dependency><groupId>org.junit</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
 </dependencies></project>
 EOF
-  scope_bom "$TMP/sc-mvn/bom.json" netty-handler netty-common
+  scope_bom "$TMP/sc-mvn/bom.json" netty-handler netty-common junit-jupiter
   python3 "$S/mark-scope.py" "$TMP/sc-mvn/bom.json" --ecosystem jvm-maven \
     --repo "$TMP/sc-mvn" --markers "mod/pom.xml" >/dev/null 2>&1 || return 1
   assert "$(scope_of "$TMP/sc-mvn/bom.json" netty-handler)" "direct" || return 1
-  assert "$(scope_of "$TMP/sc-mvn/bom.json" netty-common)" "transitive"
+  assert "$(scope_of "$TMP/sc-mvn/bom.json" netty-common)" "transitive" || return 1
+  # test scope does not ship
+  assert "$(scope_of "$TMP/sc-mvn/bom.json" junit-jupiter)" "transitive"
 }
 
 test_scope_go_respects_indirect_marker() {
