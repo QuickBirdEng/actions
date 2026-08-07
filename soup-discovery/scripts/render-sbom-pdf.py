@@ -187,8 +187,7 @@ def build(bundle, bundle_path, out_path):
     el.append(Paragraph(
         f"Software Bill of Materials — {esc(root.get('name'))} "
         f"<font face='Courier'>{esc(root.get('version'))}</font>", h1))
-    el.append(Paragraph("Component inventory of this build · Record per WI-0XX-01, stage #3",
-                        small))
+    el.append(Paragraph("Component inventory of this build", small))
     el.append(Spacer(1, 4))
     tier_col = {"CANDIDATE": ACCENT, "STAGING": MUTED, "BRANCH": WARN}.get(tier, MUTED)
     comp_txt = ('<font color="#15803d"><b>COMPLETE</b></font>' if complete == "true"

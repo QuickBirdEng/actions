@@ -193,8 +193,7 @@ def build(args):
     el.append(Paragraph(
         f"Dependency &amp; Vulnerability Report — {esc(root.get('name'))}", h1))
     el.append(Paragraph(
-        f"Assessment of <b>{esc(root.get('version'))}</b>, dated <b>{esc(date)}</b> · "
-        f"Record per WI-0XX-01, stage #4", small))
+        f"Assessment of <b>{esc(root.get('version'))}</b>, dated <b>{esc(date)}</b>", small))
     el.append(Spacer(1, 6))
     el.append(Table([[Paragraph(
         f"<b>Assessed SBOM</b> <font face='Courier'>{esc(args.bundle.split('/')[-1])} · "
@@ -333,7 +332,8 @@ def build(args):
     el.append(Paragraph(
         f"CVEs by severity: <font color='#b91c1c'><b>{n_crit} Critical</b></font> · "
         f"<font color='#b45309'><b>{n_high} High</b></font> · {n_med} Medium · {n_low} Low · "
-        f"{n_unscored} unscored (treated as High, WI §5 rule 9). Fix availability: "
+        f"{n_unscored} unscored (treated as High, per the classification rules above). "
+        f"Fix availability: "
         f"<b>{fixes.count('available')} with a published fix</b> · "
         f"{fixes.count('none-published')} without · "
         f"{len(fixes) - fixes.count('available') - fixes.count('none-published')} undetermined.",
