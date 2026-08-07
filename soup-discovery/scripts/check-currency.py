@@ -80,8 +80,12 @@ def fetch(url, timeout=20, accept=None):
         return json.loads(r.read().decode("utf-8"))
 
 
-def latest_version(purl):
-    """(version, published_iso, error). Returns None rather than guessing."""
+def latest_version(purl, meta=None):
+    """(version, published_iso, error). Returns None rather than guessing.
+
+    `meta`, when given a dict, is filled with what the same registry document carries for
+    free: supplier, license, and the registry deprecation flag. One request answers four
+    questions — the report columns must not cost a second round trip."""
     m = re.match(r"pkg:([a-z]+)/(.+?)(?:@([^?]+))?(?:\?.*)?$", purl or "")
     if not m:
         return None, None, "no parsable purl"
@@ -90,6 +94,23 @@ def latest_version(purl):
         if eco == "npm":
             d = fetch(REGISTRY["npm"].format(name=name))
             v = (d.get("dist-tags") or {}).get("latest")
+            if meta is not None:
+                author = d.get("author")
+                if isinstance(author, dict):
+                    author = author.get("name")
+                if not author:
+                    maints = d.get("maintainers") or []
+                    author = maints[0].get("name") if maints else None
+                if author:
+                    meta["supplier"] = str(author)
+                lic = d.get("license")
+                if isinstance(lic, dict):
+                    lic = lic.get("type")
+                if lic:
+                    meta["license"] = str(lic)
+                dep = ((d.get("versions") or {}).get(v) or {}).get("deprecated")
+                if dep:
+                    meta["deprecated"] = str(dep) if isinstance(dep, str) else "deprecated"
             times = d.get("time") or {}
             # the publish time of the latest version, never `modified`
             t = times.get(v)
@@ -99,11 +120,24 @@ def latest_version(purl):
         if eco == "pypi":
             d = fetch(REGISTRY["pypi"].format(name=name))
             v = d["info"]["version"]
+            if meta is not None:
+                info = d.get("info") or {}
+                who = info.get("author") or info.get("maintainer")
+                if who:
+                    meta["supplier"] = str(who)
+                if info.get("license"):
+                    meta["license"] = str(info["license"])[:60]
+                if info.get("yanked"):
+                    meta["deprecated"] = "yanked"
             urls = d.get("urls") or []
             t = urls[0].get("upload_time_iso_8601") if urls else None
             return v, t, None
         if eco == "pub":
-            d = fetch(REGISTRY["pub"].format(name=name))["latest"]
+            full = fetch(REGISTRY["pub"].format(name=name))
+            d = full["latest"]
+            if meta is not None and full.get("isDiscontinued"):
+                meta["deprecated"] = "discontinued" + (
+                    f" (replaced by {full.get('replacedBy')})" if full.get("replacedBy") else "")
             return d["version"], d.get("published"), None
         if eco == "golang":
             d = fetch(REGISTRY["golang"].format(name=name))
@@ -192,6 +226,14 @@ def annotate_bom(path, notes):
             extra.append({"name": "quickbird:currency:latest", "value": str(n["latest"])})
         if n.get("detail"):
             extra.append({"name": "quickbird:currency:detail", "value": n["detail"]})
+        if n.get("deprecated"):
+            extra.append({"name": "quickbird:currency:deprecated", "value": n["deprecated"][:200]})
+        # supplier and license go into the CycloneDX standard fields — that is where every
+        # other consumer expects them; nothing is overwritten that the scanner already knew
+        if n.get("supplier") and not c.get("supplier"):
+            c["supplier"] = {"name": n["supplier"]}
+        if n.get("license") and not c.get("licenses"):
+            c["licenses"] = [{"license": {"name": n["license"]}}]
         c["properties"] = sorted((c.get("properties") or []) + extra,
                                  key=lambda x: (x["name"], x.get("value") or ""))
         hit += 1
@@ -318,13 +360,14 @@ def main():
     print(f"checking {len(direct)} component(s) against their registries", file=sys.stderr)
 
     def check(c):
-        latest, published, err = latest_version(c["purl"])
-        return c, latest, published, err
+        meta = {}
+        latest, published, err = latest_version(c["purl"], meta)
+        return c, latest, published, err, meta
 
     results, unknown = [], []
     notes = {}
     with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        for c, latest, published, err in ex.map(check, direct):
+        for c, latest, published, err, meta in ex.map(check, direct):
             name, cur = c.get("name"), c.get("version")
             if latest is None:
                 unknown.append({"name": name, "version": cur, "purl": c.get("purl"),
@@ -346,9 +389,17 @@ def main():
                     or (max_minor is not None and b[1] > max_minor)
                     or (max_patch is not None and b[2] > max_patch))
 
+            # "current" means current: an available update inside the limits is its own
+            # state, because the report lists it — white, but listed.
             status = ("stale-and-behind" if (is_stale and over)
-                      else "stale" if is_stale else "behind" if over else "current")
+                      else "stale" if is_stale
+                      else "behind" if over
+                      else "update-available" if b != (0, 0, 0) else "current")
             note = {"status": status, "latest": latest}
+            note.update({k: v for k, v in meta.items()})
+            if meta.get("deprecated"):
+                note["status"] = "deprecated"
+                note["detail"] = f"declared deprecated by the registry: {meta['deprecated'][:120]}"
             if over:
                 note["detail"] = f"behind by {b[0]} major / {b[1]} minor / {b[2]} patch"
             elif is_stale:
@@ -443,6 +494,11 @@ def main():
             print(f"currency: annotated {n} component(s) in the bundle", file=sys.stderr)
         except (OSError, json.JSONDecodeError) as e:
             print(f"::warning::could not annotate {args.annotate_bom}: {e}", file=sys.stderr)
+
+    for purl, n in notes.items():
+        if n.get("status") == "deprecated":
+            print(f"::warning::{purl.split('@')[0]}: declared deprecated by its registry — "
+                  f"{n.get('deprecated', '')[:120]}", file=sys.stderr)
 
     for e in stale_images:
         print(f"::warning::{e['name']} {e['version']}: image last built {e['built'][:10]}, "

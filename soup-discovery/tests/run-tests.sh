@@ -2197,6 +2197,59 @@ EOF
   assert "$?" "1"
 }
 
+# ------------------------------------------------- the two report renderers
+need_reportlab() { python3 -c 'import reportlab' 2>/dev/null || { echo "reportlab not installed"; return 77; }; }
+
+render_fixture() {
+  cat > "$TMP/rf-bundle.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"supplier":{"name":"QuickBird GmbH"},"lifecycles":[{"phase":"post-build"}],
+  "tools":{"components":[{"type":"application","name":"syft","version":"1.20.0"}]},
+  "component":{"bom-ref":"root","type":"application","name":"prod","version":"v1.0.0"},
+  "properties":[{"name":"quickbird:sbom:tier","value":"candidate"},
+                {"name":"quickbird:sbom:complete","value":"true"},
+                {"name":"quickbird:vuln:kev-catalog-version","value":"2026.08.05"},
+                {"name":"quickbird:vuln:epss-model-version","value":"v2026.06.15"}]},
+ "components":[
+  {"bom-ref":"quickbird:artifact:img","type":"container","name":"img","version":"1.0",
+   "properties":[{"name":"quickbird:scan:target","value":"registry:x/img:1.0"},
+                 {"name":"quickbird:scan:image-digest","value":"x/img@sha256:abcdef1234567890"},
+                 {"name":"quickbird:dependency:scope","value":"direct"}]},
+  {"bom-ref":"a","type":"library","name":"liba","version":"1.0.0","purl":"pkg:npm/liba@1.0.0",
+   "supplier":{"name":"Alice"},"licenses":[{"license":{"name":"MIT"}}],
+   "properties":[{"name":"quickbird:dependency:scope","value":"direct"},
+                 {"name":"quickbird:currency:status","value":"behind"},
+                 {"name":"quickbird:currency:latest","value":"2.0.0"},
+                 {"name":"quickbird:currency:detail","value":"behind by 1 major / 0 minor / 0 patch"},
+                 {"name":"quickbird:soup:record","value":"npm/liba.json"},
+                 {"name":"quickbird:soup:approved-family","value":"1.x.x"}]},
+  {"bom-ref":"b","type":"library","name":"libb","version":"2.0.0","purl":"pkg:npm/libb@2.0.0",
+   "properties":[{"name":"quickbird:dependency:scope","value":"transitive"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-1","affects":[{"ref":"a"}],
+   "properties":[{"name":"quickbird:finding:track","value":"immediate"},
+                 {"name":"quickbird:finding:cvss","value":"9.8"},
+                 {"name":"quickbird:finding:mitigation-due","value":"2026-08-20T00:00:00+00:00"},
+                 {"name":"quickbird:vuln:fix","value":"available"},
+                 {"name":"quickbird:vuln:fix-versions","value":"1.0.1"}]}]}
+EOF
+}
+
+test_render_sbom_report() {
+  need_reportlab || return 77
+  render_fixture
+  python3 "$S/render-sbom-pdf.py" "$TMP/rf-bundle.json" "$TMP/rf-sbom.pdf" >/dev/null 2>&1 || return 1
+  [[ -s "$TMP/rf-sbom.pdf" ]]
+}
+
+test_render_vdr_report() {
+  need_reportlab || return 77
+  render_fixture
+  python3 "$S/render-vdr-pdf.py" "$TMP/rf-bundle.json" "$TMP/rf-vdr.pdf" \
+    --policy "$TMP/cp.json" --date 2026-08-07 >/dev/null 2>&1 || return 1
+  [[ -s "$TMP/rf-vdr.pdf" ]]
+}
+
 # ---------------------------------------------------------------- network
 test_net_enrichment_against_live_feeds() {
   need_net || return 77

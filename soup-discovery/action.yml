@@ -66,7 +66,7 @@ inputs:
     required: false
     default: 'docker.io'
   render-pdf:
-    description: 'Also render a human-readable PDF from the consolidated bundle — the artifact a release reviewer, auditor or customer reads. Installs reportlab if absent.'
+    description: 'Render the two human-readable reports: the SBOM report (composition, per release) and the Dependency & Vulnerability Report (dated assessment). Installs reportlab if absent.'
     required: false
     default: 'true'
   upload-artifact:
@@ -249,7 +249,8 @@ runs:
         # the assessed bundle when a policy produced one, otherwise the component list
         BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
         [ -f "$BOM" ] || BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
-        PDF="${BOM%.json}.pdf"
+        SBOM_PDF="${{ inputs.output-dir }}/bom/sbom-report.pdf"
+        VDR_PDF="${{ inputs.output-dir }}/bom/vdr-report.pdf"
         TAG="${{ steps.tier.outputs.tag }}"
         TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
         # Both candidate and staging bundles are attached, each to the release of its own tag.
@@ -274,7 +275,8 @@ runs:
         # a per-project naming scheme would make the lookup guesswork.
         cp "$BOM" "sbom-$TAG.cdx.json"
         args=("sbom-$TAG.cdx.json")
-        [ -f "$PDF" ] && cp "$PDF" "sbom-$TAG.pdf" && args+=("sbom-$TAG.pdf")
+        [ -f "$SBOM_PDF" ] && cp "$SBOM_PDF" "sbom-$TAG.pdf" && args+=("sbom-$TAG.pdf")
+        [ -f "$VDR_PDF" ] && cp "$VDR_PDF" "vdr-$TAG.pdf" && args+=("vdr-$TAG.pdf")
         # A staging tag's release is a prerelease; creating it as one keeps the release list
         # honest if the build ran before anyone published it.
         PRE=""
@@ -302,8 +304,10 @@ runs:
         # product that deploys by commit SHA and has no tags gets the SHA, which is the only
         # durable location its bundle can have.
         cp "$BOM" "$DIR/sbom-$REF.cdx.json"
-        PDF="${BOM%.json}.pdf"
-        [ -f "$PDF" ] && cp "$PDF" "$DIR/sbom-$REF.pdf"
+        [ -f "${{ inputs.output-dir }}/bom/sbom-report.pdf" ] \
+          && cp "${{ inputs.output-dir }}/bom/sbom-report.pdf" "$DIR/sbom-$REF.pdf"
+        [ -f "${{ inputs.output-dir }}/bom/vdr-report.pdf" ] \
+          && cp "${{ inputs.output-dir }}/bom/vdr-report.pdf" "$DIR/vdr-$REF.pdf"
         {
           echo "dir=$DIR"
           echo "out-dir=${{ github.event.repository.name }}/soup-sbom/$TIER/$REF"

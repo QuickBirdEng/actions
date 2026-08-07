@@ -116,6 +116,16 @@ jq -n \
       version: 1,
       metadata: (
         {
+          # The CISA minimum elements that live at document level: who produced it, with
+          # which tool, at which lifecycle phase. The timestamp stays governed by
+          # KEEP_TIMESTAMP for determinism.
+          supplier: { name: "QuickBird GmbH" },
+          lifecycles: [ { phase: "post-build" } ],
+          tools: { components: [
+            { type: "application", name: "soup-discovery",
+              supplier: { name: "QuickBird GmbH" } },
+            { type: "application", name: "syft", version: (env.SYFT_VERSION // "unknown"),
+              supplier: { name: "Anchore, Inc." } } ] },
           component: {
             "bom-ref": $root,
             type: "application",

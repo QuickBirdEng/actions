@@ -193,6 +193,7 @@ done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)\t\(.ecosystem
 SOLUTION="$OUT_DIR/bom/solution.cdx.json"
 SBOM_MISSING="$(IFS=,; echo "${GAPS[*]:-}")" \
   SBOM_TIER="${SBOM_TIER:-branch}" \
+  SYFT_VERSION="$SYFT_VERSION" \
   bash "$HERE/consolidate.sh" "$PRODUCT" "$VERSION" "$SOLUTION" "${BOMS[@]}" \
   || die "consolidation failed"
 
@@ -216,15 +217,31 @@ else
   log "::warning::no policy file — the bundle carries components but no vulnerability assessment"
 fi
 
-# --- 6. human-readable PDF (optional) --------------------------------------
+# --- 6. human-readable reports (optional) ------------------------------------
+# Two documents by design: the SBOM report states composition and does not age; the
+# Dependency & Vulnerability Report is the dated assessment against the configured rules.
 # Guarded rather than required: the pipeline's value is the machine-readable bundle, and
 # a missing python dependency should not fail a run that already produced it.
 if [[ "${RENDER_PDF:-false}" == "true" ]]; then
-  PDF="${SOLUTION%.json}.pdf"
   if python3 -c 'import reportlab' 2>/dev/null; then
-    python3 "$HERE/render-bundle-pdf.py" "$SOLUTION" "$PDF" || log "::warning::PDF rendering failed; the bundle itself is unaffected"
+    BOMDIR="$(dirname "$SOLUTION")"
+    python3 "$HERE/render-sbom-pdf.py" "$SOLUTION" "$BOMDIR/sbom-report.pdf" \
+      || log "::warning::SBOM report rendering failed; the bundle itself is unaffected"
+    if [[ -f "$OUT_DIR/policy.effective.json" ]]; then
+      VDR_ARGS=("$SOLUTION" "$BOMDIR/vdr-report.pdf" --policy "$OUT_DIR/policy.effective.json")
+      [[ -n "${SOUP_POLICY_FILE:-}" && -f "${SOUP_POLICY_FILE}" ]] \
+        && VDR_ARGS+=(--project-policy "$SOUP_POLICY_FILE")
+      [[ -f "$BOMDIR/solution.remediation-units.json" ]] \
+        && VDR_ARGS+=(--units "$BOMDIR/solution.remediation-units.json")
+      [[ -f "$BOMDIR/maintenance-windows.json" ]] \
+        && VDR_ARGS+=(--windows "$BOMDIR/maintenance-windows.json")
+      python3 "$HERE/render-vdr-pdf.py" "${VDR_ARGS[@]}" \
+        || log "::warning::vulnerability report rendering failed; the bundle itself is unaffected"
+    else
+      log "no policy — no assessment, so no vulnerability report"
+    fi
   else
-    log "::warning::reportlab not installed — skipping the PDF. pip install reportlab"
+    log "::warning::reportlab not installed — skipping the reports. pip install reportlab"
   fi
 fi
 
