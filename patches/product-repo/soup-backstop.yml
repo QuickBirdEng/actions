@@ -1,4 +1,4 @@
-# Goes into <product>/.github/workflows/soup-backstop.yml — WI: Process stage #7.
+# Goes into <product>/.github/workflows/soup-backstop.yml — WI: Reconcile.
 #
 # The reconciliation: what did NOT happen. Days without a record, breaches without a decision,
 # expired risk acceptances, missed maintenance windows, and parameters that changed between runs.

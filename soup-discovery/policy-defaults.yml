@@ -56,7 +56,7 @@ tracks:
     mitigation: none
     remediation: next-release
 
-# WI stage #6 — after a breach, how long until a decision is required.
+# WI: Decide — after a breach, how long until a decision is required.
 breach:
   decision_within: 5d
   risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)

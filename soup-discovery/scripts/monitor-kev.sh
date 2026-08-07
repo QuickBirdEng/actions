@@ -195,7 +195,7 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   FINDINGS=$(jq -c --argjson a "$act" '. + $a' <<<"$FINDINGS")
   SUPPRESSED=$(jq -c --argjson s "$sup" '. + $s' <<<"$SUPPRESSED")
   UNKNOWN=$(jq -c --argjson u "$unk" '. + $u' <<<"$UNKNOWN")
-  # WI stage #4 step 5 — whether the SOUP approvals still match what the scan finds.
+  # WI: Observe step 5 — whether the SOUP approvals still match what the scan finds.
   # The dated record is the evidence of that check, so its result belongs in it, not only
   # in a log line nobody retains.
   SOUP_CHECK=$(jq -c '{

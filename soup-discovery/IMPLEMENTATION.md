@@ -23,9 +23,9 @@ A reusable workflow must not declare `workflow_dispatch` itself: the inputs then
 
 Reusable workflow| Triggered by the caller on | Does  
 ---|---|---  
-soup-sbom.yml | `workflow_run` of the product's release workflow, completed and successful; `workflow_dispatch` with a tag | WI-006-09, stage #3, via the `soup-discovery` action.  
-soup-kev-monitor.yml | `schedule`, daily at a per-product minute; `workflow_dispatch` | WI-006-09, stage #4, via the `kev-monitor` action.  
-soup-backstop.yml | `schedule`, quarterly or annually by tier; `workflow_dispatch` with a window | WI-006-09, stage #7. Reads the period's records back out of the object store.  
+soup-sbom.yml | `workflow_run` of the product's release workflow, completed and successful; `workflow_dispatch` with a tag | WI-006-09, Inventory, via the `soup-discovery` action.  
+soup-kev-monitor.yml | `schedule`, daily at a per-product minute; `workflow_dispatch` | WI-006-09, Observe, via the `kev-monitor` action.  
+soup-backstop.yml | `schedule`, quarterly or annually by tier; `workflow_dispatch` with a window | WI-006-09, Reconcile. Reads the period's records back out of the object store.  
   
 Each of the three can be started manually, and each has a reason to be: to produce the inventory of a version released before the workflow existed, to reproduce a run whose record is questioned, and to reconcile a period on demand.
 
@@ -58,13 +58,13 @@ maintenance-windows.py| WI-006-09, The maintenance window: the window grid, and 
 mark-scope.py| Reads the direct/transitive decision from the manifests per ecosystem (pubspec markers, package.json join, pom declarations, go.mod indirect flags, gradle declarations) and stamps it onto each component. Containers: contents transitive, the image itself direct.  
 mark-graph.py| Derives the dependency graph per ecosystem and writes standard CycloneDX dependencies[] edges into the per-target BOM. npm: from the lockfiles (yarn v1 and berry, package-lock v2/v3 with nearest-first resolution). pub: one registry call per hosted package; dependency names resolve against the locked versions. gradle: the POM of each locked artifact names its runtime dependencies; every version resolves against the lockfile. Registry fetches degrade per package. Ecosystems without a derivable graph keep no edges; operating-system packages inside images arrive with edges from syft.  
 check-currency.py| WI-006-09, Currency and obsolescence: version distance and upstream staleness. Operating-system packages excluded; container images checked by build date.  
-check-fix-or-vex.sh| WI-006-09, stage #1: the pull-request gate. Every vulnerability of the version needs a fix or a VEX statement.  
+check-fix-or-vex.sh| WI-006-09, Assess: the pull-request gate. Every vulnerability of the version needs a fix or a VEX statement.  
 resolve-deployed.sh| The deployed version from the GitHub deployment record, and its published inventory from the release asset.  
 monitor-kev.sh| The daily run. Refuses to exit 0 on an empty or invalid record, because an empty record read as success is indistinguishable from an all-clear.  
 track-lifecycle.py| Today's findings against yesterday's record: new, breached, resolved.  
-escalate-breaches.py| Breaches per remediation unit, with the decision deadline of WI-006-09, stage #6.  
+escalate-breaches.py| Breaches per remediation unit, with the decision deadline of WI-006-09, Decide.  
 compose-alert.sh| The notification. Four independent blocks, so a non-KEV breach is notified even when there is no KEV finding.  
-backstop-report.py| WI-006-09, stage #7. Production deployments per repository, maintenance windows, expired risk acceptances, and drift in the parameters of WI-006-09, Scope of the product and Service level.  
+backstop-report.py| WI-006-09, Reconcile. Production deployments per repository, maintenance windows, expired risk acceptances, and drift in the parameters of WI-006-09, Scope of the product and Service level.  
 validate-policy.sh| Merge project configuration onto the defaults. Refuses a missing required parameter, an interval above the tier cap, a loosened value without a reason, and the two configurations TR-03161 forbids (WI-006-09, BSI TR-03161).  
 render-sbom-pdf.py| The SBOM report: composition only, direct dependencies with supplier/licence and record, every transitive/OS component with its via-path and containing artefact, scanned artefacts with digests; sections subdivided by platform. One per release; contains nothing that ages.  
 render-vdr-pdf.py| The Dependency & Vulnerability Report: the dated assessment against the configured rules, applied-rules block with config/default source, updates beyond and within the limits, CVEs per library with EPSS, via-path, fixed-in and VEX, stale/deprecated, remediation actions; sections subdivided by platform. Rows shaded by decision state.  
@@ -166,7 +166,7 @@ quickbird:scan:image-id | What was scanned, as opposed to the tag that was reque
 quickbird:scan:image-created| The image build date, for the age check.  
 quickbird:component:artifact| Which artefact a component came from.  
 quickbird:soup:approval-drift  
-quickbird:soup:record-version-mismatch | A SOUP approval exists and does not cover the shipped version, on the component, and as a per-record line in the metadata. A review event (WI-006-09, stage #4), distinct from an orphaned record.  
+quickbird:soup:record-version-mismatch | A SOUP approval exists and does not cover the shipped version, on the component, and as a per-record line in the metadata. A review event (WI-006-09, Observe), distinct from an orphaned record.  
 quickbird:feed:kev-catalog-version  
 quickbird:feed:epss-model / :epss-score-date| Which feed version produced the enrichment. EPSS scores are not comparable between model versions, so the version is part of the finding.  
 quickbird:finding:track / :rule / :why / :cvss  

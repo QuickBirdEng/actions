@@ -237,7 +237,7 @@ def main():
               "whole backlog is due at once", file=sys.stderr)
     findings, suppressed = [], []
 
-    # --- SOUP records whose grq-4 snapshot no longer matches reality (WI stage #4) ------
+    # --- SOUP records whose grq-4 snapshot no longer matches reality (WI: Observe) ------
     # grq-4 ("Does not contain major or critical security issues") is evaluated once, against
     # metadata.input_version, at approval time. A patch move inside the approved family keeps the
     # approval — correctly — but the vulnerability picture can change underneath it. Nothing
@@ -425,7 +425,7 @@ def main():
         "schema": "quickbird.classified-findings/v1",
         "classified_at": now.isoformat(),
         "product": policy.get("product"),
-        # WI stage #4 — records whose grq-4 snapshot no longer matches what the scan finds. Not an
+        # WI: Observe — records whose grq-4 snapshot no longer matches what the scan finds. Not an
         # incident and deliberately not in the alert: a review event.
         "soup_records_to_recheck": recheck_list,
         "baseline": ({"onboarded": onboarded.date().isoformat(),

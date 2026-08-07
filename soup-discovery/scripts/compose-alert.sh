@@ -4,7 +4,7 @@
 # Four independent blocks, not one nested tree. Deadlines and the release-required signal
 # used to be written only inside the KEV branch, so a breached Track 2 deadline on a finding
 # that happened not to be in KEV produced no notification at all — it reached the run record
-# and the workflow log and stopped there. WI stage #6 step 1 says a breach is escalated in the
+# and the workflow log and stopped there. WI: Decide says a breach is escalated in the
 # project's Slack channel, so that was the process step silently not happening.
 #
 # A breach is also not subject to the alert threshold. The threshold decides which *new*
@@ -32,7 +32,7 @@ VERDICT=$(jq -r '.verdict' "$RECORD")
 
 if [[ "$VERDICT" == "kev-findings" ]]; then
   {
-    echo ":rotating_light: *$PRODUCT — actively exploited vulnerability in the running version*"
+    echo ":rotating_light: *$PRODUCT: actively exploited vulnerability in the running version*"
     echo ""
     jq -r '.kev_findings[] |
       "• *\(.cve)*  in `\(.target)` @ \(.version)\n" +
@@ -69,11 +69,11 @@ if [[ -n "$ESCALATION" && -f "$ESCALATION" ]]; then
   if [[ "$UD" != "0" || "$BR" != "0" ]]; then
     {
       [[ -s "$ALERT" ]] && echo ""
-      [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT — missed remediation deadlines*" && echo ""
-      echo ":alarm_clock: *Deadlines* — $BR breached, $UD breached with no valid decision on record:"
+      [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT: missed remediation deadlines*" && echo ""
+      echo ":alarm_clock: *Deadlines*: $BR breached, $UD breached with no valid decision on record:"
       jq -r '.escalations[] | select(.level=="undecided" or .level=="breached")
              | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' "$ESCALATION"
-      [[ "$UD" != "0" ]] && echo "_WI stage #6 requires a recorded decision — a revised date or a risk acceptance — in .soup-decisions.yml._"
+      [[ "$UD" != "0" ]] && echo "_The work instruction requires a recorded decision in .soup-decisions.yml: a revised date, or a risk acceptance._"
     } >> "$ALERT"
   fi
 fi
@@ -84,9 +84,9 @@ if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
   if [[ "$RR" != "0" && -n "$RR" && "$RR" != "null" ]]; then
     {
       [[ -s "$ALERT" ]] && echo ""
-      [[ ! -s "$ALERT" ]] && echo ":package: *$PRODUCT — an out-of-band release is required*" && echo ""
-      echo ":package: *Release required* — $RR finding(s) are fixed in main but not yet live:"
-      jq -r '.release_required[] | "   • \(.id) — \(.why)"' "$LIFECYCLE"
+      [[ ! -s "$ALERT" ]] && echo ":package: *$PRODUCT: an out-of-band release is required*" && echo ""
+      echo ":package: *Release required*: $RR finding(s) are fixed in main but not yet live:"
+      jq -r '.release_required[] | "   • \(.id): \(.why)"' "$LIFECYCLE"
       echo "_A merged fix does not stop the remediation clock. Only a deploy does._"
     } >> "$ALERT"
   fi
@@ -95,12 +95,12 @@ fi
 if [[ "$VERDICT" == "incomplete" ]]; then
   {
     [[ -s "$ALERT" ]] && echo ""
-    echo ":warning: *$PRODUCT — the KEV check could not be completed*"
+    echo ":warning: *$PRODUCT: the KEV check could not be completed*"
     echo ""
     echo "This is not an all-clear. Something could not be established:"
-    jq -r '.not_scanned[]? | "• `\(.name // "?")` @ \(.version // "?") — \(.why)"' "$RECORD"
+    jq -r '.not_scanned[]? | "• `\(.name // "?")` @ \(.version // "?"): \(.why)"' "$RECORD"
     U=$(jq -r '.kev_membership_unknown | length' "$RECORD")
-    [[ "$U" != "0" ]] && echo "• KEV membership unknown for $U vulnerability/ies — the catalog could not be read"
+    [[ "$U" != "0" ]] && echo "• KEV membership unknown for $U vulnerability/ies, the catalog could not be read"
     echo ""
     echo "_Absence of a KEV finding here is not evidence that none exists._"
   } >> "$ALERT"

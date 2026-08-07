@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deadline escalation (WI stage #6).
+"""Deadline escalation (WI: Decide).
 
 A deadline that is only checked at the moment it expires is a deadline nobody can act on.
 This produces four levels, so the alert changes before the date rather than after it:
@@ -9,7 +9,7 @@ This produces four levels, so the alert changes before the date rather than afte
     breached     past due, and a documented decision is now required within 5 working days
     undecided    breached, the decision window has also elapsed, nothing recorded
 
-`undecided` is the level that matters. WI stage #6 does not say "escalate on breach" and stop; it
+`undecided` is the level that matters. WI: Decide does not say "escalate on breach" and stop; it
 requires a *recorded decision* — a revised remediation date or a risk acceptance — within
 five working days. Without somewhere to record that, a breach escalates once and then
 becomes background noise, which is exactly the state a backstop review is supposed to
@@ -54,7 +54,7 @@ def parse_dur(s, default_days=7):
 def working_days_between(a, b):
     """Whole working days from a to b, weekends excluded.
 
-    WI stage #6 says five *working* days. Counting calendar days would silently shorten the window
+    WI: Decide says five *working* days. Counting calendar days would silently shorten the window
     across a weekend and escalate a finding whose owner has not yet had the chance to look
     at it — which trains people to treat the escalation as noise.
     """
@@ -161,7 +161,7 @@ def main():
                 elif overdue_wd > decision_window:
                     level = UNDECIDED
                     detail.append(f"{clock} breached {overdue_wd} working days ago and no "
-                                  f"decision is recorded — WI stage #6 required one within {decision_window}")
+                                  f"decision is recorded — WI: Decide required one within {decision_window}")
                 else:
                     detail.append(f"{clock} breached; a documented decision is required within "
                                   f"{decision_window - overdue_wd} more working day(s)")

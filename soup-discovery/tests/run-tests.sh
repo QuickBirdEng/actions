@@ -1001,7 +1001,7 @@ test_escalate_warns_before_the_deadline() {
   assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "approaching"
 }
 
-# WI stage #6 gives five *working* days. Counting calendar days would escalate across a weekend
+# WI: Decide gives five *working* days. Counting calendar days would escalate across a weekend
 # before the owner has had a working day to respond.
 test_escalate_counts_working_days() {
   mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-08-07T00:00:00+00:00"}]'
@@ -1093,7 +1093,7 @@ test_currency_stale_and_current_needs_no_upgrade() {
 # Which releases count as production decides the cadence, and the cadence decides every
 # Track 3/4 deadline. Three signals answer it and they disagree by ten months on alvie.
 # A breach on a finding that happens not to be in KEV used to produce no alert at all: the
-# whole escalation block sat inside the KEV branch. WI stage #6 step 1 was therefore a process step
+# whole escalation block sat inside the KEV branch. WI: Decide step 1 was therefore a process step
 # that silently did not happen.
 mkalert() {
   rm -rf "$TMP/mon"; mkdir -p "$TMP/mon"

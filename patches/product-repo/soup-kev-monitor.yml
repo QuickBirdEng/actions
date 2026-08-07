@@ -1,4 +1,4 @@
-# Goes into <product>/.github/workflows/soup-kev-monitor.yml — WI: Process stage #4.
+# Goes into <product>/.github/workflows/soup-kev-monitor.yml — WI: Observe.
 #
 # The daily run. Pick a minute per product rather than copying this one: the KEV catalog and the
 # EPSS feed are single shared endpoints, and every product hitting them in the same minute is a
