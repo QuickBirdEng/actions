@@ -240,7 +240,7 @@ def build(bundle, bundle_path, out_path):
         if not members:
             continue
         sec += 1
-        el.append(Paragraph(f"1.{sec}&nbsp;&nbsp;{esc(gname)} — {len(members)}", h3))
+        el.append(Paragraph(f"1.{sec}&nbsp;&nbsp;{esc(gname)}: {len(members)}", h3))
         rows = [["Component", "Version", "Supplier / License", "Identifier", "SOUP record"]]
         for c in sorted(members, key=lambda x: (x.get("name") or "").lower()):
             p = props(c)
@@ -285,7 +285,7 @@ def build(bundle, bundle_path, out_path):
         if not members:
             continue
         sec += 1
-        el.append(Paragraph(f"2.{sec}&nbsp;&nbsp;{esc(gname)} — {len(members)}", h3))
+        el.append(Paragraph(f"2.{sec}&nbsp;&nbsp;{esc(gname)}: {len(members)}", h3))
         rows = []
         for c in sorted(members, key=lambda x: (x.get("name") or "").lower()):
             p = props(c)

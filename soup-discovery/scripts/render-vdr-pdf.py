@@ -359,7 +359,7 @@ def build(args):
             continue
         sec += 1
         el.append(Paragraph(
-            f"2.{sec}&nbsp;&nbsp;{esc(gname)} — {len(g['beyond'])} beyond the limit, "
+            f"2.{sec}&nbsp;&nbsp;{esc(gname)}: {len(g['beyond'])} beyond the limit, "
             f"{len(g['within'])} within", h3))
         rows = [["Library", "Installed", "Latest", "Detail", "Status"]]
         shade = {}
@@ -410,7 +410,7 @@ def build(args):
             continue
         sec += 1
         el.append(Paragraph(
-            f"3.{sec}&nbsp;&nbsp;{esc(gname)} — {len(items)} "
+            f"3.{sec}&nbsp;&nbsp;{esc(gname)}: {len(items)} "
             f"{'library' if len(items) == 1 else 'libraries'}", h3))
         rows = [["Library", "Severity", "CVEs", "Fixed in", "VEX", "Status"]]
         shade = {}
@@ -492,7 +492,7 @@ def build(args):
         if not g:
             continue
         sec += 1
-        el.append(Paragraph(f"4.{sec}&nbsp;&nbsp;{esc(gname)} — {len(g['dep']) + len(g['stale'])}",
+        el.append(Paragraph(f"4.{sec}&nbsp;&nbsp;{esc(gname)}: {len(g['dep']) + len(g['stale'])}",
                             h3))
         rows = [["Library", "Installed = latest", "Detail", "Registry status", "Status"]]
         shade = {}
@@ -528,7 +528,7 @@ def build(args):
                 "expedited": "#b45309"}.get(track, "#5b6472")
         state = u.get("state", "")
         status = {"no-vendor-request": "no vendor request recorded",
-                  "vendor-overdue": "vendor follow-up elapsed — decision required",
+                  "vendor-overdue": "vendor follow-up elapsed, decision required",
                   "waiting-on-vendor": "waiting on vendor (on record)",
                   "vendor-request-undated": "vendor request without follow-up date",
                   "ours": "open"}.get(state, state or "open")
@@ -541,7 +541,7 @@ def build(args):
             Paragraph(esc(status), small),
         ])
     if len(rows) == 1:
-        rows.append([Paragraph("none — no open findings", small)] + [Paragraph("", small)] * 5)
+        rows.append([Paragraph("none, no open findings", small)] + [Paragraph("", small)] * 5)
     el.append(table(rows, [64 * mm, 18 * mm, 15 * mm, 21 * mm, 22 * mm, 30 * mm], shade))
 
     # ---- footer ----------------------------------------------------------------------
