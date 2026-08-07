@@ -1836,14 +1836,102 @@ EOF
   assert "$(jq -S '.dependencies' "$TMP/gr-i/bom.json")" "$first"
 }
 
-# Ecosystems without a lockfile graph stay undetermined — no fabricated edges.
+# Ecosystems without a derivable graph stay undetermined — no fabricated edges.
 test_graph_leaves_other_ecosystems_untouched() {
   cat > "$TMP/gr-o.json" <<'EOF'
 {"bomFormat":"CycloneDX","specVersion":"1.6","components":[
- {"bom-ref":"pkg:pub/http@1.0.0","type":"library","name":"http","version":"1.0.0","purl":"pkg:pub/http@1.0.0"}]}
+ {"bom-ref":"pkg:golang/x@1.0.0","type":"library","name":"x","version":"1.0.0","purl":"pkg:golang/x@1.0.0"}]}
 EOF
-  python3 "$S/mark-graph.py" "$TMP/gr-o.json" --ecosystem pub --repo "$TMP" >/dev/null 2>&1 || return 1
+  python3 "$S/mark-graph.py" "$TMP/gr-o.json" --ecosystem go --repo "$TMP" >/dev/null 2>&1 || return 1
   assert "$(jq -r '.dependencies // "absent"' "$TMP/gr-o.json")" "absent"
+}
+
+# The pub registry names each package's dependencies; every version resolves from the
+# lockfile. Packages the registry did not host (git, path, sdk) are never fetched.
+test_graph_pub_resolves_against_the_lockfile() {
+  mkdir -p "$TMP/gr-pub/app"
+  cat > "$TMP/gr-pub/app/pubspec.lock" <<'EOF'
+packages:
+  xml:
+    dependency: "direct main"
+    source: hosted
+    version: "6.6.1"
+    description:
+      name: xml
+      url: "https://pub.dev"
+  petitparser:
+    dependency: transitive
+    source: hosted
+    version: "7.0.1"
+    description:
+      name: petitparser
+      url: "https://pub.dev"
+  local_widget:
+    dependency: "direct main"
+    source: git
+    version: "1.0.0"
+    description:
+      path: "."
+      url: "git@example.com:x.git"
+EOF
+  echo '{}' > "$TMP/gr-pub/app/pubspec.yaml"
+  python3 - "$S/mark-graph.py" "$TMP/gr-pub" <<'EOF'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mg", sys.argv[1])
+mg = importlib.util.module_from_spec(spec); spec.loader.exec_module(mg)
+fetched = []
+def fake(name, version, host):
+    fetched.append(name)
+    return ["petitparser", "meta"] if name == "xml" else []
+edges = mg.pub_edges(["app/pubspec.yaml"], sys.argv[2], fetch=fake)
+assert edges == {("xml", "6.6.1"): [("petitparser", "7.0.1")]}, edges
+assert "local_widget" not in fetched, fetched
+EOF
+}
+
+# Only the dependency names come from the POM — test/provided/optional do not ship, and
+# a groupId written as ${project.groupId} resolves to the POM's own group.
+test_graph_pom_names_filter_scopes() {
+  python3 - "$S/mark-graph.py" <<'EOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("mg", sys.argv[1])
+mg = importlib.util.module_from_spec(spec); spec.loader.exec_module(mg)
+pom = """
+<project><groupId>io.netty</groupId>
+<dependencyManagement><dependencies>
+  <dependency><groupId>ignored</groupId><artifactId>ignored</artifactId></dependency>
+</dependencies></dependencyManagement>
+<dependencies>
+  <dependency><groupId>${project.groupId}</groupId><artifactId>netty-common</artifactId></dependency>
+  <dependency><groupId>org.junit</groupId><artifactId>junit</artifactId><scope>test</scope></dependency>
+  <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><optional>true</optional></dependency>
+</dependencies></project>
+"""
+assert mg.pom_dep_names(pom) == [("io.netty", "netty-common")], mg.pom_dep_names(pom)
+EOF
+}
+
+# gradle.lockfile is the resolution; the POM contributes only which artifacts depend on
+# which — versions always come from the lockfile.
+test_graph_gradle_resolves_against_the_lockfile() {
+  mkdir -p "$TMP/gr-gr/app/android/app"
+  cat > "$TMP/gr-gr/app/android/app/gradle.lockfile" <<'EOF'
+# This is a Gradle generated file for dependency locking.
+androidx.core:core-ktx:1.13.1=releaseRuntimeClasspath
+androidx.core:core:1.13.1=releaseRuntimeClasspath
+empty=
+EOF
+  echo '' > "$TMP/gr-gr/app/android/app/build.gradle"
+  python3 - "$S/mark-graph.py" "$TMP/gr-gr" <<'EOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("mg", sys.argv[1])
+mg = importlib.util.module_from_spec(spec); spec.loader.exec_module(mg)
+def fake(group, artifact, version):
+    return [("androidx.core", "core")] if artifact == "core-ktx" else []
+edges = mg.maven_edges(["app/android/app/build.gradle"], sys.argv[2], fetch=fake)
+assert edges == {("androidx.core", "core-ktx", "1.13.1"):
+                 [("androidx.core", "core", "1.13.1")]}, edges
+EOF
 }
 
 test_scope_go_respects_indirect_marker() {
