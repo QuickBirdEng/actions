@@ -68,7 +68,15 @@ jq -n \
           # contain the identity of what was scanned. The per-target files had it, which is why the
           # loss was not visible when those were checked.
           + (if ($subj.hashes // []) != [] then {hashes: $subj.hashes} else {} end)
-          + (if ($subj.properties // []) != [] then {properties: $subj.properties} else {} end)
+          # An image referenced by our deployment or Dockerfile is a deliberate choice —
+          # the artefact subject carries scope=direct, its contents stay transitive.
+          + (if ($subj.properties // []) != [] then
+               {properties: (($subj.properties
+                 + (if ([$subj.properties[]? | select(.name=="quickbird:scan:target")
+                         | select(.value | startswith("registry:"))] | length) > 0
+                    then [{name:"quickbird:dependency:scope", value:"direct"}] else [] end))
+                 | unique_by(.name))}
+             else {} end)
       ) ) as $artifacts
 
   # old subject ref -> new artifact ref, for edge remapping

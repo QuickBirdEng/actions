@@ -163,6 +163,16 @@ jq --slurpfile recs "$TMP/records.json" '
       ) ) as $drift
   | ( ($drift | map(.package)) ) as $drift_names
   | ( $orphans | map(select((.package // "") as $p | ($drift_names | index($p)) == null)) ) as $orphans
+  # The reverse direction of the coverage question: a component the manifests mark as a
+  # DIRECT choice, with no SOUP record behind it. Until the scope property existed this
+  # case was indistinguishable from a transitive and the coverage figure could never fail.
+  | ( [ $pairs[]
+        | select(.r == null)
+        | .c
+        | select(([.properties[]? | select(.name == "quickbird:dependency:scope"
+                                           and .value == "direct")] | length) > 0)
+        | {name: .name, version: (.version // "?")} ]
+      | unique_by(.name) ) as $unrecorded_direct
   | ( $records | map(select(.vex != null)) | map(vex_entries(.)) | add // [] ) as $all_vex
   # CVE -> the component refs whose OWN record carries a VEX for it. A statement in the
   # record of package A used to suppress the same CVE on package B: the map was keyed on
@@ -260,8 +270,11 @@ jq --slurpfile recs "$TMP/records.json" '
       + [ { name: "quickbird:soup:records-total",    value: ($records | length | tostring) },
           { name: "quickbird:soup:records-matched",  value: ($matched  | length | tostring) },
           { name: "quickbird:soup:records-orphaned", value: ($orphans  | length | tostring) },
-          { name: "quickbird:soup:records-version-mismatch", value: ($drift | length | tostring) } ]
+          { name: "quickbird:soup:records-version-mismatch", value: ($drift | length | tostring) },
+          { name: "quickbird:soup:direct-without-record", value: ($unrecorded_direct | length | tostring) } ]
       + ( $orphans | map({ name: "quickbird:soup:orphaned-record", value: (.package // "?") }))
+      + ( $unrecorded_direct | map({ name: "quickbird:soup:direct-without-record-name",
+                                     value: "\(.name)@\(.version)" }))
       + ( $drift   | map({ name: "quickbird:soup:record-version-mismatch",
                            value: "\(.package): approved family \(.family), shipped \(.shipped | join(", "))" })) )
       | sort_by(.name, (.value // "")) )
@@ -271,6 +284,7 @@ jq --slurpfile recs "$TMP/records.json" '
             matched: ($matched | length),
             orphaned: ($orphans | map(.package)),
             version_mismatch: $drift,
+            direct_without_record: $unrecorded_direct,
             components_without_record: ($pairs | map(select(.r == null)) | length),
             vex_statements: ($all_vex | length),
             vex_applied: ([ .vulnerabilities[]? | select(.analysis != null) ] | length),
@@ -298,6 +312,15 @@ if [[ "$INVALID" != "0" ]]; then
   STATUS=1
 fi
 [[ "$PARTIAL" != "0" ]] && echo "::warning::$PARTIAL vulnerability/ies have a not_affected that covers only some of their affected components — not suppressed" >&2
+
+# A direct dependency without a record is the strongest finding this join can make:
+# something was deliberately chosen and never approved. It fails the run when strict.
+NORECORD=$(jq -r '.direct_without_record | length' <<<"$REPORT")
+if [[ "$NORECORD" != "0" ]]; then
+  echo "::warning::$NORECORD direct dependency/ies carry no SOUP record — chosen, shipped, never approved (WI stage #1)" >&2
+  jq -r '.direct_without_record[] | "::warning::  no record: \(.name)@\(.version)"' <<<"$REPORT" >&2
+  [[ "$STRICT" == "true" ]] && STATUS=1
+fi
 
 # Approval drift first: the record names something the build ships, but the approved
 # family does not cover the shipped version. Louder than an orphan, because the component

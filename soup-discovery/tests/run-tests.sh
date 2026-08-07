@@ -1671,6 +1671,139 @@ PYEOF
   contains "$(jq -r '[.environments[].environment] | join(",")' <<<"$out")" "Study"
 }
 
+# ------------------------------------------------- dependency scope (direct/transitive)
+# "Direct" used to mean "carries a SOUP record" — a proxy that could not fail. The scope
+# now comes from the manifests; these pin each parser.
+
+scope_bom() {  # <file> <name...>
+  local f="$1"; shift
+  local comps=""
+  for n in "$@"; do
+    comps+="{\"bom-ref\":\"$n\",\"type\":\"library\",\"name\":\"$n\",\"version\":\"1.0.0\",\"purl\":\"pkg:npm/$n@1.0.0\"},"
+  done
+  printf '{"bomFormat":"CycloneDX","specVersion":"1.6","components":[%s]}' "${comps%,}" > "$f"
+}
+
+scope_of() { jq -r --arg n "$2" '.components[] | select(.name==$n) | [.properties[]? | select(.name=="quickbird:dependency:scope")][0].value // "undetermined"' "$1"; }
+
+test_scope_pub_reads_the_lockfile_markers() {
+  mkdir -p "$TMP/sc-pub/app"
+  cat > "$TMP/sc-pub/app/pubspec.yaml" <<'EOF'
+name: app
+EOF
+  cat > "$TMP/sc-pub/app/pubspec.lock" <<'EOF'
+packages:
+  http:
+    dependency: "direct main"
+    version: "1.0.0"
+  collection:
+    dependency: transitive
+    version: "1.18.0"
+EOF
+  scope_bom "$TMP/sc-pub/bom.json" http collection
+  python3 "$S/mark-scope.py" "$TMP/sc-pub/bom.json" --ecosystem pub \
+    --repo "$TMP/sc-pub" --markers "app/pubspec.yaml" >/dev/null 2>&1 || return 1
+  assert "$(scope_of "$TMP/sc-pub/bom.json" http)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-pub/bom.json" collection)" "transitive"
+}
+
+test_scope_npm_joins_every_package_json() {
+  mkdir -p "$TMP/sc-npm/web" "$TMP/sc-npm/web/packages/member"
+  echo '{"dependencies":{"axios":"^1.0.0"}}' > "$TMP/sc-npm/web/package.json"
+  echo '{"dependencies":{"lodash":"^4.0.0"}}' > "$TMP/sc-npm/web/packages/member/package.json"
+  scope_bom "$TMP/sc-npm/bom.json" axios lodash follow-redirects
+  python3 "$S/mark-scope.py" "$TMP/sc-npm/bom.json" --ecosystem npm --repo "$TMP/sc-npm" \
+    --markers "web/package.json,web/packages/member/package.json" >/dev/null 2>&1 || return 1
+  assert "$(scope_of "$TMP/sc-npm/bom.json" axios)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-npm/bom.json" lodash)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-npm/bom.json" follow-redirects)" "transitive"
+}
+
+test_scope_maven_reads_declared_dependencies() {
+  mkdir -p "$TMP/sc-mvn/mod"
+  cat > "$TMP/sc-mvn/mod/pom.xml" <<'EOF'
+<project><dependencies>
+  <dependency><groupId>io.netty</groupId><artifactId>netty-handler</artifactId></dependency>
+</dependencies></project>
+EOF
+  scope_bom "$TMP/sc-mvn/bom.json" netty-handler netty-common
+  python3 "$S/mark-scope.py" "$TMP/sc-mvn/bom.json" --ecosystem jvm-maven \
+    --repo "$TMP/sc-mvn" --markers "mod/pom.xml" >/dev/null 2>&1 || return 1
+  assert "$(scope_of "$TMP/sc-mvn/bom.json" netty-handler)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-mvn/bom.json" netty-common)" "transitive"
+}
+
+test_scope_go_respects_indirect_marker() {
+  mkdir -p "$TMP/sc-go/svc"
+  cat > "$TMP/sc-go/svc/go.mod" <<'EOF'
+module example.com/svc
+require (
+	golang.org/x/crypto v0.22.0
+	golang.org/x/sys v0.19.0 // indirect
+)
+EOF
+  scope_bom "$TMP/sc-go/bom.json" golang.org/x/crypto golang.org/x/sys
+  python3 "$S/mark-scope.py" "$TMP/sc-go/bom.json" --ecosystem go \
+    --repo "$TMP/sc-go" --markers "svc/go.mod" >/dev/null 2>&1 || return 1
+  assert "$(scope_of "$TMP/sc-go/bom.json" golang.org/x/crypto)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-go/bom.json" golang.org/x/sys)" "transitive"
+}
+
+test_scope_gradle_reads_declared_coordinates() {
+  mkdir -p "$TMP/sc-gr/app/android/app"
+  cat > "$TMP/sc-gr/app/android/app/build.gradle" <<'EOF'
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+}
+EOF
+  scope_bom "$TMP/sc-gr/bom.json" desugar_jdk_libs kotlin-stdlib
+  python3 "$S/mark-scope.py" "$TMP/sc-gr/bom.json" --ecosystem android-gradle \
+    --repo "$TMP/sc-gr" --markers "app/android/app/build.gradle" >/dev/null 2>&1 || return 1
+  assert "$(scope_of "$TMP/sc-gr/bom.json" desugar_jdk_libs)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-gr/bom.json" kotlin-stdlib)" "transitive"
+}
+
+# The finding the whole step exists for: chosen, shipped, never approved.
+test_assessment_flags_direct_without_record() {
+  mkdir -p "$TMP/dwr/soups/npm"
+  soup_record other "1.x.x" "1.0.0" > "$TMP/dwr/soups/npm/other.json"
+  cat > "$TMP/dwr/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+   {"bom-ref":"a","type":"library","name":"lodash","version":"4.17.21","purl":"pkg:npm/lodash@4.17.21",
+    "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]},
+   {"bom-ref":"b","type":"library","name":"follow-redirects","version":"1.15.11","purl":"pkg:npm/follow-redirects@1.15.11",
+    "properties":[{"name":"quickbird:dependency:scope","value":"transitive"}]},
+   {"bom-ref":"c","type":"library","name":"other","version":"1.0.0","purl":"pkg:npm/other@1.0.0"}],
+ "vulnerabilities":[]}
+EOF
+  out=$(bash "$S/merge-assessment.sh" "$TMP/dwr/bom.json" "$TMP/dwr/soups" "$TMP/dwr/out.json" 2>&1) || return 1
+  contains "$out" "no record: lodash@4.17.21" || return 1
+  assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:soup:direct-without-record")][0].value' "$TMP/dwr/out.json")" "1" || return 1
+  # the transitive without a record is expected and must NOT be flagged
+  ! grep -q "follow-redirects" <<<"$out"
+}
+
+# Currency selects by scope when the document carries it — a direct dependency without a
+# record is checked instead of skipped.
+test_currency_selects_by_scope() {
+  cat > "$TMP/cs-bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[
+  {"bom-ref":"a","type":"library","name":"pkg","version":"1.0.0","purl":"pkg:weird/pkg@1.0.0",
+   "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]},
+  {"bom-ref":"b","type":"library","name":"dep","version":"1.0.0","purl":"pkg:weird/dep@1.0.0",
+   "properties":[{"name":"quickbird:dependency:scope","value":"transitive"}]}]}
+EOF
+  mkdir -p "$TMP/cs-soups"
+  python3 "$S/check-currency.py" "$TMP/cs-bom.json" "$TMP/cp.json" \
+    --soups "$TMP/cs-soups" --out "$TMP/cs-out.json" >/dev/null 2>&1 || return 1
+  # the direct one is checked (lands in unknown — no registry for pkg:weird), the
+  # transitive one is not checked at all
+  contains "$(jq -r '[.unknown[].name] | join(",")' "$TMP/cs-out.json")" "pkg" || return 1
+  ! jq -e '.unknown[] | select(.name=="dep")' "$TMP/cs-out.json" >/dev/null
+}
+
 # The bundle carries the classification, not only the findings side-file — the PDF is a
 # pure function of the bundle, so what it must show has to be in it.
 test_classify_annotates_vulnerabilities_in_the_bundle() {

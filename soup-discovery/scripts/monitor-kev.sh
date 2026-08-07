@@ -201,6 +201,7 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   SOUP_CHECK=$(jq -c '{
       matched:  ([.metadata.properties[]? | select(.name=="quickbird:soup:records-matched")][0].value // "0"),
       orphaned: ([.metadata.properties[]? | select(.name=="quickbird:soup:records-orphaned")][0].value // "0"),
+      direct_without_record: ([.metadata.properties[]? | select(.name=="quickbird:soup:direct-without-record")][0].value // "0"),
       version_mismatch: [ .metadata.properties[]? | select(.name=="quickbird:soup:record-version-mismatch") | .value ]
     }' "$final" 2>/dev/null || echo '{}')
   SCANNED=$(jq -c --arg n "$name" --arg v "$version" --arg tier "$BOM_TIER" \

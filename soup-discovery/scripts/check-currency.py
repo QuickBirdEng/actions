@@ -266,17 +266,28 @@ def main():
         now = datetime.now(timezone.utc)
     reasons = load_soup_reasons(args.soups) if args.soups else {}
 
-    # Direct dependencies only. A component is direct if a SOUP record exists for it — that
-    # is what "we chose this" means here — falling back to the whole set when no records
-    # are given, with a warning, because checking everything is noisy rather than wrong.
+    # Direct dependencies only. The manifests decide (quickbird:dependency:scope, written
+    # by mark-scope.py); components carrying a SOUP record are included as well, because
+    # an approval implies a choice even where a manifest could not be read. The old
+    # record-only rule was a proxy that made a direct dependency without a record
+    # invisible here. Fallback when the document carries no scope information at all:
+    # the previous behaviour.
+    has_scope = any(
+        q.get("name") == "quickbird:dependency:scope"
+        for c in (bom.get("components") or [])
+        for q in (c.get("properties") or []))
     direct = []
     for c in bom.get("components", []) or []:
         p = {q["name"]: q["value"] for q in (c.get("properties") or [])}
-        if p.get("quickbird:soup:record") or (not reasons and args.soups is None):
+        if has_scope:
+            if p.get("quickbird:dependency:scope") == "direct" or p.get("quickbird:soup:record"):
+                direct.append(c)
+        elif p.get("quickbird:soup:record") or (not reasons and args.soups is None):
             direct.append(c)
-    if args.soups is None:
-        print("::warning::no SOUP records given — checking every component, including "
-              "transitives, which cannot be upgraded independently", file=sys.stderr)
+    if not has_scope and args.soups is None:
+        print("::warning::no scope information and no SOUP records — checking every "
+              "component, including transitives, which cannot be upgraded independently",
+              file=sys.stderr)
 
     # Operating-system packages are excluded unconditionally. Under Annex B B.1.1 the base image is the
     # SOUP and its OS packages are transitive, so they are not individually subject to the

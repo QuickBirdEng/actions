@@ -70,7 +70,7 @@ SCOPE_OUTPUT="$PLAN" bash "$HERE/resolve-scope.sh" "$CAND" "$SCOPE_FILE" \
 BOMS=()
 GAPS=()
 
-while IFS=$'\t' read -r id source resolvable; do
+while IFS=$'\t' read -r id source resolvable ecosystem markers; do
   [[ -z "$id" ]] && continue
   raw="$OUT_DIR/bom/$id.raw.json"
   final="$OUT_DIR/bom/$id.cdx.json"
@@ -177,9 +177,15 @@ while IFS=$'\t' read -r id source resolvable; do
     || { log "  gap  $id — normalisation failed"; GAPS+=("$id"); rm -f "$raw" "$native"; continue; }
   bash "$HERE/verify-bom.sh" "$final" >/dev/null 2>&1 \
     || { bash "$HERE/verify-bom.sh" "$final" >&2; die "$id failed the BOM gate"; }
+  # Direct or transitive, read from the manifests — the property the coverage figure
+  # stands on. A failure here degrades to undetermined components, not to a failed run:
+  # the inventory is still correct, it just cannot answer the direct-coverage question.
+  python3 "$HERE/mark-scope.py" "$final" --ecosystem "$ecosystem" \
+    --repo "$REPO" --markers "$markers" >&2 \
+    || log "::warning::$id: dependency scope could not be determined"
   rm -f "$raw" "$native"
   BOMS+=("$final")
-done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)"' "$PLAN")
+done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)\t\(.ecosystem)\t\(.markers | join(","))"' "$PLAN")
 
 [[ ${#BOMS[@]} -gt 0 ]] || die "no target produced a BOM"
 
