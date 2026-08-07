@@ -164,13 +164,17 @@ jq --slurpfile recs "$TMP/records.json" '
   | ( ($drift | map(.package)) ) as $drift_names
   | ( $orphans | map(select((.package // "") as $p | ($drift_names | index($p)) == null)) ) as $orphans
   # The reverse direction of the coverage question: a component the manifests mark as a
-  # DIRECT choice, with no SOUP record behind it. Until the scope property existed this
-  # case was indistinguishable from a transitive and the coverage figure could never fail.
+  # DIRECT choice, with NO record behind it at all. A record whose family does not cover
+  # the shipped version is version drift and already reported above — counting it here
+  # too turned one decision into two findings (wireguard appeared in both lists on the
+  # first real run).
   | ( [ $pairs[]
         | select(.r == null)
         | .c
         | select(([.properties[]? | select(.name == "quickbird:dependency:scope"
                                            and .value == "direct")] | length) > 0)
+        | . as $c
+        | select(([ $records[] | select(name_matches(.; $c)) ] | length) == 0)
         | {name: .name, version: (.version // "?")} ]
       | unique_by(.name) ) as $unrecorded_direct
   | ( $records | map(select(.vex != null)) | map(vex_entries(.)) | add // [] ) as $all_vex

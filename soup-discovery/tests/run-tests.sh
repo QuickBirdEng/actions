@@ -1777,6 +1777,8 @@ EOF
 test_assessment_flags_direct_without_record() {
   mkdir -p "$TMP/dwr/soups/npm"
   soup_record other "1.x.x" "1.0.0" > "$TMP/dwr/soups/npm/other.json"
+  # a record with a non-covering family: version DRIFT, not "without record"
+  soup_record drifty "2.x.x" "2.0.0" > "$TMP/dwr/soups/npm/drifty.json"
   cat > "$TMP/dwr/bom.json" <<'EOF'
 {"bomFormat":"CycloneDX","specVersion":"1.6",
  "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
@@ -1785,14 +1787,19 @@ test_assessment_flags_direct_without_record() {
     "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]},
    {"bom-ref":"b","type":"library","name":"follow-redirects","version":"1.15.11","purl":"pkg:npm/follow-redirects@1.15.11",
     "properties":[{"name":"quickbird:dependency:scope","value":"transitive"}]},
-   {"bom-ref":"c","type":"library","name":"other","version":"1.0.0","purl":"pkg:npm/other@1.0.0"}],
+   {"bom-ref":"c","type":"library","name":"other","version":"1.0.0","purl":"pkg:npm/other@1.0.0"},
+   {"bom-ref":"d","type":"library","name":"drifty","version":"1.0.0","purl":"pkg:npm/drifty@1.0.0",
+    "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}],
  "vulnerabilities":[]}
 EOF
   out=$(bash "$S/merge-assessment.sh" "$TMP/dwr/bom.json" "$TMP/dwr/soups" "$TMP/dwr/out.json" 2>&1) || return 1
   contains "$out" "no record: lodash@4.17.21" || return 1
   assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:soup:direct-without-record")][0].value' "$TMP/dwr/out.json")" "1" || return 1
   # the transitive without a record is expected and must NOT be flagged
-  ! grep -q "follow-redirects" <<<"$out"
+  ! grep -q "no record: follow-redirects" <<<"$out" || return 1
+  # a record with a non-covering family is drift, reported once — not "without record"
+  contains "$out" "drifty: approved family 2.x.x, shipped 1.0.0" || return 1
+  ! grep -q "no record: drifty" <<<"$out"
 }
 
 # Currency selects by scope when the document carries it — a direct dependency without a
