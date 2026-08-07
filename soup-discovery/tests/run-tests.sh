@@ -1835,6 +1835,20 @@ EOF
   contains "$(jq -r '[.vulnerabilities[0].properties[].name] | join(",")' "$TMP/anv.json")" "quickbird:finding:mitigation-due"
 }
 
+# EPSS drives the escalation rule, so the reader of the bundle (and the report rendered
+# from it) must see the score the classification used.
+test_classify_annotates_epss_in_the_bundle() {
+  cat > "$TMP/anv-e.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6","components":[],
+ "vulnerabilities":[{"id":"CVE-78","affects":[{"ref":"a"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+              {"source":{"name":"EPSS"},"method":"other","score":0.73}]}]}
+EOF
+  python3 "$S/classify-findings.py" "$TMP/anv-e.json" "$TMP/cp.json" \
+    --annotate-bom "$TMP/anv-e.json" --now "2026-08-06T12:00:00+00:00" --out "$TMP/anvf-e.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.vulnerabilities[0].properties[] | select(.name=="quickbird:finding:epss")][0].value' "$TMP/anv-e.json")" "0.73"
+}
+
 # Currency annotation is a pure function over collected notes — testable without a registry.
 test_currency_annotate_bom_stamps_latest() {
   cat > "$TMP/cur-ann.json" <<'EOF'

@@ -474,6 +474,8 @@ def main():
                 ]
                 if f.get("cvss") is not None:
                     extra.append({"name": "quickbird:finding:cvss", "value": str(f["cvss"])})
+                if f.get("epss") is not None:
+                    extra.append({"name": "quickbird:finding:epss", "value": str(f["epss"])})
                 for clock in ("mitigation", "remediation"):
                     if f.get(f"{clock}_due"):
                         extra.append({"name": f"quickbird:finding:{clock}-due",

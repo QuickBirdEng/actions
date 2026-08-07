@@ -6,8 +6,11 @@ classification, deadlines, latest versions) belongs to the Dependency & Vulnerab
 Report; this document states what the build is made of, and nothing that ages:
 
     1  Direct dependencies      the deliberate choices, with supplier/licence and record
-    2  Transitive and OS        aggregate by ecosystem — itemised in the bundle
+    2  Transitive and OS        every component, with identifier and containing artefact
     3  Scanned artefacts        each source with its identity (digest, build date)
+
+Sections 1 and 2 are subdivided by platform (Web, Flutter app, Android/JVM, ...) — the
+same grouping the Dependency & Vulnerability Report uses.
 
 Reads the assessed bundle (it is a superset of the pure inventory) but renders only the
 static facts from it.
@@ -41,6 +44,27 @@ cell = ParagraphStyle("cell", parent=body, fontSize=7.5, leading=10)
 h1 = ParagraphStyle("h1", parent=body, fontSize=15, leading=19, fontName="Helvetica-Bold")
 h2 = ParagraphStyle("h2", parent=body, fontSize=10.5, leading=14, fontName="Helvetica-Bold",
                     textColor=ACCENT, spaceBefore=14, spaceAfter=4)
+h3 = ParagraphStyle("h3", parent=body, fontSize=9, leading=12, fontName="Helvetica-Bold",
+                    spaceBefore=8, spaceAfter=3)
+
+# Platform subcategories, shared with the VDR renderer so both reports read the same way.
+GROUP_ORDER = ["Web (npm)", "Flutter app (pub)", "Android / JVM (Maven)", ".NET (NuGet)",
+               "Go", "Python", "Operating-system packages", "Container images",
+               "GitHub Actions", "Other"]
+ECO_LABEL = {"npm": "Web (npm)", "pub": "Flutter app (pub)",
+             "maven": "Android / JVM (Maven)", "nuget": ".NET (NuGet)",
+             "golang": "Go", "pypi": "Python",
+             "apk": "Operating-system packages", "deb": "Operating-system packages",
+             "rpm": "Operating-system packages",
+             "github": "GitHub Actions", "githubactions": "GitHub Actions"}
+
+
+def group_of(c):
+    if str(c.get("bom-ref", "")).startswith("quickbird:artifact:"):
+        return "Container images"
+    purl = c.get("purl") or ""
+    eco = purl.split(":", 1)[1].split("/", 1)[0] if purl.startswith("pkg:") else ""
+    return ECO_LABEL.get(eco, "Other")
 
 
 def props(obj):
@@ -125,16 +149,31 @@ def build(bundle, bundle_path, out_path):
         f'<font color="{tier_col.hexval() if hasattr(tier_col, "hexval") else "#5b6472"}">'
         f'<b>{esc(tier)}</b></font> &nbsp;·&nbsp; {comp_txt}', body))
     el.append(Spacer(1, 6))
-    el.append(table([[Paragraph(
-        f"<b>Producer</b> QuickBird GmbH &nbsp;·&nbsp; "
-        f"<b>Generation tool</b> soup-discovery / syft {esc(syft_v)} &nbsp;·&nbsp; "
-        f"<b>Format</b> CycloneDX {esc(bundle.get('specVersion'))} &nbsp;·&nbsp; "
-        f"<b>Lifecycle</b> post-build<br/>"
-        f"<b>Generated</b> {esc(generated)} &nbsp;·&nbsp; "
-        f"<b>Document SHA-256</b> <font face='Courier'>{sha[:16]}…</font> &nbsp;·&nbsp; "
-        f"<b>Components</b> {len(components) - len(artifacts)} ({len(direct)} direct) "
-        f"from {len(artifacts)} artefacts", small)]],
-        [170 * mm], (("BACKGROUND", (0, 0), (-1, -1), BOX),)))
+    def lbl(s):
+        return Paragraph(f"<b>{s}</b>", cell)
+
+    docmeta = Table([
+        [lbl("Producer"), Paragraph("QuickBird GmbH", cell),
+         lbl("Format"), Paragraph(f"CycloneDX {esc(bundle.get('specVersion'))}", cell)],
+        [lbl("Generation tool"), Paragraph(f"soup-discovery / syft {esc(syft_v)}", cell),
+         lbl("Lifecycle"), Paragraph("post-build", cell)],
+        [lbl("Generated"), Paragraph(esc(generated), cell),
+         lbl("Components"), Paragraph(
+             f"{len(components) - len(artifacts)} ({len(direct)} direct) "
+             f"from {len(artifacts)} artefacts", cell)],
+        [lbl("Document SHA-256"),
+         Paragraph(f"<font face='Courier'>{sha}</font>", cell), "", ""],
+    ], colWidths=[28 * mm, 59 * mm, 24 * mm, 59 * mm])
+    docmeta.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, LINE),
+        ("BACKGROUND", (0, 0), (0, -1), BOX),
+        ("BACKGROUND", (2, 0), (2, -2), BOX),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("SPAN", (1, -1), (-1, -1)),
+    ]))
+    el.append(docmeta)
 
     if gaps:
         el.append(Spacer(1, 6))
@@ -145,46 +184,75 @@ def build(bundle, bundle_path, out_path):
 
     # ---- 1 direct dependencies ------------------------------------------------
     el.append(Paragraph("1&nbsp;&nbsp;Direct dependencies", h2))
-    rows = [["Component", "Version", "Supplier / License", "Identifier", "SOUP record"]]
-    for c in sorted(direct, key=lambda x: (x.get("name") or "").lower()):
-        p = props(c)
-        is_img = str(c.get("bom-ref", "")).startswith("quickbird:artifact:")
-        name = esc(c.get("name")) + (' <font color="#5b6472">(image)</font>' if is_img else "")
-        supplier = (c.get("supplier") or {}).get("name")
-        lic = license_of(c)
-        sup_txt = esc(supplier) if supplier else "—"
-        if lic:
-            sup_txt += f'<br/><font color="#5b6472">{esc(lic)}</font>'
-        ident = c.get("purl") or p.get("quickbird:scan:target", "").replace("registry:", "")
-        fam = p.get("quickbird:soup:approved-family", "")
-        who, when = approver.get(c.get("bom-ref"), (None, ""))
-        rec = f"{esc(fam)}" if fam else "—"
-        if who:
-            rec += f" · {esc(who)}<br/><font color='#5b6472'>{esc(when)}</font>"
-        rows.append([
-            Paragraph(name, cell),
-            Paragraph(esc(c.get("version")), cell),
-            Paragraph(sup_txt, cell),
-            Paragraph(esc(ident)[:70], small),
-            Paragraph(rec, cell),
-        ])
-    el.append(table(rows, [42 * mm, 20 * mm, 28 * mm, 48 * mm, 32 * mm]))
+    direct_groups = {}
+    for c in direct:
+        direct_groups.setdefault(group_of(c), []).append(c)
+    sec = 0
+    for gname in GROUP_ORDER:
+        members = direct_groups.get(gname)
+        if not members:
+            continue
+        sec += 1
+        el.append(Paragraph(f"1.{sec}&nbsp;&nbsp;{esc(gname)} — {len(members)}", h3))
+        rows = [["Component", "Version", "Supplier / License", "Identifier", "SOUP record"]]
+        for c in sorted(members, key=lambda x: (x.get("name") or "").lower()):
+            p = props(c)
+            is_img = str(c.get("bom-ref", "")).startswith("quickbird:artifact:")
+            name = esc(c.get("name")) + (' <font color="#5b6472">(image)</font>' if is_img else "")
+            supplier = (c.get("supplier") or {}).get("name")
+            lic = license_of(c)
+            sup_txt = esc(supplier) if supplier else "—"
+            if lic:
+                sup_txt += f'<br/><font color="#5b6472">{esc(lic)}</font>'
+            ident = c.get("purl") or p.get("quickbird:scan:target", "").replace("registry:", "")
+            fam = p.get("quickbird:soup:approved-family", "")
+            who, when = approver.get(c.get("bom-ref"), (None, ""))
+            rec = f"{esc(fam)}" if fam else "—"
+            if who:
+                rec += f" · {esc(who)}<br/><font color='#5b6472'>{esc(when)}</font>"
+            rows.append([
+                Paragraph(name, cell),
+                Paragraph(esc(c.get("version")), cell),
+                Paragraph(sup_txt, cell),
+                Paragraph(esc(ident)[:70], small),
+                Paragraph(rec, cell),
+            ])
+        el.append(table(rows, [42 * mm, 20 * mm, 28 * mm, 48 * mm, 32 * mm]))
 
-    # ---- 2 transitive and OS, aggregate ---------------------------------------
+    # ---- 2 transitive and OS, itemised -----------------------------------------
     el.append(Paragraph("2&nbsp;&nbsp;Transitive and operating-system components", h2))
-    eco_counts = {}
+    el.append(Paragraph(f"{len(rest)} components.", small))
+    rest_groups = {}
     for c in rest:
-        purl = c.get("purl") or ""
-        eco = purl.split(":", 1)[1].split("/", 1)[0] if purl.startswith("pkg:") else "other"
-        eco_counts[eco] = eco_counts.get(eco, 0) + 1
-    rows = [["Ecosystem", "Components"]]
-    for eco, n in sorted(eco_counts.items(), key=lambda kv: -kv[1]):
-        rows.append([Paragraph(esc(eco), cell), Paragraph(str(n), cell)])
-    rows.append([Paragraph("<b>Total</b>", cell), Paragraph(f"<b>{len(rest)}</b>", cell)])
-    el.append(table(rows, [60 * mm, 30 * mm]))
-    el.append(Paragraph(
-        "Itemised in full, with identifiers and versions, in the machine-readable document.",
-        small))
+        rest_groups.setdefault(group_of(c), []).append(c)
+    header = ["Component", "Version", "Identifier", "Contained in"]
+    widths = [42 * mm, 20 * mm, 72 * mm, 36 * mm]
+    sec = 0
+    for gname in GROUP_ORDER:
+        members = rest_groups.get(gname)
+        if not members:
+            continue
+        sec += 1
+        el.append(Paragraph(f"2.{sec}&nbsp;&nbsp;{esc(gname)} — {len(members)}", h3))
+        rows = []
+        for c in sorted(members, key=lambda x: (x.get("name") or "").lower()):
+            p = props(c)
+            name = esc(c.get("name"))
+            if p.get("quickbird:dependency:scope") == "dev":
+                name += ' <font color="#5b6472">(dev)</font>'
+            arts = ", ".join(v.strip().replace("quickbird:artifact:", "")
+                             for v in p.get("quickbird:component:artifact", "").split(",")
+                             if v.strip())
+            rows.append([
+                Paragraph(name, cell),
+                Paragraph(esc(c.get("version")), cell),
+                Paragraph(esc(c.get("purl") or "—"), small),
+                Paragraph(esc(arts) or "—", small),
+            ])
+        # chunked so reportlab lays out many small tables instead of one huge one;
+        # each chunk repeats the header exactly as a page break would
+        for i in range(0, len(rows), 400):
+            el.append(table([header] + rows[i:i + 400], widths))
 
     # ---- 3 scanned artefacts ---------------------------------------------------
     el.append(Paragraph("3&nbsp;&nbsp;Scanned artefacts", h2))

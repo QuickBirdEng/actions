@@ -8,9 +8,12 @@ open within the process / compliant or accepted with a recorded reason):
     Applied rules  every rule with its value and its source (config or default)
     1  Summary     counts and severity distribution
     2  Updates     beyond the limit first, then available within the rules
-    3  CVEs        per library, sorted by severity, with Fixed-in and VEX
+    3  CVEs        per library, sorted by severity, with EPSS, Fixed-in and VEX
     4  Stale       deprecated/unmaintained first, then no-release-in-12-months
     5  Actions     the remediation units with their deadlines
+
+Sections 2-4 are subdivided by platform (Web, Flutter app, Android/JVM, ...) — the same
+grouping the SBOM report uses.
 
 Deliberately argues from the configured rules, not from the SOUP record requirements —
 those have their own layer.
@@ -51,6 +54,27 @@ cell = ParagraphStyle("cell", parent=body, fontSize=7.5, leading=10)
 h1 = ParagraphStyle("h1", parent=body, fontSize=15, leading=19, fontName="Helvetica-Bold")
 h2 = ParagraphStyle("h2", parent=body, fontSize=10.5, leading=14, fontName="Helvetica-Bold",
                     textColor=ACCENT, spaceBefore=14, spaceAfter=4)
+h3 = ParagraphStyle("h3", parent=body, fontSize=9, leading=12, fontName="Helvetica-Bold",
+                    spaceBefore=8, spaceAfter=3)
+
+# Platform subcategories, shared with the SBOM renderer so both reports read the same way.
+GROUP_ORDER = ["Web (npm)", "Flutter app (pub)", "Android / JVM (Maven)", ".NET (NuGet)",
+               "Go", "Python", "Operating-system packages", "Container images",
+               "GitHub Actions", "Other"]
+ECO_LABEL = {"npm": "Web (npm)", "pub": "Flutter app (pub)",
+             "maven": "Android / JVM (Maven)", "nuget": ".NET (NuGet)",
+             "golang": "Go", "pypi": "Python",
+             "apk": "Operating-system packages", "deb": "Operating-system packages",
+             "rpm": "Operating-system packages",
+             "github": "GitHub Actions", "githubactions": "GitHub Actions"}
+
+
+def group_of(c):
+    if str(c.get("bom-ref", "")).startswith("quickbird:artifact:"):
+        return "Container images"
+    purl = c.get("purl") or ""
+    eco = purl.split(":", 1)[1].split("/", 1)[0] if purl.startswith("pkg:") else ""
+    return ECO_LABEL.get(eco, "Other")
 
 
 def props(obj):
@@ -273,28 +297,42 @@ def build(args):
 
     # ---- 2 updates available -----------------------------------------------------
     el.append(Paragraph("2&nbsp;&nbsp;Updates available", h2))
-    rows = [["Library", "Installed", "Latest", "Detail", "Status"]]
-    shade = {}
-    for c, p in sorted(beyond, key=lambda cp: (cp[0].get("name") or "").lower()):
-        shade[len(rows)] = SEV2
-        rows.append([
-            Paragraph(esc(c.get("name")), cell),
-            Paragraph(esc(c.get("version")), cell),
-            Paragraph(f"<b>{esc(p.get('quickbird:currency:latest', '?'))}</b>", cell),
-            Paragraph(esc(p.get("quickbird:currency:detail", "beyond limit")), small),
-            Paragraph("No decision recorded.", cell),
-        ])
-    for c, p in sorted(within, key=lambda cp: (cp[0].get("name") or "").lower()):
-        rows.append([
-            Paragraph(esc(c.get("name")), cell),
-            Paragraph(esc(c.get("version")), cell),
-            Paragraph(esc(p.get("quickbird:currency:latest", "?")), cell),
-            Paragraph("within limits", small),
-            Paragraph("no decision required", small),
-        ])
-    if len(rows) == 1:
-        rows.append([Paragraph("none", small)] + [Paragraph("", small)] * 4)
-    el.append(table(rows, [44 * mm, 22 * mm, 22 * mm, 44 * mm, 38 * mm], shade))
+    upd_groups = {}
+    for c, p in beyond:
+        upd_groups.setdefault(group_of(c), {"beyond": [], "within": []})["beyond"].append((c, p))
+    for c, p in within:
+        upd_groups.setdefault(group_of(c), {"beyond": [], "within": []})["within"].append((c, p))
+    if not upd_groups:
+        el.append(Paragraph("none", small))
+    sec = 0
+    for gname in GROUP_ORDER:
+        g = upd_groups.get(gname)
+        if not g:
+            continue
+        sec += 1
+        el.append(Paragraph(
+            f"2.{sec}&nbsp;&nbsp;{esc(gname)} — {len(g['beyond'])} beyond the limit, "
+            f"{len(g['within'])} within", h3))
+        rows = [["Library", "Installed", "Latest", "Detail", "Status"]]
+        shade = {}
+        for c, p in sorted(g["beyond"], key=lambda cp: (cp[0].get("name") or "").lower()):
+            shade[len(rows)] = SEV2
+            rows.append([
+                Paragraph(esc(c.get("name")), cell),
+                Paragraph(esc(c.get("version")), cell),
+                Paragraph(f"<b>{esc(p.get('quickbird:currency:latest', '?'))}</b>", cell),
+                Paragraph(esc(p.get("quickbird:currency:detail", "beyond limit")), small),
+                Paragraph("No decision recorded.", cell),
+            ])
+        for c, p in sorted(g["within"], key=lambda cp: (cp[0].get("name") or "").lower()):
+            rows.append([
+                Paragraph(esc(c.get("name")), cell),
+                Paragraph(esc(c.get("version")), cell),
+                Paragraph(esc(p.get("quickbird:currency:latest", "?")), cell),
+                Paragraph("within limits", small),
+                Paragraph("no decision required", small),
+            ])
+        el.append(table(rows, [44 * mm, 22 * mm, 22 * mm, 44 * mm, 38 * mm], shade))
 
     # ---- 3 libraries with CVEs -----------------------------------------------------
     el.append(Paragraph("3&nbsp;&nbsp;Libraries with CVEs", h2))
@@ -306,51 +344,74 @@ def build(args):
         groups.append((mx, kev, name, version, g))
     groups.sort(key=lambda x: (-int(x[1]), -x[0], x[2] or ""))
     CAP = 50
-    rows = [["Library", "Severity", "CVEs", "Fixed in", "VEX", "Status"]]
-    shade = {}
-    for mx, kev, name, version, g in groups[:CAP]:
-        vs = sorted(g["vulns"], key=lambda v: -(cvss_of(v) or -1))
-        c = g["comp"]
-        p = props(c)
-        art = p.get("quickbird:component:artifact", "").replace("quickbird:artifact:", "")
-        art = art.split(", ")[0]
-        lib = esc(f"{name} @ {version}")
-        if art:
-            lib += f"<br/><font color='#5b6472' size='6.5'>in {esc(art)}</font>"
-        sev = ("KEV" if kev else f"CVSS {mx:.1f}" if mx >= 0 else "unscored")
-        sev_col = "#b91c1c" if (kev or mx >= 9) else "#b45309" if mx >= 7 or mx < 0 else "#5b6472"
-        ids = ", ".join(link(v.get("id"), (v.get("source") or {}).get("url")) for v in vs[:3])
-        if len(vs) > 3:
-            ids += f' <font color="#5b6472">and {len(vs) - 3} further</font>'
-        fx = sorted({f for v in vs
-                     for f in (props(v).get("quickbird:vuln:fix-versions", "") or "").split(", ")
-                     if f})
-        fstates = {props(v).get("quickbird:vuln:fix", "?") for v in vs}
-        if fx:
-            fixed = f"<b>{esc(fx[-1])}</b>"
-        elif fstates == {"none-published"}:
-            fixed = '<font color="#b45309"><b>no fix published</b></font>'
-        else:
-            fixed = "—"
-        vex = next((esc((v.get("analysis") or {}).get("state")) for v in vs
-                    if v.get("analysis")), "—")
-        due = min((props(v).get("quickbird:finding:mitigation-due", "") or
-                   props(v).get("quickbird:finding:remediation-due", "") for v in vs),
-                  default="")[:10]
-        track = props(vs[0]).get("quickbird:finding:track", "")
-        status = "No decision recorded."
-        if due:
-            status += f" Mitigation due {due} ({track})."
-        shade[len(rows)] = SEV2 if (kev or mx >= 9) else SEV1
-        rows.append([
-            Paragraph(lib, cell),
-            Paragraph(f'<font color="{sev_col}"><b>{esc(sev)}</b></font>', cell),
-            Paragraph(ids, small),
-            Paragraph(fixed, cell),
-            Paragraph(vex, cell),
-            Paragraph(status, small),
-        ])
-    el.append(table(rows, [34 * mm, 16 * mm, 42 * mm, 22 * mm, 14 * mm, 42 * mm], shade))
+    cve_groups = {}
+    for item in groups[:CAP]:
+        cve_groups.setdefault(group_of(item[4]["comp"]), []).append(item)
+    if not groups:
+        el.append(Paragraph("none", small))
+    sec = 0
+    for gname in GROUP_ORDER:
+        items = cve_groups.get(gname)
+        if not items:
+            continue
+        sec += 1
+        el.append(Paragraph(
+            f"3.{sec}&nbsp;&nbsp;{esc(gname)} — {len(items)} "
+            f"{'library' if len(items) == 1 else 'libraries'}", h3))
+        rows = [["Library", "Severity", "CVEs", "Fixed in", "VEX", "Status"]]
+        shade = {}
+        for mx, kev, name, version, g in items:
+            vs = sorted(g["vulns"], key=lambda v: -(cvss_of(v) or -1))
+            c = g["comp"]
+            p = props(c)
+            art = p.get("quickbird:component:artifact", "").replace("quickbird:artifact:", "")
+            art = art.split(", ")[0]
+            lib = esc(f"{name} @ {version}")
+            if art:
+                lib += f"<br/><font color='#5b6472' size='6.5'>in {esc(art)}</font>"
+            sev = ("KEV" if kev else f"CVSS {mx:.1f}" if mx >= 0 else "unscored")
+            sev_col = "#b91c1c" if (kev or mx >= 9) else "#b45309" if mx >= 7 or mx < 0 else "#5b6472"
+            def epss_num(v):
+                try:
+                    return float(props(v).get("quickbird:finding:epss", ""))
+                except ValueError:
+                    return -1
+            epss = max((epss_num(v) for v in vs), default=-1)
+            sev_txt = f'<font color="{sev_col}"><b>{esc(sev)}</b></font>'
+            if epss >= 0:
+                sev_txt += f"<br/><font color='#5b6472' size='6.5'>EPSS {epss:.2f}</font>"
+            ids = ", ".join(link(v.get("id"), (v.get("source") or {}).get("url")) for v in vs[:3])
+            if len(vs) > 3:
+                ids += f' <font color="#5b6472">and {len(vs) - 3} further</font>'
+            fx = sorted({f for v in vs
+                         for f in (props(v).get("quickbird:vuln:fix-versions", "") or "").split(", ")
+                         if f})
+            fstates = {props(v).get("quickbird:vuln:fix", "?") for v in vs}
+            if fx:
+                fixed = f"<b>{esc(fx[-1])}</b>"
+            elif fstates == {"none-published"}:
+                fixed = '<font color="#b45309"><b>no fix published</b></font>'
+            else:
+                fixed = "—"
+            vex = next((esc((v.get("analysis") or {}).get("state")) for v in vs
+                        if v.get("analysis")), "—")
+            due = min((props(v).get("quickbird:finding:mitigation-due", "") or
+                       props(v).get("quickbird:finding:remediation-due", "") for v in vs),
+                      default="")[:10]
+            track = props(vs[0]).get("quickbird:finding:track", "")
+            status = "No decision recorded."
+            if due:
+                status += f" Mitigation due {due} ({track})."
+            shade[len(rows)] = SEV2 if (kev or mx >= 9) else SEV1
+            rows.append([
+                Paragraph(lib, cell),
+                Paragraph(sev_txt, cell),
+                Paragraph(ids, small),
+                Paragraph(fixed, cell),
+                Paragraph(vex, cell),
+                Paragraph(status, small),
+            ])
+        el.append(table(rows, [34 * mm, 16 * mm, 42 * mm, 22 * mm, 14 * mm, 42 * mm], shade))
     if len(groups) > CAP:
         el.append(Paragraph(
             f"… {len(groups) - CAP} further libraries with open CVEs, itemised in the "
@@ -358,31 +419,45 @@ def build(args):
 
     # ---- 4 stale and unmaintained ---------------------------------------------------
     el.append(Paragraph("4&nbsp;&nbsp;Stale and unmaintained", h2))
-    rows = [["Library", "Installed = latest", "Detail", "Registry status", "Status"]]
-    shade = {}
-    for c, p in sorted(deprecated, key=lambda cp: (cp[0].get("name") or "").lower()):
-        shade[len(rows)] = SEV2
-        rows.append([
-            Paragraph(esc(c.get("name")), cell),
-            Paragraph(esc(c.get("version")), cell),
-            Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
-            Paragraph('<font color="#b91c1c"><b>deprecated</b></font>', cell),
-            Paragraph("No decision recorded.", cell),
-        ])
     if not deprecated:
-        rows.append([Paragraph("declared deprecated / unmaintained: none detected", small),
-                     Paragraph("", small), Paragraph("", small), Paragraph("", small),
-                     Paragraph("", small)])
-    for c, p in sorted(stale, key=lambda cp: (cp[0].get("name") or "").lower()):
-        shade[len(rows)] = SEV1
-        rows.append([
-            Paragraph(esc(c.get("name")), cell),
-            Paragraph(esc(c.get("version")), cell),
-            Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
-            Paragraph("active flag not set", small),
-            Paragraph("No decision recorded.", cell),
-        ])
-    el.append(table(rows, [44 * mm, 26 * mm, 44 * mm, 26 * mm, 30 * mm], shade))
+        el.append(Paragraph("Declared deprecated / unmaintained: none detected.", small))
+    stale_groups = {}
+    for c, p in deprecated:
+        stale_groups.setdefault(group_of(c), {"dep": [], "stale": []})["dep"].append((c, p))
+    for c, p in stale:
+        stale_groups.setdefault(group_of(c), {"dep": [], "stale": []})["stale"].append((c, p))
+    if not stale_groups:
+        el.append(Paragraph("No library on its latest version has exceeded the staleness "
+                            "window.", small))
+    sec = 0
+    for gname in GROUP_ORDER:
+        g = stale_groups.get(gname)
+        if not g:
+            continue
+        sec += 1
+        el.append(Paragraph(f"4.{sec}&nbsp;&nbsp;{esc(gname)} — {len(g['dep']) + len(g['stale'])}",
+                            h3))
+        rows = [["Library", "Installed = latest", "Detail", "Registry status", "Status"]]
+        shade = {}
+        for c, p in sorted(g["dep"], key=lambda cp: (cp[0].get("name") or "").lower()):
+            shade[len(rows)] = SEV2
+            rows.append([
+                Paragraph(esc(c.get("name")), cell),
+                Paragraph(esc(c.get("version")), cell),
+                Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
+                Paragraph('<font color="#b91c1c"><b>deprecated</b></font>', cell),
+                Paragraph("No decision recorded.", cell),
+            ])
+        for c, p in sorted(g["stale"], key=lambda cp: (cp[0].get("name") or "").lower()):
+            shade[len(rows)] = SEV1
+            rows.append([
+                Paragraph(esc(c.get("name")), cell),
+                Paragraph(esc(c.get("version")), cell),
+                Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
+                Paragraph("active flag not set", small),
+                Paragraph("No decision recorded.", cell),
+            ])
+        el.append(table(rows, [44 * mm, 26 * mm, 44 * mm, 26 * mm, 30 * mm], shade))
 
     # ---- 5 remediation actions ----------------------------------------------------
     el.append(Paragraph("5&nbsp;&nbsp;Remediation actions", h2))
