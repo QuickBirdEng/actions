@@ -1,4 +1,4 @@
-# Goes into <product>/.github/workflows/soup-sbom.yml — WI §7 stage #3.
+# Goes into <product>/.github/workflows/soup-sbom.yml — WI: Process stage #3.
 #
 # Two triggers, and the reason for each:
 #

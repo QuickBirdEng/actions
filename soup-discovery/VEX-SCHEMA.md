@@ -74,7 +74,7 @@ and pretending otherwise would be the more dangerous design.
 
 **`under_investigation` expires.** It is a holding state, not a resting state — if it is
 still `under_investigation` when the finding's mitigation deadline elapses, it reverts to
-`affected` and alerts (see WI §5, rule 0). Without that rule
+`affected` and alerts (see WI: Classification of a finding, rule 0). Without that rule
 `under_investigation` becomes the mute button `not_affected` was designed not to be.
 
 **Scope — the approval is a version *family*, not a version.** The record's `version` field

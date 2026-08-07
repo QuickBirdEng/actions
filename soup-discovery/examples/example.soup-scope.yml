@@ -3,7 +3,7 @@
 # Every candidate `discover.sh` finds must appear below, in `include:` or in `exclude:`, each with a
 # reason. A candidate in neither list stops the run: without that rule, "not listed" and "deliberately
 # excluded" look identical in the document, and the inventory can no longer claim to be complete
-# (WI §4.1, BSI TR-03161 O.TrdP_1).
+# (WI: Scope of the product, BSI TR-03161 O.TrdP_1).
 #
 # Ids are per artefact, not per component. The same image can therefore be in scope where it is shipped
 # and out of scope where it is only a developer convenience, and neither decision contradicts the other.

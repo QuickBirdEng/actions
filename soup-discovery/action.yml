@@ -318,7 +318,7 @@ runs:
       if: ${{ inputs.do-access-key != '' && steps.store.outputs.dir != '' }}
       # Pinned to an exact release: this action publishes no moving major tag, so `@v2` does not
       # resolve. Its newest release is v2.0.146 from 2024-02-12, which is over two years old and
-      # would be an obsolescence finding under WI §4.3 if it were a product dependency. The existing
+      # would be an obsolescence finding under WI: Currency and obsolescence if it were a product dependency. The existing
       # upload-artifact-qb action in this repository uses `@latest` for the same upload, which is
       # worth revisiting separately.
       uses: BetaHuhn/do-spaces-action@v2.0.146

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Maintenance release windows (WI §6.2).
+"""Maintenance release windows (WI: The maintenance window).
 
 Track 3 remediation is "next regular release", which is not a date. Turning it into one used
 to be attempted from the *observed* release rhythm, and that does not work: three of four
@@ -17,7 +17,7 @@ window on that grid. Three properties matter:
 
 2. **A missed window does not move the grid.** It advances from the missed due date, not from
    whenever a release eventually happens — otherwise not releasing buys time, which is the
-   receding deadline that WI §5's latching exists to prevent.
+   receding deadline that WI: Classification of a finding's latching exists to prevent.
 
 3. **An early release resets the grid.** The maintenance was done; the next window counts from
    the actual release.

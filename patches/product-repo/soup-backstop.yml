@@ -1,4 +1,4 @@
-# Goes into <product>/.github/workflows/soup-backstop.yml — WI §7 stage #7.
+# Goes into <product>/.github/workflows/soup-backstop.yml — WI: Process stage #7.
 #
 # The reconciliation: what did NOT happen. Days without a record, breaches without a decision,
 # expired risk acceptances, missed maintenance windows, and parameters that changed between runs.
@@ -11,7 +11,7 @@ name: SOUP Backstop
 
 on:
   schedule:
-    # Quarterly for tier Extended, annually for Basic (WI §4.2). Set one, delete the other.
+    # Quarterly for tier Extended, annually for Basic (WI: Service level). Set one, delete the other.
     - cron: '0 7 1 1,4,7,10 *'    # Extended: 1 January, April, July, October
     # - cron: '0 7 15 1 *'        # Basic: 15 January
 

@@ -1,4 +1,4 @@
-# Periodic backstop reconciliation (WI §7).
+# Periodic backstop reconciliation (WI: Process).
 #
 # The one procedure that reads the whole evidence history rather than producing a record. It needs
 # the durable store, not the workflow artifacts: those are kept for 90 days, and an annual backstop
