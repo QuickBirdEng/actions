@@ -70,7 +70,7 @@ if [[ -n "$ESCALATION" && -f "$ESCALATION" ]]; then
     {
       [[ -s "$ALERT" ]] && echo ""
       [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT: missed remediation deadlines*" && echo ""
-      echo ":alarm_clock: *Deadlines*: $BR breached, $UD breached with no valid decision on record:"
+      echo ":alarm_clock: *Deadlines*: $BR breached, $UD past the decision period with nothing on record:"
       jq -r '.escalations[] | select(.level=="undecided" or .level=="breached")
              | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' "$ESCALATION"
       [[ "$UD" != "0" ]] && echo "_The work instruction requires a recorded decision in .soup-decisions.yml: a revised date, or a risk acceptance._"

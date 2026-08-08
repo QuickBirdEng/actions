@@ -156,8 +156,8 @@ def main():
                 overdue_wd = working_days_between(due, now)
                 dec = decisions.get(f["id"])
                 if dec:
-                    detail.append(f"{clock} breached {overdue_wd} working day(s) ago; "
-                                  f"decision on record: {dec.get('decision','?')}")
+                    detail.append(f"{clock} breached {overdue_wd} working day(s) ago. "
+                                  f"Decision on record: {dec.get('decision','?')}")
                 elif overdue_wd > decision_window:
                     level = UNDECIDED
                     detail.append(f"{clock} breached {overdue_wd} working days ago and no "
