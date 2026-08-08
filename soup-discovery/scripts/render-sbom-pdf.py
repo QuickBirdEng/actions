@@ -185,13 +185,13 @@ def build(bundle, bundle_path, out_path):
 
     el = []
     el.append(Paragraph(
-        f"Software Bill of Materials — {esc(root.get('name'))} "
+        f"Software Bill of Materials: {esc(root.get('name'))} "
         f"<font face='Courier'>{esc(root.get('version'))}</font>", h1))
     el.append(Paragraph("Component inventory of this build", small))
     el.append(Spacer(1, 4))
     tier_col = {"CANDIDATE": ACCENT, "STAGING": MUTED, "BRANCH": WARN}.get(tier, MUTED)
     comp_txt = ('<font color="#15803d"><b>COMPLETE</b></font>' if complete == "true"
-                else f'<font color="#b91c1c"><b>INCOMPLETE — {len(gaps)} gap(s)</b></font>')
+                else f'<font color="#b91c1c"><b>INCOMPLETE: {len(gaps)} gap(s)</b></font>')
     el.append(Paragraph(
         f'<font color="{tier_col.hexval() if hasattr(tier_col, "hexval") else "#5b6472"}">'
         f'<b>{esc(tier)}</b></font> &nbsp;·&nbsp; {comp_txt}', body))
@@ -248,13 +248,13 @@ def build(bundle, bundle_path, out_path):
             name = esc(c.get("name")) + (' <font color="#5b6472">(image)</font>' if is_img else "")
             supplier = (c.get("supplier") or {}).get("name")
             lic = license_of(c)
-            sup_txt = esc(supplier) if supplier else "—"
+            sup_txt = esc(supplier) if supplier else "n/a"
             if lic:
                 sup_txt += f'<br/><font color="#5b6472">{esc(lic)}</font>'
             ident = c.get("purl") or p.get("quickbird:scan:target", "").replace("registry:", "")
             fam = p.get("quickbird:soup:approved-family", "")
             who, when = approver.get(c.get("bom-ref"), (None, ""))
-            rec = f"{esc(fam)}" if fam else "—"
+            rec = f"{esc(fam)}" if fam else "n/a"
             if who:
                 rec += f" · {esc(who)}<br/><font color='#5b6472'>{esc(when)}</font>"
             rows.append([
@@ -270,7 +270,7 @@ def build(bundle, bundle_path, out_path):
     el.append(Paragraph("2&nbsp;&nbsp;Transitive and operating-system components", h2))
     el.append(Paragraph(
         f"{len(rest)} components. Via names the shortest path from the direct dependency "
-        f"(or the top-level package of an image) that pulls the component in; — where the "
+        f"(or the top-level package of an image) that pulls the component in. n/a where the "
         f"lockfile carries no graph.", small))
     rev = build_reverse_graph(bundle)
     names = {c.get("bom-ref"): (c.get("name") or "") for c in components}
@@ -299,9 +299,9 @@ def build(bundle, bundle_path, out_path):
             rows.append([
                 Paragraph(name, cell),
                 Paragraph(esc(c.get("version")), cell),
-                Paragraph(esc(c.get("purl") or "—"), small),
-                Paragraph(esc(via) if via else "—", small),
-                Paragraph(esc(arts) or "—", small),
+                Paragraph(esc(c.get("purl") or "n/a"), small),
+                Paragraph(esc(via) if via else "n/a", small),
+                Paragraph(esc(arts) or "n/a", small),
             ])
         # chunked so reportlab lays out many small tables instead of one huge one;
         # each chunk repeats the header exactly as a page break would
@@ -351,7 +351,7 @@ def build(bundle, bundle_path, out_path):
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(MUTED)
         canvas.drawString(20 * mm, 8 * mm,
-                          f"SBOM Report — {root.get('name')} {root.get('version')}")
+                          f"SBOM Report: {root.get('name')} {root.get('version')}")
         canvas.drawRightString(190 * mm, 8 * mm, f"Page {doc_.page}")
         canvas.restoreState()
 

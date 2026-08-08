@@ -303,7 +303,7 @@ def main():
         elif follow:
             unit["state"] = "waiting-on-vendor"
             unit["state_detail"] = (
-                f"requested from the vendor on {req.get('requested')}; following up "
+                f"requested from the vendor on {req.get('requested')}, following up "
                 f"{req.get('follow_up')}. Not a breach — the fix is on their release schedule, "
                 f"and this is on record.")
         else:

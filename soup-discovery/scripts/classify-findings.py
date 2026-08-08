@@ -380,7 +380,7 @@ def main():
                         out[f"{clock}_overdue"] = now > due
                         out[f"{clock}_basis"] = (
                             f"maintenance window {due.date().isoformat()} "
-                            f"(every {iv}d; earliest window at least {floor_days}d after "
+                            f"(every {iv}d, earliest window at least {floor_days}d after "
                             f"discovery)")
                     else:
                         out[f"{clock}_basis"] = (

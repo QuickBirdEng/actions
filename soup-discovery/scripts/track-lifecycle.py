@@ -139,7 +139,7 @@ def main():
             rec["release_required_why"] = "remediation deadline already breached and the fix is not live"
         elif rec["release_required"]:
             rec["release_required_why"] = (
-                f"{f.get('track')} fix is staged but not deployed; remediation due "
+                f"{f.get('track')} fix is staged but not deployed. Remediation due "
                 f"{(f.get('remediation_due') or '')[:10]}"
             )
 

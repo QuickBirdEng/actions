@@ -37,7 +37,7 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
     jq -r '.kev_findings[] |
       "• *\(.cve)*  in `\(.target)` @ \(.version)\n" +
       "   in CISA KEV since \(.kev_date_added // "unknown date")" +
-      (if .kev_uncertain then " (membership could not be established — treated as KEV)" else "" end) +
+      (if .kev_uncertain then " (membership could not be established, treated as KEV)" else "" end) +
       (if .ransomware then "  · known ransomware use" else "" end) +
       (if .epss then "  · EPSS \(.epss)" else "" end) +
       "\n   component: \((.components // []) | join(", ") | .[0:120])"' "$RECORD"

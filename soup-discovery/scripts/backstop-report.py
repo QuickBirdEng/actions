@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Periodic backstop reconciliation (§6.3, WI: Service level).
+"""Periodic backstop reconciliation (WI: Service level).
 
 The backstop exists because automation fails silently. Everything else in this pipeline
 reports what it found; this one reports what it *did not* find, which is the failure mode
@@ -101,7 +101,7 @@ def production_deploys(repo):
             return None, None, []
         envs = sorted({str(x.get("env") or "?") for x in rows})
         prod_rows = [x for x in rows if PRODUCTION_ENV_RX.search(str(x.get("env") or ""))]
-        suffix = " (environment list unavailable; read from the newest 100 records only)"
+        suffix = " (environment list unavailable, read from the newest 100 records only)"
     else:
         envs = sorted(str(e.get("name")) for e in envs_doc if e.get("name"))
         prod_envs = [e for e in envs if PRODUCTION_ENV_RX.search(e)]
@@ -124,13 +124,13 @@ def production_deploys(repo):
     tagged = [x["at"] for x in prod_rows
               if x.get("at") and TAG_REF_RX.match(str(x.get("ref") or ""))]
     if not tagged:
-        return ([], f"{len(prod_rows)} production deployment(s), none from a tag — the newest ref "
+        return ([], f"{len(prod_rows)} production deployment(s), none from a tag. The newest ref "
                     f"is {prod_rows[0].get('ref')!r}, which is not an application release{suffix}",
                 envs)
     dropped = len(prod_rows) - len(tagged)
     basis = f"production deployments from a tag{suffix}"
     if dropped:
-        basis += f" ({dropped} non-tag production record(s) ignored — not application releases)"
+        basis += f" ({dropped} non-tag production record(s) ignored, not application releases)"
     return tagged, basis, envs
 
 
@@ -210,7 +210,7 @@ def main():
         rs = sorted(runs.get(product, []), key=lambda r: r[0])
         if not rs:
             coverage.append({"product": product, "runs": 0, "status": "never-scanned",
-                             "detail": "no monitoring record in the window — the product "
+                             "detail": "no monitoring record in the window. The product "
                                        "produced no alerts because nothing looked at it"})
             continue
 
@@ -240,7 +240,7 @@ def main():
                     "detail": (f"{field} changed during the window: "
                                + " -> ".join(f"{v} ({a.date().isoformat()})" for a, v in seen)
                                + ". This value is agreed with the customer in the SLA and "
-                                 "copied into the product repo; confirm the change followed a "
+                                 "copied into the product repo. Confirm the change followed a "
                                  "change to the contract and was reviewed."),
                 })
 
@@ -256,7 +256,7 @@ def main():
         detail = f"{len(rs)} run(s), last {days_since}d ago"
         if days_since > args.max_gap:
             status = "stale"
-            detail = f"last run {days_since}d ago — the monitor is not running"
+            detail = f"last run {days_since}d ago. The monitor is not running"
         elif gaps:
             status = "gaps"
             detail = f"{len(gaps)} gap(s) longer than {args.max_gap}d in the window"
@@ -292,8 +292,8 @@ def main():
             dates, basis, envs = production_deploys(repo)
             if dates is None:
                 cadence.append({"product": product, "declared": interval, "status": "unknown",
-                                "detail": f"could not read the deployment records for {repo} — "
-                                          f"not knowing whether the maintenance windows were met "
+                                "detail": f"could not read the deployment records for {repo}. "
+                                          f"Not knowing whether the maintenance windows were met "
                                           f"is not the same as them having been met",
                                 "environments": envs})
             elif not dates:
@@ -307,7 +307,7 @@ def main():
                                           f"deployment records do not show a production release: "
                                           f"{basis}. Either this product deploys under a different "
                                           f"environment name, or its production deploys are not "
-                                          f"recorded as GitHub deployments — both are worth fixing, "
+                                          f"recorded as GitHub deployments. Both are worth fixing, "
                                           f"because this is the same record that answers what is "
                                           f"running.",
                                 "counted": basis, "environments": envs})
@@ -317,7 +317,7 @@ def main():
                 origin_basis = "last production deployment from a tag"
                 if onboarded and newest and onboarded > newest:
                     origin = onboarded
-                    origin_basis = ("onboarding date — windows that elapsed before monitoring "
+                    origin_basis = ("onboarding date. Windows that elapsed before monitoring "
                                     "existed are history, not breaches")
                 missed, nxt = window_grid(origin, iv, now)
                 since = max(0, (now - newest).days) if newest else None
@@ -326,7 +326,7 @@ def main():
                         f"commits to maintenance every {interval}; {len(missed)} window(s) "
                         f"missed since {origin.date().isoformat()} (last was "
                         f"{missed[-1].date().isoformat()}). One decision is required about the "
-                        f"release, not one per finding — every open Track 3/4 finding was due in "
+                        f"release, not one per finding. Every open Track 3/4 finding was due in "
                         f"a window that did not happen")
                 else:
                     status, detail = "holds", (

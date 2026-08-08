@@ -191,7 +191,7 @@ def build(args):
 
     el = []
     el.append(Paragraph(
-        f"Dependency &amp; Vulnerability Report — {esc(root.get('name'))}", h1))
+        f"Dependency &amp; Vulnerability Report: {esc(root.get('name'))}", h1))
     el.append(Paragraph(
         f"Assessment of <b>{esc(root.get('version'))}</b>, dated <b>{esc(date)}</b>", small))
     el.append(Spacer(1, 6))
@@ -213,13 +213,13 @@ def build(args):
 
     def clocks(t):
         d = tr.get(t) or {}
-        return f"{d.get('mitigation', '—')} / {d.get('remediation', '—')}"
+        return f"{d.get('mitigation', 'n/a')} / {d.get('remediation', 'n/a')}"
 
     next_win = (windows.get("next_window") or "")[:10]
     rules = [
         ("Update limit (currency)",
          f"at most {mb.get('major', 0)} major / {mb.get('minor', 1)} minor behind the "
-         f"latest release; patch drift {mb.get('patch', 'unlimited')}",
+         f"latest release, patch drift {mb.get('patch', 'unlimited')}",
          "dependency_currency" in project_keys),
         ("Staleness window",
          f"no upstream release for > {policy.get('dependency_currency', {}).get('stale_after', '12m')} "
@@ -247,7 +247,7 @@ def build(args):
          "breach" in project_keys),
         ("Notification threshold",
          f"new findings of severity {policy.get('alerts', {}).get('threshold', 'high')} "
-         f"and above; breaches and KEV always",
+         f"and above. Breaches and KEV always",
          "alerts" in project_keys),
     ]
     rows = [["Rule", "Value", "Source"]]
@@ -257,7 +257,7 @@ def build(args):
     el.append(Spacer(1, 6))
     el.append(Paragraph(
         "<b>Applied rules.</b> Values marked <font color='#1f4e79'><b>config</b></font> come "
-        "from the product configuration (.soup-policy.yml); values marked default are the "
+        "from the product configuration (.soup-policy.yml). Values marked default are the "
         "process defaults that apply because the configuration does not override them.", small))
     el.append(table(rows, [46 * mm, 106 * mm, 18 * mm]))
 
@@ -316,8 +316,8 @@ def build(args):
         (str(len(stale) + len(deprecated)), "stale or deprecated", WARN),
         (f"{n_kev} / {n_overdue}", "KEV / deadlines overdue",
          GOOD if (n_kev + n_overdue) == 0 else BAD),
-        (f"{n_findings} → {n_units if n_units is not None else '—'}",
-         "findings → remediation actions (§5)", INK),
+        (f"{n_findings} \u2192 {n_units if n_units is not None else 'n/a'}",
+         "findings \u2192 remediation actions", INK),
     ]
     trow = [[Paragraph(
         f'<font color="{c.hexval().replace("0x", "#") if hasattr(c, "hexval") else "#16181d"}" size="11"><b>{esc(n)}</b></font><br/>'
@@ -449,9 +449,9 @@ def build(args):
             elif fstates == {"none-published"}:
                 fixed = '<font color="#b45309"><b>no fix published</b></font>'
             else:
-                fixed = "—"
+                fixed = "n/a"
             vex = next((esc((v.get("analysis") or {}).get("state")) for v in vs
-                        if v.get("analysis")), "—")
+                        if v.get("analysis")), "n/a")
             due = min((props(v).get("quickbird:finding:mitigation-due", "") or
                        props(v).get("quickbird:finding:remediation-due", "") for v in vs),
                       default="")[:10]
@@ -536,7 +536,7 @@ def build(args):
             Paragraph(esc(u.get("action", ""))[:220], small),
             Paragraph(f'<font color="{tcol}"><b>{esc(track)}</b></font>', cell),
             Paragraph(str(u.get("finding_count", "")), cell),
-            Paragraph(esc((u.get("mitigation_due") or "")[:10] or "—"), cell),
+            Paragraph(esc((u.get("mitigation_due") or "")[:10] or "n/a"), cell),
             Paragraph(esc((u.get("remediation_due") or "")[:10] or "next window"), cell),
             Paragraph(esc(status), small),
         ])
@@ -551,7 +551,7 @@ def build(args):
         f"<font face='Courier'>{esc(args.bundle.split('/')[-1])}</font> "
         f"(SHA-256 <font face='Courier'>{sha[:16]}…</font>). Statements in this document are "
         f"valid as of the assessment date stated in the header. Recorded decisions are read "
-        f"from .soup-decisions.yml and the SOUP records; classification and deadlines follow "
+        f"from .soup-decisions.yml and the SOUP records. Classification and deadlines follow "
         f"the rules stated above. Related documents: SBOM Report "
         f"{esc(root.get('version'))} · SOUP approval records (.soups/). This is a record "
         f"according to the quality management system of QuickBird Medical.", small))
@@ -566,7 +566,7 @@ def build(args):
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(MUTED)
         canvas.drawString(20 * mm, 8 * mm,
-                          f"Dependency & Vulnerability Report — {root.get('name')} "
+                          f"Dependency & Vulnerability Report: {root.get('name')} "
                           f"{root.get('version')} · {date}")
         canvas.drawRightString(190 * mm, 8 * mm, f"Page {doc_.page}")
         canvas.restoreState()

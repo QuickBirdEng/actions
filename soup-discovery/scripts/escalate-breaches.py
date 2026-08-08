@@ -107,7 +107,7 @@ def main():
     ap.add_argument("--decisions", help=".soup-decisions.yml")
     ap.add_argument("--policy")
     ap.add_argument("--units", help="group-remediation.py output. With it, escalation happens "
-                                    "per remediation action rather than per finding — which is "
+                                    "per remediation action rather than per finding, which is "
                                     "the whole point of WI: What carries the timeframe: one decision, not hundreds")
     ap.add_argument("--lead", default="7d", help="how long before a deadline to start warning")
     ap.add_argument("--out", default="-")
@@ -161,9 +161,9 @@ def main():
                 elif overdue_wd > decision_window:
                     level = UNDECIDED
                     detail.append(f"{clock} breached {overdue_wd} working days ago and no "
-                                  f"decision is recorded — WI: Decide required one within {decision_window}")
+                                  f"decision is recorded. WI: Decide required one within {decision_window}")
                 else:
-                    detail.append(f"{clock} breached; a documented decision is required within "
+                    detail.append(f"{clock} breached. A documented decision is required within "
                                   f"{decision_window - overdue_wd} more working day(s)")
             elif due - now <= lead:
                 level = APPROACHING
