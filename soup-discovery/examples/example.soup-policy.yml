@@ -8,9 +8,9 @@ product: my-product
 
 # tier, cra_scope and maintenance_interval are agreed with the customer in the SLA and copied here.
 # They are not determined in this repository — do not reason them out. Changing one of them changes a
-# real obligation, which is why this file is owned in CODEOWNERS and why the backstop reports when any
+# real obligation, which is why this file is owned in CODEOWNERS and why the reconciliation reports when any
 # of them moves between runs.
-tier: Basic                 # Basic | Extended — sets the backstop interval and caps the interval below
+tier: Basic                 # Basic | Extended. Sets the reconciliation interval and caps the interval below
 
 # true | false | unknown. Whether the Cyber Resilience Act reporting obligations apply, which is a
 # determination per product and system boundary. `unknown` makes the alert say so; assuming `false` is
