@@ -850,10 +850,10 @@ test_classify_high_plus_high_epss_is_immediate() {
   assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "3"
 }
 
-test_classify_missing_cvss_is_expedited_not_low() {
+test_classify_missing_cvss_is_planned_not_low() {
   mkpolicy; mkvuln GHSA-x null false null
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
-  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "expedited" || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "planned" || return 1
   assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "9"
 }
 

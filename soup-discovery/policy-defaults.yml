@@ -43,10 +43,10 @@ tracks:
     # justified by a risk none of them carried.
     mitigation: 14d
     remediation: 30d
-  expedited:              # CVSS 7.0-8.9, or Medium + EPSS >= 0.10, or unscored
+  expedited:              # CVSS 7.0-8.9, or Medium + EPSS >= 0.10
     mitigation: 30d
     remediation: next-release
-  planned:                # CVSS 4.0-6.9, or Low + EPSS >= 0.10
+  planned:                # CVSS 4.0-6.9, or Low + EPSS >= 0.10, or unscored
     # No mitigation clock. It stood at 30d over 196 findings on one product, and "mitigate a
     # medium" in practice meant writing a document. A control that only produces paper costs
     # the attention the critical findings need.

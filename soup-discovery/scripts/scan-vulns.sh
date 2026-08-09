@@ -122,7 +122,7 @@ while IFS= read -r id; do
   if [[ ! -s "$f" ]]; then
     # An advisory that could not be fetched is still a finding — OSV reported the id for a
     # component we ship. Dropping it here silently shrank the list; instead it is carried
-    # unscored, which classifies as rule 9 (no CVSS -> expedited) until a later run scores it.
+    # unscored, which classifies as rule 9 (no CVSS -> planned) until a later run scores it.
     echo "::warning::could not fetch advisory $id after retries — carried unscored, not dropped" >&2
     jq -n --arg id "$id" '{osv_id:$id, aliases:[], summary:"advisory could not be fetched — carried unscored",
                            severity:[], db_severity:null, severity_via:null, fixes:[]}' >> "$TMP/vulns.jsonl"

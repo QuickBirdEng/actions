@@ -227,7 +227,7 @@ def build(args):
          "dependency_currency" in project_keys),
         ("Vulnerability classification",
          f"KEV → {clocks('kev')} · CVSS ≥ 9.0 → {clocks('immediate')} · "
-         f"7.0–8.9 → {clocks('expedited')} · below → next window · unscored → treated as High",
+         f"7.0–8.9 → {clocks('expedited')} · below → next window · unscored → Planned until scored",
          "tracks" in project_keys),
         ("EPSS escalation",
          f"≥ {policy.get('epss', {}).get('elevated', 0.1)} escalates one band · "
@@ -332,7 +332,7 @@ def build(args):
     el.append(Paragraph(
         f"CVEs by severity: <font color='#b91c1c'><b>{n_crit} Critical</b></font> · "
         f"<font color='#b45309'><b>{n_high} High</b></font> · {n_med} Medium · {n_low} Low · "
-        f"{n_unscored} unscored (treated as High, per the classification rules above). "
+        f"{n_unscored} unscored (Planned until scored, per the classification rules above). "
         f"Fix availability: "
         f"<b>{fixes.count('available')} with a published fix</b> · "
         f"{fixes.count('none-published')} without · "
