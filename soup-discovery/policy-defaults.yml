@@ -136,25 +136,17 @@ dependency_currency:
   # SOUP records already use in grq-3 ("Is maintained and support is available").
   stale_after: 12m
 
-# WI: Service level. Tier drives the reconciliation cadence and caps the maintenance commitment.
+# WI: Service level. How often the reconciliation runs and reports what did not happen.
 #
-# The tier is NOT decided here or in the project policy: it follows from the customer's SLA,
-# which is also where the Basic/Extended vocabulary comes from (GDG-004-01). Deliberately without
-# a companion reference field — a pointer to a contract version held in YAML goes stale the first
-# time the SLA is amended and then asserts a provenance that no longer holds. The controls are the
-# CODEOWNERS review on the project file and the reconciliation reporting a tier that changes between
-# runs.
-tiers:
-  Basic:
-    backstop: annual
-    # The tier caps the *commitment*, not each finding's deadline. A product may promise
-    # maintenance more often than this; it may not promise less often. Capping the commitment
-    # rather than the individual deadline is what stopped the old model from generating one
-    # risk acceptance per finding on any product that releases slowly.
-    max_maintenance_interval: 90d
-  Extended:
-    backstop: quarterly
-    max_maintenance_interval: 60d
+# Like maintenance_interval, this follows from the customer's SLA and is not determined here.
+# Deliberately without a companion reference field: a pointer to a contract version held in YAML
+# goes stale the first time the SLA is amended and then asserts a provenance that no longer holds.
+# The controls are the CODEOWNERS review on the project file and the reconciliation reporting a
+# value that changes between runs.
+#
+# The schedule that actually fires is the cron in the product's reconciliation workflow. This
+# value is what the product committed to, so a drifting schedule is visible against it.
+reconciliation_interval: 12m
 
 # Which findings reach Slack. Everything below the threshold goes to the report and the
 # overview only. KEV is unconditional and is not subject to this.

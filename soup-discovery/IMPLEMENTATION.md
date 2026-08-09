@@ -25,7 +25,7 @@ Reusable workflow| Triggered by the caller on | Does
 ---|---|---  
 soup-sbom.yml | `workflow_run` of the product's release workflow, completed and successful; `workflow_dispatch` with a tag | WI-006-09, Inventory, via the `soup-discovery` action.  
 soup-kev-monitor.yml | `schedule`, daily at a per-product minute; `workflow_dispatch` | WI-006-09, Observe, via the `kev-monitor` action.  
-soup-backstop.yml | `schedule`, quarterly or annually by tier; `workflow_dispatch` with a window | WI-006-09, Reconcile. Reads the period's records back out of the object store.  
+soup-backstop.yml | `schedule`, matching the product's `reconciliation_interval`; `workflow_dispatch` with a window | WI-006-09, Reconcile. Reads the period's records back out of the object store.  
   
 Each of the three can be started manually, and each has a reason to be: to produce the inventory of a version released before the workflow existed, to reproduce a run whose record is questioned, and to reconcile a period on demand.
 
@@ -65,7 +65,7 @@ track-lifecycle.py| Today's findings against yesterday's record: new, breached, 
 escalate-breaches.py| Breaches per remediation unit, with the decision deadline of WI-006-09, Decide.  
 compose-alert.sh| The notification. Four independent blocks, so a non-KEV breach is notified even when there is no KEV finding.  
 backstop-report.py| WI-006-09, Reconcile. Production deployments per repository, maintenance windows, expired risk acceptances, and drift in the parameters of WI-006-09, Scope of the product and Service level.  
-validate-policy.sh| Merge project configuration onto the defaults. Refuses a missing required parameter, an interval above the tier cap, a loosened value without a reason, and the two configurations TR-03161 forbids (WI-006-09, BSI TR-03161).  
+validate-policy.sh| Merge project configuration onto the defaults. Refuses a missing required parameter, an interval that is not a duration, a loosened value without a reason, and the two configurations TR-03161 forbids (WI-006-09, BSI TR-03161).  
 render-sbom-pdf.py| The SBOM report: composition only, direct dependencies with supplier/licence and record, every transitive/OS component with its via-path and containing artefact, scanned artefacts with digests; sections subdivided by platform. One per release; contains nothing that ages.  
 render-vdr-pdf.py| The Dependency & Vulnerability Report: the dated assessment against the configured rules, applied-rules block with config/default source, updates beyond and within the limits, CVEs per library with EPSS, via-path, fixed-in and VEX, stale/deprecated, remediation actions; sections subdivided by platform. Rows shaded by decision state.  
   
@@ -119,9 +119,9 @@ Defaults ship as `soup-discovery/policy-defaults.yml`. A project sets only what 
 Key| Default| Note  
 ---|---|---  
 product| —| Required.  
-tier| —| Required. `Basic` | `Extended`.  
 cra_scope| unknown| Required to be stated explicitly.  
-maintenance_interval| 90d| Capped by the tier; the cap cannot be waived.  
+maintenance_interval| —| Required. No upper bound is enforced.  
+reconciliation_interval| 12m| How often the reconciliation runs. The cron in the product caller has to match it.  
 regulatory_scope| []| `tr-03161-1|-2|-3`, `cra`, `mdr`. An unknown entry fails the run.  
 tracks.<track>.mitigation  
 tracks.<track>.remediation | WI-006-09, Timeframes| `none`, a duration, or `next-release`.  

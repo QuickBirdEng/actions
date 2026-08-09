@@ -6,7 +6,7 @@
 
 product: customer-operated-product
 
-tier: Extended
+reconciliation_interval: 3m
 cra_scope: true
 regulatory_scope: []
 
@@ -20,8 +20,8 @@ tracks:
       maintenance window. Mitigation stays at 72 h because publishing the advisory and a compensating
       control is entirely within our control.
 
-# Extended tier caps this at 60d, and a customer-operated product is where that matters: an operator
-# running an older installation is not reached by our next deploy.
+# A customer-operated product is where a short commitment matters: an operator running an older
+# installation is not reached by our next deploy.
 maintenance_interval: 60d
 
 onboarded: ""

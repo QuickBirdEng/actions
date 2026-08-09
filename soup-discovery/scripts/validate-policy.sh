@@ -45,7 +45,7 @@ warn() { echo "::warning::$*" >&2; }
 # A typo in an override is worse than a missing one: `mitigaton:` simply does nothing, the
 # operator believes a stricter value applies, and no error ever says otherwise. Everything
 # a project may set is named here; anything else fails.
-KNOWN_TOP='["process_version","product","tier","cra_scope","regulatory_scope","maintenance_interval","onboarded","baseline_clocks_start","epss","tracks","breach","production_release","dependency_currency","alerts","release_cadence"]'
+KNOWN_TOP='["process_version","product","cra_scope","regulatory_scope","maintenance_interval","reconciliation_interval","onboarded","baseline_clocks_start","epss","tracks","breach","production_release","dependency_currency","alerts","release_cadence"]'
 UNKNOWN=$(jq -r --argjson known "$KNOWN_TOP" 'keys - $known | join(", ")' <<<"$P")
 [[ -n "$UNKNOWN" ]] && err "$POLICY: unknown key(s): $UNKNOWN — a misspelled override silently does nothing, so unknown keys are refused"
 for spec in \
@@ -65,7 +65,7 @@ U=$(jq -r '.tracks // {} | keys - ["kev","immediate","expedited","planned","moni
 [[ -n "$U" ]] && err "$POLICY: unknown track(s): $U — the tracks are kev, immediate, expedited, planned, monitor"
 
 # --- required fields ---------------------------------------------------------
-for f in product tier cra_scope maintenance_interval; do
+for f in product cra_scope maintenance_interval; do
   # `has` and an explicit null test, not `// ""`. jq's alternative operator treats `false`
   # as absent, so `cra_scope: false` — the value most products will set — would have been
   # reported as missing.
@@ -73,13 +73,8 @@ for f in product tier cra_scope maintenance_interval; do
     || err "$POLICY: '$f' is required and has no safe default"
 done
 
-TIER=$(jq -r '.tier // ""' <<<"$P")
-if [[ -n "$TIER" ]] && ! jq -e --arg t "$TIER" '.tiers[$t]' <<<"$D" >/dev/null 2>&1; then
-  err "$POLICY: tier '$TIER' is not one of: $(jq -r '.tiers | keys | join(", ")' <<<"$D")"
-fi
-
-# tier, cra_scope and maintenance_interval are agreed with the customer in the SLA and written
-# here — they are not determined by this process. Deliberately NOT accompanied by a reference
+# cra_scope, maintenance_interval and reconciliation_interval are agreed with the customer in
+# the SLA and written here. They are not determined by this process. Deliberately NOT accompanied by a reference
 # field: a pointer to a contract version in a YAML file goes stale the first time the SLA is
 # amended, and then it asserts a provenance that no longer holds, which is worse than none. The
 # controls that actually work here are the CODEOWNERS review on this file and the backstop
@@ -92,9 +87,9 @@ case "$CRA" in
 esac
 [[ "$CRA" == "unknown" ]] && warn "$POLICY: cra_scope is 'unknown'. Alerts will say so rather than assume. Determine it before 2026-09-11."
 
-# --- maintenance interval vs the tier cap ------------------------------------
-# A commitment looser than the tier allows is the one override that cannot be waived with a
-# reason: the tier *is* the statement about how often this product is maintained.
+# --- the two SLA intervals must be durations ---------------------------------
+# No upper bound is enforced. What a product commits to is the SLA's business, and a value that
+# is too loose is caught by the CODEOWNERS review on this file rather than by a rule here.
 to_days() {
   case "$1" in
     ""|null) echo "-1" ;;
@@ -105,19 +100,14 @@ to_days() {
     *)       echo "$1" ;;
   esac
 }
-MI=$(jq -r '.maintenance_interval // ""' <<<"$P")
-if [[ -n "$MI" ]]; then
-  MI_D=$(to_days "$MI")
-  if [[ "$MI_D" == "-99" || "$MI_D" -le 0 ]]; then
-    err "$POLICY: maintenance_interval '$MI' is not a duration (e.g. 90d, 3m)"
-  elif [[ -n "$TIER" ]]; then
-    CAP=$(jq -r --arg t "$TIER" '.tiers[$t].max_maintenance_interval // ""' <<<"$D")
-    CAP_D=$(to_days "$CAP")
-    if [[ "$CAP_D" -gt 0 && "$MI_D" -gt "$CAP_D" ]]; then
-      err "$POLICY: maintenance_interval $MI exceeds the cap for tier $TIER ($CAP). Either commit to maintenance at least every $CAP, or move the product to a tier whose cap it meets — this is not waivable with a reason, because the tier is the statement about how often the product is maintained."
-    fi
+for f in maintenance_interval reconciliation_interval; do
+  V=$(jq -r --arg f "$f" '.[$f] // ""' <<<"$P")
+  [[ -z "$V" ]] && continue
+  V_D=$(to_days "$V")
+  if [[ "$V_D" == "-99" || "$V_D" -le 0 ]]; then
+    err "$POLICY: $f '$V' is not a duration (e.g. 90d, 3m)"
   fi
-fi
+done
 
 # release_cadence was the previous, observation-based field. It set a deadline from a rhythm
 # that had already lapsed on most products, so it is replaced rather than kept alongside:
@@ -241,15 +231,12 @@ EFFECTIVE=$(jq -n --argjson d "$D" --argjson p "$P" '
            else .[$k] = $b[$k] end);
   deepmerge($d; $p)
   | . as $m
-  | .max_maintenance_interval = (($m.tiers[$m.tier].max_maintenance_interval) // null)
-  | .backstop = (($m.tiers[$m.tier].backstop) // null)
-  | del(.tiers)
   | . + {schema: "quickbird.soup-policy/v1"}')
 
 echo "$EFFECTIVE"
 
 if [[ $STATUS -eq 0 ]]; then
-  jq -r '"policy ok: \(.product) · tier \(.tier) · CRA \(.cra_scope) · maintenance every \(.maintenance_interval) · backstop \(.backstop)"' <<<"$EFFECTIVE" >&2
+  jq -r '"policy ok: \(.product) · CRA \(.cra_scope) · maintenance every \(.maintenance_interval) · reconciliation every \(.reconciliation_interval)"' <<<"$EFFECTIVE" >&2
 else
   echo "::error::policy validation failed — the effective policy above is what *would* apply; it must not be used until the errors are fixed" >&2
 fi

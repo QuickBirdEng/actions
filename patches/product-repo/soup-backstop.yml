@@ -11,14 +11,14 @@ name: SOUP Backstop
 
 on:
   schedule:
-    # Quarterly for tier Extended, annually for Basic (WI: Service level). Set one, delete the other.
-    - cron: '0 7 1 1,4,7,10 *'    # Extended: 1 January, April, July, October
-    # - cron: '0 7 15 1 *'        # Basic: 15 January
+    # Must match the product's reconciliation_interval (WI: Service level). Set one, delete the other.
+    - cron: '0 7 1 1,4,7,10 *'    # every 3m: 1 January, April, July, October
+    # - cron: '0 7 15 1 *'        # every 12m: 15 January
 
   workflow_dispatch:
     inputs:
       window:
-        description: 'Days of history to reconcile. 92 for Extended, 366 for Basic.'
+        description: 'Days of history to reconcile. Match reconciliation_interval, e.g. 92 for 3m, 366 for 12m.'
         required: false
         default: '92'
         type: string

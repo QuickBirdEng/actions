@@ -8,7 +8,7 @@
 # absence, so the expectation has to come from outside the products.
 
 # No trigger here on purpose — see soup-kev-monitor.yml. The product caller owns the schedule
-# (annually for tier Basic, quarterly for Extended) and the manual trigger.
+# (matching the product's reconciliation_interval) and the manual trigger.
 
 name: SOUP Backstop
 
@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       window:
-        description: 'Days of history to reconcile. 366 for tier Basic, 92 for Extended.'
+        description: 'Days of history to reconcile. Match the product'\''s reconciliation_interval, e.g. 366 for 12m, 92 for 3m.'
         required: false
         type: number
         default: 366

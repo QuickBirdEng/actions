@@ -218,13 +218,13 @@ def main():
         days_since = (now - last_at).days
 
         # --- QMS determinations that changed under us ----------------------------
-        # Decided 2026-08-03: tier and cra_scope stay in the product repo, protected by
-        # CODEOWNERS. That is a review control, and a review control is only as good as the
-        # branch protection behind it — so the evidence store gets a detection to go with it.
-        # Both values move a real obligation: tier caps the maintenance commitment and sets the
-        # backstop interval, cra_scope decides whether a KEV alert says a 24-hour reporting
-        # clock is running. A change is not necessarily wrong; going unnoticed is.
-        for field in ("tier", "cra_scope", "maintenance_interval"):
+        # Decided 2026-08-03: the SLA values stay in the product repo, protected by CODEOWNERS.
+        # That is a review control, and a review control is only as good as the branch protection
+        # behind it, so the evidence store gets a detection to go with it. Each of these moves a
+        # real obligation: the two intervals move every Track 3/4 deadline and the reconciliation
+        # cadence, cra_scope decides whether a KEV alert says a 24-hour reporting clock is
+        # running. A change is not necessarily wrong. Going unnoticed is.
+        for field in ("cra_scope", "maintenance_interval", "reconciliation_interval"):
             seen = []
             for at, rec, _ in rs:
                 val = rec.get(field)

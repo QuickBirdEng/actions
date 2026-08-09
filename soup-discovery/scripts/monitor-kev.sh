@@ -41,7 +41,7 @@ POLICY_JSON=""
 if [[ -f "$POLICY_FILE" ]]; then
   if POLICY_JSON=$(bash "$HERE/validate-policy.sh" "$POLICY_FILE" 2>/dev/null); then
     [[ -z "$CRA_SCOPE" ]] && CRA_SCOPE=$(jq -r '.cra_scope | tostring' <<<"$POLICY_JSON")
-    log "policy: $(jq -r '"\(.product) · tier \(.tier) · CRA \(.cra_scope)"' <<<"$POLICY_JSON")"
+    log "policy: $(jq -r '"\(.product) · CRA \(.cra_scope)"' <<<"$POLICY_JSON")"
   else
     # An invalid policy is not a reason to fall back to defaults quietly — the defaults
     # might be exactly what the project meant to override.
@@ -287,7 +287,7 @@ jq -n \
   --arg cadence "$(jq -r '.release_cadence // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg interval "$(jq -r '.maintenance_interval // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg onboarded "$(jq -r '.onboarded // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
-  --arg tier "$(jq -r '.tier // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
+  --arg recon "$(jq -r '.reconciliation_interval // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --argjson prodrel "$(jq -c '.production_release // null' <<<"${POLICY_JSON:-{\}}" 2>/dev/null || echo null)" \
   --argjson classified "$CLASSIFIED" \
   --argjson lifecycle "$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -c '{summary, release_required, transitions}' "$LIFECYCLE" || echo null )" \
@@ -307,7 +307,7 @@ jq -n \
      # classifier lands every Track 3/4 finding on the next one.
      maintenance_interval: ($interval | blank_to_null),
      onboarded: ($onboarded | blank_to_null),
-     tier: ($tier | blank_to_null),
+     reconciliation_interval: ($recon | blank_to_null),
      # Which releases this product counts as production. Three signals answer that and they
      # disagree on most of the portfolio, so the backstop must not pick one on its own —
      # cadence, and every Track 3/4 deadline derived from it, depends on the answer.

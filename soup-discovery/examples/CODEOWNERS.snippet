@@ -6,8 +6,8 @@
 # What is being protected, concretely. Without an owner on .soup-policy.yml, a one-line change
 # moves a real obligation:
 #
-#   tier: Extended -> Basic     the maintenance commitment cap goes from 60 to 90 days and the
-#                               backstop drops from quarterly to annual
+#   maintenance_interval        every Track 3/4 remediation deadline moves with it, because the
+#   60d -> 180d                 deadline is the next window on that grid
 #   cra_scope: true -> false    the KEV alert stops saying that a 24-hour reporting clock is
 #                               running (CRA reporting obligations apply from 2026-09-11)
 #
@@ -19,7 +19,7 @@
 # "Require review from Code Owners" enabled. Without that, the file assigns reviewers and
 # nothing enforces them. Check it per repo.
 
-# --- QMS determinations: tier and cra_scope ---------------------------------
+# --- QMS determinations: the SLA values and cra_scope -----------------------
 .soup-policy.yml        @QuickBirdEng/qm
 
 # --- risk acceptances, revised deadlines, vendor requests (§3.3, §3.5.1) ----

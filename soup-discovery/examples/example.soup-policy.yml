@@ -6,11 +6,12 @@
 
 product: my-product
 
-# tier, cra_scope and maintenance_interval are agreed with the customer in the SLA and copied here.
+# cra_scope, maintenance_interval and reconciliation_interval are agreed with the customer in the
+# SLA and copied here.
 # They are not determined in this repository — do not reason them out. Changing one of them changes a
 # real obligation, which is why this file is owned in CODEOWNERS and why the reconciliation reports when any
 # of them moves between runs.
-tier: Basic                 # Basic | Extended. Sets the reconciliation interval and caps the interval below
+reconciliation_interval: 12m  # how often the reconciliation reports what did not happen
 
 # true | false | unknown. Whether the Cyber Resilience Act reporting obligations apply, which is a
 # determination per product and system boundary. `unknown` makes the alert say so; assuming `false` is
@@ -26,8 +27,8 @@ regulatory_scope: []
 
 # WI: The maintenance window — the maintenance commitment. Not an observation of how often this product has released, but
 # a promise: a maintenance release happens at least this often. Every open Track 3/4 finding lands on
-# the next window, so a missed window is one decision about a release rather than one per finding. The
-# tier caps how loose this may be (Basic 90d, Extended 60d) and that cap cannot be waived.
+# the next window, so a missed window is one decision about a release rather than one per finding. No
+# upper bound is enforced here: what the product commits to is the SLA's business.
 maintenance_interval: 90d
 
 # WI: Onboarding — both deliberately without a default, because a default would hand this product a baseline

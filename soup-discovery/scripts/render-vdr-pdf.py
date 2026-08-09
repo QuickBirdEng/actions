@@ -237,8 +237,8 @@ def build(args):
          f"a maintenance release at least every {policy.get('maintenance_interval', '?')}"
          + (f"; next window {next_win}" if next_win else ""),
          "maintenance_interval" in project_keys),
-        ("Service tier / CRA scope",
-         f"{policy.get('tier', '?')} ({policy.get('backstop', '?')} reconciliation) · "
+        ("Reconciliation / CRA scope",
+         f"every {policy.get('reconciliation_interval', '?')} · "
          f"CRA scope {policy.get('cra_scope', '?')}",
          True),
         ("Decision period after a breach",

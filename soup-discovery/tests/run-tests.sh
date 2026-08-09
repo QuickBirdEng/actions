@@ -548,7 +548,7 @@ test_enrichment_records_feed_provenance() {
 }
 
 # ---------------------------------------------------------------- policy
-pol() { printf 'product: p\ntier: Basic\ncra_scope: %s\nmaintenance_interval: 90d\n%s' "$1" "${2:-}" > "$TMP/pol.yml"; }
+pol() { printf 'product: p\ncra_scope: %s\nmaintenance_interval: 90d\n%s' "$1" "${2:-}" > "$TMP/pol.yml"; }
 
 # Regression: the required-field check used jq's `//`, which treats false as absent, so
 # `cra_scope: false` — the value most products will set — was reported as missing.
@@ -559,7 +559,7 @@ test_policy_accepts_cra_scope_false() {
 }
 
 test_policy_requires_cadence() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\n' > "$TMP/pol2.yml"
+  printf 'product: p\ncra_scope: false\n' > "$TMP/pol2.yml"
   bash "$S/validate-policy.sh" "$TMP/pol2.yml" >/dev/null 2>&1
   assert "$?" "1"
 }
@@ -588,17 +588,16 @@ test_policy_rejects_raised_epss_without_reason() {
   assert "$?" "1"
 }
 
-test_policy_resolves_tier_defaults() {
+test_policy_resolves_the_reconciliation_default() {
   pol "true"
   local out; out=$(bash "$S/validate-policy.sh" "$TMP/pol.yml" 2>/dev/null)
-  assert "$(jq -r '.backstop' <<<"$out")" "annual" || return 1
-  assert "$(jq -r '.max_maintenance_interval' <<<"$out")" "90d"
+  assert "$(jq -r '.reconciliation_interval' <<<"$out")" "12m"
 }
 
 # ---------------------------------------------------------------- classifier
 CLS() { python3 "$S/classify-findings.py" "$@"; }
 
-mkpolicy() { printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nalerts:\n  threshold: %s\n' "${1:-high}" > "$TMP/cp.yml"
+mkpolicy() { printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nalerts:\n  threshold: %s\n' "${1:-high}" > "$TMP/cp.yml"
              bash "$S/validate-policy.sh" "$TMP/cp.yml" 2>/dev/null > "$TMP/cp.json"; }
 
 mkvuln() { # <id> <cvss-vector|null> <kev|null> <epss|null> [vex-state] [justification]
@@ -646,7 +645,7 @@ mkimg() {  # <built-iso>
                    properties:[{name:"quickbird:scan:image-created",value:$b},
                                {name:"quickbird:scan:image-digest",value:"index.docker.io/x@sha256:abc"}]}]}' \
     > "$TMP/ia-bom.json"
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/ia-pol.yml"
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/ia-pol.yml"
   bash "$S/validate-policy.sh" "$TMP/ia-pol.yml" 2>/dev/null > "$TMP/ia-pol.json"
   python3 "$S/check-currency.py" "$TMP/ia-bom.json" "$TMP/ia-pol.json" --soups "$TMP/nosoups" \
     --out "$TMP/ia.json" --now 2026-08-04T00:00:00+00:00 >/dev/null 2>&1 || return 1
@@ -1109,7 +1108,7 @@ mkalert() {
 # no evidence that the product was monitored, indistinguishable from a clean day.
 test_monitor_writes_a_record_when_optional_policy_fields_are_blank() {
   rm -rf "$TMP/mrec"; mkdir -p "$TMP/mrec"
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nonboarded: ""\n' \
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nonboarded: ""\n' \
     > "$TMP/mrec/.soup-policy.yml"
   jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
           metadata:{component:{name:"p","bom-ref":"p",type:"application"},
@@ -1369,21 +1368,21 @@ test_vendor_escalation_is_per_action_not_per_finding() {
   assert "$(jq -r '.escalations[0].escalating_findings | length' "$TMP/ve.json")" "2"
 }
 
-# The 2026-08-03 decision keeps tier and cra_scope in the product repo behind CODEOWNERS. That
+# The 2026-08-03 decision keeps the SLA values in the product repo behind CODEOWNERS. That
 # is a review control, and it is only as strong as the branch protection behind it — so a change
 # to either must also be detectable from the evidence store afterwards.
 test_backstop_detects_a_changed_determination() {
   rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
-  for spec in 2026-07-01:Extended:true 2026-08-01:Basic:false; do
+  for spec in 2026-07-01:3m:true 2026-08-01:12m:false; do
     d="${spec%%:*}"; r="${spec#*:}"
     jq -n --arg d "${d}T06:00:00+00:00" --arg t "${r%%:*}" --arg c "${r##*:}" \
       '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",run_at:$d,
-        tier:$t,cra_scope:$c,synthetic:false,scanned:[{name:"x",version:"1"}],
+        reconciliation_interval:$t,cra_scope:$c,synthetic:false,scanned:[{name:"x",version:"1"}],
         not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-$d.json"
   done
   python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
     --now 2026-08-03T06:00:00+00:00 --out "$TMP/bd.json" >/dev/null 2>&1
-  assert "$(jq -r '[.determination_drift[].field] | sort | join(",")' "$TMP/bd.json")" "cra_scope,tier" || return 1
+  assert "$(jq -r '[.determination_drift[].field] | sort | join(",")' "$TMP/bd.json")" "cra_scope,reconciliation_interval" || return 1
   # drift alone must make the verdict action-required
   assert "$(jq -r '.verdict' "$TMP/bd.json")" "action-required"
 }
@@ -1394,7 +1393,7 @@ test_backstop_stable_determinations_are_silent() {
   for d in 2026-07-01 2026-08-01; do
     jq -n --arg d "${d}T06:00:00+00:00" \
       '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",run_at:$d,
-        tier:"Basic",cra_scope:"false",synthetic:false,scanned:[{name:"x",version:"1"}],
+        cra_scope:"false",synthetic:false,scanned:[{name:"x",version:"1"}],
         not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-$d.json"
   done
   python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
@@ -1508,14 +1507,14 @@ test_backstop_unreadable_releases_are_unknown_not_holding() {
 }
 
 # A changed maintenance_interval moves every Track 3/4 deadline, so it belongs in the same drift
-# detection as tier and cra_scope.
+# detection as cra_scope.
 test_backstop_detects_a_changed_maintenance_commitment() {
   rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
   for spec in 2026-07-01:60d 2026-08-01:90d; do
     d="${spec%%:*}"
     jq -n --arg d "${d}T06:00:00+00:00" --arg i "${spec##*:}" \
       '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",run_at:$d,
-        tier:"Basic",cra_scope:"false",maintenance_interval:$i,synthetic:false,
+        cra_scope:"false",maintenance_interval:$i,synthetic:false,
         scanned:[{name:"x",version:"1"}],not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-$d.json"
   done
   python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
@@ -1527,12 +1526,12 @@ test_backstop_detects_a_changed_maintenance_commitment() {
 # it. The process default tolerates unlimited patch drift, which does not meet that. A regulatory
 # scope entry that only appeared in prose would be a requirement nobody applies.
 test_policy_tr03161_requires_a_patch_limit() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-3]\n' \
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-3]\n' \
     > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/tr.txt" && return 1
   grep -q "O.TrdP_2" "$TMP/tr.txt" || return 1
   # with a patch limit stated, it passes
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-3]\ndependency_currency:\n  max_behind:\n    patch: 1\n' \
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-3]\ndependency_currency:\n  max_behind:\n    patch: 1\n' \
     > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
 }
@@ -1540,7 +1539,7 @@ test_policy_tr03161_requires_a_patch_limit() {
 # O.TrdP_8: third-party software that is no longer maintained MUST NOT be used, so accepting
 # obsolescence with a reason is not available for a product in that scope.
 test_policy_tr03161_forbids_accepting_obsolescence() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-1]\ndependency_currency:\n  max_behind:\n    patch: 1\n  obsolescence_may_be_accepted: true\n' \
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-03161-1]\ndependency_currency:\n  max_behind:\n    patch: 1\n  obsolescence_may_be_accepted: true\n' \
     > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>"$TMP/tr.txt" && return 1
   grep -q "O.TrdP_8" "$TMP/tr.txt"
@@ -1548,7 +1547,7 @@ test_policy_tr03161_forbids_accepting_obsolescence() {
 
 # A regime nobody defined must not pass silently.
 test_policy_rejects_an_unknown_regulatory_scope() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-99999]\n' \
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nregulatory_scope: [tr-99999]\n' \
     > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
   assert "$?" "1"
@@ -1556,24 +1555,30 @@ test_policy_rejects_an_unknown_regulatory_scope() {
 
 # A product with no regulatory scope keeps the process default.
 test_policy_no_regulatory_scope_keeps_the_default() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1 || return 1
   assert "$(bash "$S/validate-policy.sh" "$TMP/pol.yml" 2>/dev/null | jq -r '.dependency_currency.max_behind.patch')" "unlimited"
 }
 
 test_policy_rejects_a_non_duration_maintenance_interval() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: whenever\n' > "$TMP/pol.yml"
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: whenever\n' > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
   assert "$?" "1"
 }
 
-# The tier is the statement about how often a product is maintained, so a commitment looser
-# than the tier allows is the one override that cannot be waived with a reason.
-test_policy_rejects_an_interval_looser_than_the_tier_allows() {
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 180d\n' > "$TMP/pol.yml"
-  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1 && return 1
-  printf 'product: p\ntier: Basic\ncra_scope: false\nmaintenance_interval: 45d\n' > "$TMP/pol.yml"
+# No upper bound is enforced on the commitment. What a product promises is the SLA's business;
+# the control is the CODEOWNERS review, not a rule here. Both values still have to be durations.
+test_policy_accepts_any_maintenance_interval() {
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 180d\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1 || return 1
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 45d\n' > "$TMP/pol.yml"
   bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
+}
+
+test_policy_rejects_a_non_duration_reconciliation_interval() {
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nreconciliation_interval: soon\n' > "$TMP/pol.yml"
+  bash "$S/validate-policy.sh" "$TMP/pol.yml" >/dev/null 2>&1
+  assert "$?" "1"
 }
 
 # The distinction that flips the answer: alvie published six releases in 90 days and reads
@@ -2358,7 +2363,7 @@ test_discover_distinguishes_equal_basenames() {
 
 # Regression: a typo in an override silently did nothing.
 test_policy_rejects_unknown_keys() {
-  printf 'product: x\ntier: Basic\ncra_scope: unknown\nmaintenance_interval: 90d\ntracks:\n  immediate:\n    mitigaton: 1d\n' > "$TMP/typo.yml"
+  printf 'product: x\ncra_scope: unknown\nmaintenance_interval: 90d\ntracks:\n  immediate:\n    mitigaton: 1d\n' > "$TMP/typo.yml"
   bash "$S/validate-policy.sh" "$TMP/typo.yml" >/dev/null 2>&1
   assert "$?" "1"
 }
@@ -2472,7 +2477,7 @@ test_net_fix_or_vex_blocks_known_vulnerable_version() {
 }
 
 # ---------------------------------------------------------------- run
-printf 'product: t\ntier: Basic\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/cpol.yml"
+printf 'product: t\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/cpol.yml"
 bash "$S/validate-policy.sh" "$TMP/cpol.yml" 2>/dev/null > "$TMP/cp.json"
 
 echo "SOUP pipeline tests${FILTER:+ (filter: $FILTER)}"
