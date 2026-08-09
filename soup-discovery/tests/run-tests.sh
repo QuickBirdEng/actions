@@ -1435,6 +1435,59 @@ mkrun() { jq -n --arg p "$1" --arg at "${2}T09:00:00+00:00" --arg v "$3" --argjs
   '{schema:"quickbird.kev-monitor-run/v1",product:$p,run_at:$at,verdict:$v,synthetic:$syn}' \
   > "$TMP/ev/${2}-$1${5:-}.json"; }
 
+# The reconciliation's own schedule is a cron set by hand in each product's workflow, so it can
+# drift away from what the product promised without anything noticing. The only way to see it is
+# to look at when the previous reconciliation happened.
+mkrecon() { mkdir -p "$TMP/prev"; jq -n --arg d "${1}T06:00:00+00:00" \
+  '{schema:"quickbird.backstop-report/v1",generated_at:$d}' > "$TMP/prev/r-$1.json"; }
+mkrun_recon() { jq -n --arg d "${2}T06:00:00+00:00" --arg p "$1" --arg r "$3" \
+  '{schema:"quickbird.kev-monitor-run/v1",product:$p,repo:"QuickBirdEng/nope",run_at:$d,
+    reconciliation_interval:$r,synthetic:false,scanned:[{name:"x",version:"1"}],
+    not_scanned:[],kev_findings:[]}' > "$TMP/ev/$1-$2.json"; }
+
+test_backstop_reconciliation_overdue_against_the_commitment() {
+  rm -rf "$TMP/ev" "$TMP/prev"; mkdir -p "$TMP/ev"
+  mkrun_recon p1 2026-08-02 3m
+  mkrecon 2025-06-01
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 400 --previous "$TMP/prev" \
+    --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.reconciliation_cadence[0].status' "$TMP/bs.json")" "overdue" || return 1
+  assert "$(jq -r '.verdict' "$TMP/bs.json")" "action-required"
+}
+
+test_backstop_reconciliation_on_time_is_silent() {
+  rm -rf "$TMP/ev" "$TMP/prev"; mkdir -p "$TMP/ev"
+  mkrun_recon p1 2026-08-02 3m
+  mkrecon 2026-07-15
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 100 --previous "$TMP/prev" \
+    --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.reconciliation_cadence[0].status' "$TMP/bs.json")" "ok" || return 1
+  assert "$(jq -r '.summary.reconciliation_overdue' "$TMP/bs.json")" "0"
+}
+
+# Without the earlier reports the question cannot be answered, and saying so beats assuming
+# the schedule is right.
+test_backstop_reconciliation_without_history_says_so() {
+  rm -rf "$TMP/ev" "$TMP/prev"; mkdir -p "$TMP/ev"
+  mkrun_recon p1 2026-08-02 3m
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 100 \
+    --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.reconciliation_cadence[0].status' "$TMP/bs.json")" "first" || return 1
+  assert "$(jq -r '.summary.reconciliation_overdue' "$TMP/bs.json")" "0"
+}
+
+# A window shorter than the promised period leaves part of it unread, which is a different
+# fault from firing too rarely and has to be named separately.
+test_backstop_reconciliation_window_shorter_than_the_commitment() {
+  rm -rf "$TMP/ev" "$TMP/prev"; mkdir -p "$TMP/ev"
+  mkrun_recon p1 2026-08-02 12m
+  mkrecon 2026-07-20
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --previous "$TMP/prev" \
+    --out "$TMP/bs.json" --now 2026-08-02T18:00:00+00:00 >/dev/null 2>&1
+  assert "$(jq -r '.reconciliation_cadence[0].status' "$TMP/bs.json")" "short-window" || return 1
+  assert "$(jq -r '.verdict' "$TMP/bs.json")" "action-required"
+}
+
 # The finding a daily alert can never produce: a product that stopped being scanned emits
 # no alerts at all, which is indistinguishable from a product with nothing wrong.
 test_backstop_catches_a_product_that_stopped_being_scanned() {

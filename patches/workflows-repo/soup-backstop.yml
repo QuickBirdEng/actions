@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       window:
-        description: 'Days of history to reconcile. Match the product'\''s reconciliation_interval, e.g. 366 for 12m, 92 for 3m.'
+        description: 'Days of history to reconcile. Match the product''s reconciliation_interval, e.g. 366 for 12m, 92 for 3m.'
         required: false
         type: number
         default: 366
@@ -64,6 +64,19 @@ jobs:
           done
           echo "fetched $(ls -1 evidence | wc -l) run record(s)"
 
+          # The earlier reconciliation reports, so this run can tell whether it fired as often as
+          # the products promised. Their schedule is a cron set by hand, and without the earlier
+          # reports nothing compares it against reconciliation_interval.
+          mkdir -p previous
+          for year in $YEARS; do
+            aws s3 sync \
+              "s3://quickbird-artifacts/${{ github.event.repository.name }}/soup-backstop/$year/" \
+              "previous/" \
+              --endpoint-url https://fra1.digitaloceanspaces.com \
+              --only-show-errors || true
+          done
+          echo "fetched $(ls -1 previous | wc -l) earlier report(s)"
+
       - name: Resolve the report path
         id: path
         run: echo "out-dir=${{ github.event.repository.name }}/soup-backstop/$(date +%Y)" >> "$GITHUB_OUTPUT"
@@ -74,6 +87,7 @@ jobs:
           python3 .github/soup/backstop-report.py evidence \
             --products '${{ inputs.products }}' \
             --window '${{ inputs.window }}' \
+            --previous previous \
             --out backstop-report.json
         continue-on-error: true
 

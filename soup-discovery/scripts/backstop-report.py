@@ -6,7 +6,7 @@ reports what it found; this one reports what it *did not* find, which is the fai
 a daily alert cannot surface — a product that stopped being scanned produces no alerts at
 all, and that is indistinguishable from a product with nothing wrong.
 
-Four questions, in order of how badly a wrong answer would hurt:
+Five questions, in order of how badly a wrong answer would hurt:
 
   1. Was every product actually scanned, and how recently? A gap in the record is the
      finding. Silence is not evidence.
@@ -17,12 +17,17 @@ Four questions, in order of how badly a wrong answer would hurt:
      deadlines are derived from it (WI: The maintenance window). Needs the release history, which comes from
      GitHub rather than the evidence store — the run record carries the repo name and the
      declared cadence so this can be checked without every project's policy file.
+  5. Did this reconciliation itself happen as often as the product promised? The schedule that
+     fires is a cron set by hand in each product's workflow, so it can drift away from
+     `reconciliation_interval` without anything noticing. Needs the earlier reports, which is
+     what --previous is for.
 
 Reads the evidence store — the dated run records the monitor writes — rather than
 recomputing anything. If a run never happened there is nothing to recompute, and that
 absence is precisely what this is looking for.
 
-Usage: backstop-report.py <evidence-dir> [--products a,b] [--window 90] [--out f]
+Usage: backstop-report.py <evidence-dir> [--products a,b] [--window 90]
+                          [--previous <dir of earlier reports>] [--out f]
 """
 
 import argparse
@@ -179,6 +184,8 @@ def main():
     ap.add_argument("--window", type=int, default=90, help="days of history to reconcile")
     ap.add_argument("--max-gap", type=int, default=2,
                     help="days between runs before the cadence counts as broken")
+    ap.add_argument("--previous", help="directory of earlier reconciliation reports. Without it "
+                                       "the run cannot tell whether it fired as often as promised")
     ap.add_argument("--out", default="-")
     ap.add_argument("--now")
     args = ap.parse_args()
@@ -204,7 +211,21 @@ def main():
     products = sorted(set(list(runs.keys()) + expected))
 
     coverage, open_breaches, expired, cadence = [], [], [], []
-    drift = []
+    drift, recon = [], []
+
+    # The reconciliation's own cadence. The schedule that fires is a cron in each product's
+    # workflow, set by hand, and nothing else compares it against what the product promised. So
+    # this run looks at when the previous one happened. Without the earlier reports the question
+    # cannot be answered, and reporting that is better than assuming the schedule is right.
+    previous_at = None
+    if args.previous and os.path.isdir(args.previous):
+        for path in glob.glob(os.path.join(args.previous, "**", "*.json"), recursive=True):
+            d = load(path)
+            if not d or d.get("schema") != "quickbird.backstop-report/v1":
+                continue
+            at = parse_ts(d.get("generated_at"))
+            if at and at < now and (previous_at is None or at > previous_at):
+                previous_at = at
 
     for product in products:
         rs = sorted(runs.get(product, []), key=lambda r: r[0])
@@ -243,6 +264,42 @@ def main():
                                  "copied into the product repo. Confirm the change followed a "
                                  "change to the contract and was reviewed."),
                 })
+
+        # --- did this reconciliation happen as often as the product promised? ----
+        declared = next((rec.get("reconciliation_interval") for _, rec, _ in reversed(rs)
+                         if rec.get("reconciliation_interval")), None)
+        if not declared:
+            recon.append({"product": product, "status": "not-declared",
+                          "detail": "no reconciliation_interval in the run records, so there is "
+                                    "nothing to hold the schedule against"})
+        else:
+            want = parse_interval_days(declared, default=-1)
+            if want <= 0:
+                recon.append({"product": product, "declared": declared, "status": "unknown",
+                              "detail": f"reconciliation_interval {declared!r} is not a duration"})
+            elif previous_at is None:
+                recon.append({"product": product, "declared": declared, "status": "first",
+                              "detail": "no earlier reconciliation report, so this is either the "
+                                        "first one or the earlier ones were not made available"})
+            else:
+                elapsed = (now - previous_at).days
+                # A day of slack for a cron that fires at a fixed hour.
+                if elapsed > want + 1:
+                    recon.append({"product": product, "declared": declared, "status": "overdue",
+                                  "elapsed_days": elapsed, "previous": previous_at.isoformat(),
+                                  "detail": f"the previous reconciliation was {elapsed}d ago and "
+                                            f"the product promised every {declared}. The schedule "
+                                            f"in its reconciliation workflow does not match the "
+                                            f"commitment"})
+                elif args.window < want:
+                    recon.append({"product": product, "declared": declared, "status": "short-window",
+                                  "elapsed_days": elapsed,
+                                  "detail": f"this run reconciles {args.window}d but the product "
+                                            f"promised every {declared}, so part of the period it "
+                                            f"is meant to cover was not read"})
+                else:
+                    recon.append({"product": product, "declared": declared, "status": "ok",
+                                  "elapsed_days": elapsed})
 
         # Gaps between consecutive runs. A daily monitor that silently stopped for three
         # weeks looks exactly like three weeks of all-clear.
@@ -370,19 +427,22 @@ def main():
             "expired_decisions": len(expired),
             "cadence_broken": sum(1 for c in cadence if c["status"] == "broken"),
             "cadence_unknown": sum(1 for c in cadence if c["status"] in ("unknown", "not-declared")),
+            "reconciliation_overdue": sum(1 for r in recon if r["status"] in ("overdue", "short-window")),
             "determination_drift": len(drift),
         },
         "coverage": coverage,
         "undecided_breaches": open_breaches,
         "expired_decisions": expired,
         "cadence": cadence,
+        "reconciliation_cadence": recon,
         "determination_drift": drift,
     }
 
     # The report is only worth anything if a bad result is visible without reading JSON.
     problems = (doc["summary"]["never_scanned"] + doc["summary"]["stale"]
                 + doc["summary"]["with_gaps"] + len(open_breaches) + len(expired)
-                + doc["summary"]["cadence_broken"] + len(drift))
+                + doc["summary"]["cadence_broken"] + len(drift)
+                + doc["summary"]["reconciliation_overdue"])
     doc["verdict"] = "clean" if problems == 0 else "action-required"
 
     text = json.dumps(doc, indent=2)

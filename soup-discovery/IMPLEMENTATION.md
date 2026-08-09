@@ -64,7 +64,7 @@ monitor-kev.sh| The daily run. Refuses to exit 0 on an empty or invalid record, 
 track-lifecycle.py| Today's findings against yesterday's record: new, breached, resolved.  
 escalate-breaches.py| Breaches per remediation unit, with the decision deadline of WI-006-09, Decide.  
 compose-alert.sh| The notification. Four independent blocks, so a non-KEV breach is notified even when there is no KEV finding.  
-backstop-report.py| WI-006-09, Reconcile. Production deployments per repository, maintenance windows, expired risk acceptances, and drift in the parameters of WI-006-09, Scope of the product and Service level.  
+backstop-report.py| WI-006-09, Reconcile. Production deployments per repository, maintenance windows, expired risk acceptances, drift in the parameters of WI-006-09, Scope of the product and Service level, and whether this reconciliation itself fired as often as `reconciliation_interval` promises. The last one needs `--previous`, the earlier reports.  
 validate-policy.sh| Merge project configuration onto the defaults. Refuses a missing required parameter, an interval that is not a duration, a loosened value without a reason, and the two configurations TR-03161 forbids (WI-006-09, BSI TR-03161).  
 render-sbom-pdf.py| The SBOM report: composition only, direct dependencies with supplier/licence and record, every transitive/OS component with its via-path and containing artefact, scanned artefacts with digests; sections subdivided by platform. One per release; contains nothing that ages.  
 render-vdr-pdf.py| The Dependency & Vulnerability Report: the dated assessment against the configured rules, applied-rules block with config/default source, updates beyond and within the limits, CVEs per library with EPSS, via-path, fixed-in and VEX, stale/deprecated, remediation actions; sections subdivided by platform. Rows shaded by decision state.  
@@ -148,7 +148,7 @@ Prefix| Content
 ---|---  
 <repo>/soup-sbom/<level>/<ref>/ | Inventory and rendering per build. The level segment keeps candidate documents apart from staging and branch documents. `<ref>` is the tag, or the commit for a product that deploys without tags, for such a product this is the only durable location.  
 <repo>/soup-evidence/<year>/ | The dated records. The year segment lets the backstop sync one prefix.  
-<repo>/soup-backstop/<year>/ | Reconciliation reports.  
+<repo>/soup-backstop/<year>/ | Reconciliation reports. Read back by the next reconciliation, which is how a schedule that drifted from `reconciliation_interval` becomes visible.  
   
 The release asset carries a fixed name, `sbom-<tag>.cdx.json`, because the daily run looks for exactly that. A per-project naming scheme would make the lookup guesswork.
 
