@@ -2,7 +2,7 @@
 #
 # Only what differs from policy-defaults.yml belongs here. A value looser than the default needs a
 # `reason:`; tightening never does. What each parameter means, who decides it and where the value
-# comes from is WI: Parameters defined per project.
+# comes from is WI-006-09-02: Parameters defined per project.
 
 product: my-product
 
@@ -25,13 +25,13 @@ cra_scope: unknown
 # (O.TrdP_8) — a configuration that does either is refused.
 regulatory_scope: []
 
-# WI: The maintenance window — the maintenance commitment. Not an observation of how often this product has released, but
+# WI-006-09-01: The maintenance window — the maintenance commitment. Not an observation of how often this product has released, but
 # a promise: a maintenance release happens at least this often. Every open Track 3/4 finding lands on
 # the next window, so a missed window is one decision about a release rather than one per finding. No
 # upper bound is enforced here: what the product commits to is the SLA's business.
 maintenance_interval: 90d
 
-# WI: Onboarding — both deliberately without a default, because a default would hand this product a baseline
+# WI-006-09-02: Onboarding — both deliberately without a default, because a default would hand this product a baseline
 # nobody agreed to.
 #   onboarded              the date monitoring began for this product
 #   baseline_clocks_start  the date the backlog that existed at onboarding becomes due. Absent, every

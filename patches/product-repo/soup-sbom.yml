@@ -1,4 +1,4 @@
-# Goes into <product>/.github/workflows/soup-sbom.yml — WI: Inventory.
+# Goes into <product>/.github/workflows/soup-sbom.yml — WI-006-09: Inventory.
 #
 # Two triggers, and the reason for each:
 #

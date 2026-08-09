@@ -4,7 +4,7 @@
 # Four independent blocks, not one nested tree. Deadlines and the release-required signal
 # used to be written only inside the KEV branch, so a breached Track 2 deadline on a finding
 # that happened not to be in KEV produced no notification at all — it reached the run record
-# and the workflow log and stopped there. WI: Decide says a breach is escalated in the
+# and the workflow log and stopped there. WI-006-09: Decide says a breach is escalated in the
 # project's Slack channel, so that was the process step silently not happening.
 #
 # A breach is also not subject to the alert threshold. The threshold decides which *new*
@@ -76,7 +76,7 @@ if [[ -n "$ESCALATION" && -f "$ESCALATION" ]]; then
   fi
 fi
 
-# --- release-required (WI: Notification), whatever the verdict ---------------------------
+# --- release-required (WI-006-09: Notification), whatever the verdict ---------------------------
 if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
   RR=$(jq -r '.summary.release_required' "$LIFECYCLE")
   if [[ "$RR" != "0" && -n "$RR" && "$RR" != "null" ]]; then

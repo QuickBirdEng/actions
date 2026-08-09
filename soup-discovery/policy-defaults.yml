@@ -1,4 +1,4 @@
-# Machine-readable form of WI: Classification of a finding and WI: Timeframes, the classification and the timeframes.
+# Machine-readable form of WI-006-09-01: Classification of a finding and WI-006-09-01: Timeframes, the classification and the timeframes.
 #
 # This file is the counterpart to the Work Instruction: the document is what a person reads and what
 # an auditor is shown, this is what the tooling applies. They must not diverge, so a change here is a
@@ -14,16 +14,16 @@
 
 process_version: "2026-08-02"
 
-# WI: Classification of a finding — EPSS thresholds that escalate a finding within its CVSS band.
+# WI-006-09-01: Classification of a finding — EPSS thresholds that escalate a finding within its CVSS band.
 epss:
   elevated: 0.10          # Medium+elevated -> Expedited, Low+elevated -> Planned
   high: 0.50              # High+high       -> Immediate
 
-# WI: Timeframes — two clocks per track, in calendar time.
+# WI-006-09-01: Timeframes — two clocks per track, in calendar time.
 #   mitigation  = exposure measurably reduced and documented
 #   remediation = the fix is live in the version users run; only a deploy stops this clock
 # Revised 2026-08-03. The previous values (72h/21d, 20d/40d) came from the first draft and
-# could not be met — not for lack of capacity but because the deadline hung on each CVE. WI: What carries the timeframe
+# could not be met — not for lack of capacity but because the deadline hung on each CVE. WI-006-09-01: What carries the timeframe
 # moved it to the action, and these numbers are set for what an action actually takes: an image
 # bump on a regulated product means a regression test and a release.
 #
@@ -56,12 +56,12 @@ tracks:
     mitigation: none
     remediation: next-release
 
-# WI: Decide — after a breach, how long until a decision is required.
+# WI-006-09: Decide — after a breach, how long until a decision is required.
 breach:
   decision_within: 5d
   risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)
 
-# WI: The maintenance window — the maintenance release commitment.
+# WI-006-09-01: The maintenance window — the maintenance release commitment.
 #
 # Track 3 remediation is "next regular release". Deriving that date from a product's *observed*
 # rhythm does not work: three of four products have a rhythm that has already lapsed, so the
@@ -74,7 +74,7 @@ breach:
 # breach about a release rather than one per finding (measured: 1 instead of 196).
 maintenance_interval: 90d
 
-# WI: Onboarding — the onboarding baseline.
+# WI-006-09-02: Onboarding — the onboarding baseline.
 #
 # Deliberately without defaults. Both dates are per-product facts, and a default here would hand a
 # product a baseline nobody agreed to. Absent `baseline_clocks_start`, every pre-existing finding
@@ -88,7 +88,7 @@ maintenance_interval: 90d
 # one backend product, 0 of its 23 Critical findings were in KEV, so the exemption keeps the case that
 # matters sharp without holding up the other 520.
 
-# WI: Which build produces evidence — which tags are QA builds.
+# WI-006-09: Which build produces evidence — which tags are QA builds.
 #
 # NOT "what counts as a production release" — that is not a property of a tag. Read from the
 # pipeline: a tag push triggers the *staging* workflow (both `v1.0.15` and `v1.0.15-qa4`), and
@@ -97,12 +97,12 @@ maintenance_interval: 90d
 # the reconciliation reads it from there.
 #
 # This pattern is used for one narrower thing: deciding whether a build produces a release-tier
-# document or a staging-tier one (WI: Which build produces evidence). A tag matching it is a candidate for production; a
+# document or a staging-tier one (WI-006-09: Which build produces evidence). A tag matching it is a candidate for production; a
 # `-qaN` tag never is.
 production_release:
   tag_pattern: '^v?[0-9]+\.[0-9]+\.[0-9]+$'
 
-# WI: Timeframes — which regulatory regimes a product is in scope of.
+# WI-006-09-01: Timeframes — which regulatory regimes a product is in scope of.
 #
 # Not documentation. Each entry tightens a check, because some regimes are stricter than the
 # process default:
@@ -124,7 +124,7 @@ production_release:
 #             security concept the same requirement demands.
 regulatory_scope: []
 
-# WI: Currency and obsolescence — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
+# WI-006-09-02: Currency and obsolescence — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
 dependency_currency:
   max_behind:
     major: 0
@@ -136,7 +136,7 @@ dependency_currency:
   # SOUP records already use in grq-3 ("Is maintained and support is available").
   stale_after: 12m
 
-# WI: Service level. How often the reconciliation runs and reports what did not happen.
+# WI-006-09-02: Service level. How often the reconciliation runs and reports what did not happen.
 #
 # Like maintenance_interval, this follows from the customer's SLA and is not determined here.
 # Deliberately without a companion reference field: a pointer to a contract version held in YAML

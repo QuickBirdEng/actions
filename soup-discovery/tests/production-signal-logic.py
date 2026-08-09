@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline checks of "what reached production" (WI: The maintenance window).
+"""Offline checks of "what reached production" (WI-006-09-01: The maintenance window).
 
 Read from the pipeline rather than guessed: a tag push triggers the *staging* workflow — both
 `v1.0.15` and `v1.0.15-qa4` — and production is a manual `workflow_dispatch` of a separate

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency currency and staleness (WI: Currency and obsolescence).
+"""Dependency currency and staleness (WI-006-09-02: Currency and obsolescence).
 
 Two different questions, deliberately answered separately because they call for different
 actions:
@@ -244,7 +244,7 @@ def annotate_bom(path, notes):
 
 
 def load_soup_reasons(soups_dir):
-    """package -> reason, for the per-SOUP override the policy allows (WI: Currency and obsolescence)."""
+    """package -> reason, for the per-SOUP override the policy allows (WI-006-09-02: Currency and obsolescence)."""
     import glob
     import os
     out = {}

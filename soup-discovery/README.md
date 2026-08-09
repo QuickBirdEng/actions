@@ -5,7 +5,7 @@ scope decision for each, scan what is in scope, and produce one assessed Cyclone
 
 The rules this implements — classification, timeframes, currency limits, responsibilities — are in the
 Work Instruction in the QMS. `policy-defaults.yml` is its machine-readable counterpart, and a change to
-one is a change to the other. Section references in this repository (`WI: Classification of a finding`, `Annex B B.1.1`) point
+one is a change to the other. Section references in this repository (`WI-006-09-01: Classification of a finding`) point
 there.
 
 ## Usage

@@ -202,7 +202,7 @@ jq --slurpfile recs "$TMP/records.json" '
         | if $dr == null then $c
           else $c + { properties: ( (($c.properties // [])
                  + [ { name: "quickbird:soup:approval-drift",
-                       value: "a SOUP record approves family \($dr.family), but this build ships \($c.version // "?") — the approval does not apply to this version (WI: Observe review event)" } ])
+                       value: "a SOUP record approves family \($dr.family), but this build ships \($c.version // "?") — the approval does not apply to this version (WI-006-09: Observe review event)" } ])
                  | sort_by(.name, (.value // "")) ) }
           end
       else
@@ -321,7 +321,7 @@ fi
 # something was deliberately chosen and never approved. It fails the run when strict.
 NORECORD=$(jq -r '.direct_without_record | length' <<<"$REPORT")
 if [[ "$NORECORD" != "0" ]]; then
-  echo "::warning::$NORECORD direct dependency/ies carry no SOUP record — chosen, shipped, never approved (WI: Assess)" >&2
+  echo "::warning::$NORECORD direct dependency/ies carry no SOUP record — chosen, shipped, never approved (WI-006-09: Assess)" >&2
   jq -r '.direct_without_record[] | "::warning::  no record: \(.name)@\(.version)"' <<<"$REPORT" >&2
   [[ "$STRICT" == "true" ]] && STATUS=1
 fi
@@ -332,7 +332,7 @@ fi
 DRIFT=$(jq -r '.version_mismatch | length' <<<"$REPORT")
 if [[ "$DRIFT" != "0" ]]; then
   echo "::warning::$DRIFT SOUP record(s) cover a different version family than the build ships — the approval does not apply to what is live" >&2
-  jq -r '.version_mismatch[] | "::warning::  \(.package): approved family \(.family), shipped \(.shipped | join(", ")) — re-check the record against the shipped version (WI: Observe)"' <<<"$REPORT" >&2
+  jq -r '.version_mismatch[] | "::warning::  \(.package): approved family \(.family), shipped \(.shipped | join(", ")) — re-check the record against the shipped version (WI-006-09: Observe)"' <<<"$REPORT" >&2
 fi
 
 # A record that matches nothing means the SOUP list and the build disagree. Nothing

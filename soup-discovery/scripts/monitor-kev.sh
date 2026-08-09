@@ -81,7 +81,7 @@ TARGETS=$(jq -c '
   [ (if .mobile != null and .mobile.sbom != null
      then {name:"mobile", version:.mobile.live_version, sbom:.mobile.sbom,
            # When the live version reached users. This is the origin of the maintenance-window
-           # grid (WI: The maintenance window): the last maintenance event, not a nominal release date.
+           # grid (WI-006-09-01: The maintenance window): the last maintenance event, not a nominal release date.
            live_since:(.mobile.published // null)} else empty end),
     # prod|study, the same rule as the backstop: on these products a Study environment is
     # production. Matching only /prod/ dropped a Study-only product from the targets AND from
@@ -195,7 +195,7 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   FINDINGS=$(jq -c --argjson a "$act" '. + $a' <<<"$FINDINGS")
   SUPPRESSED=$(jq -c --argjson s "$sup" '. + $s' <<<"$SUPPRESSED")
   UNKNOWN=$(jq -c --argjson u "$unk" '. + $u' <<<"$UNKNOWN")
-  # WI: Observe step 5 — whether the SOUP approvals still match what the scan finds.
+  # WI-006-09: Observe step 5 — whether the SOUP approvals still match what the scan finds.
   # The dated record is the evidence of that check, so its result belongs in it, not only
   # in a log line nobody retains.
   SOUP_CHECK=$(jq -c '{
@@ -301,9 +301,9 @@ jq -n \
      schema: "quickbird.kev-monitor-run/v1",
      product: $product, repo: $repo, run_at: $at, cra_scope: $cra,
      # Carried so the backstop can check the declared cadence against the actual release
-     # history (WI: The maintenance window) without needing the policy file of every project.
+     # history (WI-006-09-01: The maintenance window) without needing the policy file of every project.
      release_cadence: ($cadence | blank_to_null),
-     # WI: The maintenance window: the maintenance commitment. The backstop checks the windows against it, and the
+     # WI-006-09-01: The maintenance window: the maintenance commitment. The backstop checks the windows against it, and the
      # classifier lands every Track 3/4 finding on the next one.
      maintenance_interval: ($interval | blank_to_null),
      onboarded: ($onboarded | blank_to_null),

@@ -1,6 +1,6 @@
 # Reusable workflow for QuickBirdEng/workflows.
 #
-# WI: Inventory: produce the inventory of a build and assess it. Called by a thin workflow in
+# WI-006-09: Inventory: produce the inventory of a build and assess it. Called by a thin workflow in
 # the product repository, which owns the trigger — same pattern as soup-version-check.yml.
 #
 # Must run AFTER the release workflow has pushed the images of this tag. The pipeline scans an
@@ -123,7 +123,7 @@ jobs:
           do-secret-key: ${{ secrets.DO_SECRET_KEY }}
 
       # An incomplete inventory is a finding, not a failure: the document states which artefacts
-      # are missing and why, and that is the record WI: Inventory asks for. Failing the job here
+      # are missing and why, and that is the record WI-006-09: Inventory asks for. Failing the job here
       # would delete the evidence of the gap along with the run.
       - name: Verdict
         if: always()

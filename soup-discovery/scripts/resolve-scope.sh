@@ -94,7 +94,7 @@ PLAN=$(jq -n \
       },
       unclassified: ($all | map(select(.decision=="unclassified")) | map({id, ecosystem, markers, ships})),
       conflicts:    ($all | map(select(.decision=="conflict"))     | map({id, markers})),
-      # Includes as well as excludes: WI: Introduce says every entry carries a reason, and an
+      # Includes as well as excludes: WI-006-09: Introduce says every entry carries a reason, and an
       # unexplained include is how test tooling ends up in the shipped inventory unnoticed.
       missing_reason: ($all | map(select((.decision=="exclude" or .decision=="include")
                                          and (.reason == "" or .reason == null))) | map({id, decision, markers})),

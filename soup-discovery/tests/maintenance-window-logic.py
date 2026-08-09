@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline checks of the maintenance window grid (WI: The maintenance window).
+"""Offline checks of the maintenance window grid (WI-006-09-01: The maintenance window).
 
 Grounded in the real release dates of the four products, because the whole reason this model
 replaced the previous one is that the previous one produced dates in the past on three of them.

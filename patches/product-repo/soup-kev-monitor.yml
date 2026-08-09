@@ -1,10 +1,10 @@
-# Goes into <product>/.github/workflows/soup-kev-monitor.yml — WI: Observe.
+# Goes into <product>/.github/workflows/soup-kev-monitor.yml — WI-006-09: Observe.
 #
 # The daily run. Pick a minute per product rather than copying this one: the KEV catalog and the
 # EPSS feed are single shared endpoints, and every product hitting them in the same minute is a
 # self-inflicted rate limit.
 #
-# The schedule is what makes the timeframes of WI: Timeframes measurable — both clocks start on the date a
+# The schedule is what makes the timeframes of WI-006-09-01: Timeframes measurable — both clocks start on the date a
 # finding is first reported by a run, so a workflow that only ever runs manually starts every clock
 # on the day someone remembered to press the button.
 
@@ -31,7 +31,7 @@ jobs:
     uses: QuickBirdEng/workflows/.github/workflows/soup-kev-monitor.yml@main
     with:
       product: <product>
-      # true | false | unknown — WI: Scope of the product. Left at unknown, the alert says so; assuming false is the
+      # true | false | unknown — WI-006-09-02: Scope of the product. Left at unknown, the alert says so; assuming false is the
       # one wrong answer with a legal consequence attached.
       cra-scope: unknown
       slack-channel-id: <channel id>

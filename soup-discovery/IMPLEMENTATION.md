@@ -52,19 +52,19 @@ assess-bom.sh| **Entry point for assessment.** Six stages: scan, enrich, merge e
 scan-vulns.sh| Vulnerabilities per component, joined on purl.  
 merge-enrichment.sh| KEV membership and EPSS onto the vulnerabilities, feed provenance into the metadata: KEV catalog version, EPSS model version and score date.  
 merge-assessment.sh| SOUP requirement results, approval annotations and VEX analysis into the document.  
-classify-findings.py| WI-006-09, Classification of a finding and Timeframes: track, both dated deadlines, latching, onboarding baseline. Annotates a contradiction where a SOUP record claims no known vulnerabilities while the scan reports some.  
-group-remediation.py| WI-006-09, What carries the timeframe: findings into remediation units, and the vendor state of a third-party image.  
-maintenance-windows.py| WI-006-09, The maintenance window: the window grid, and whether a window was met, missed or is still open.  
+classify-findings.py| WI-006-09-01, Classification of a finding and Timeframes: track, both dated deadlines, latching, onboarding baseline. Annotates a contradiction where a SOUP record claims no known vulnerabilities while the scan reports some.  
+group-remediation.py| WI-006-09-01, What carries the timeframe: findings into remediation units, and the vendor state of a third-party image.  
+maintenance-windows.py| WI-006-09-01, The maintenance window: the window grid, and whether a window was met, missed or is still open.  
 mark-scope.py| Reads the direct/transitive decision from the manifests per ecosystem (pubspec markers, package.json join, pom declarations, go.mod indirect flags, gradle declarations) and stamps it onto each component. Containers: contents transitive, the image itself direct.  
 mark-graph.py| Derives the dependency graph per ecosystem and writes standard CycloneDX dependencies[] edges into the per-target BOM. npm: from the lockfiles (yarn v1 and berry, package-lock v2/v3 with nearest-first resolution). pub: one registry call per hosted package; dependency names resolve against the locked versions. gradle: the POM of each locked artifact names its runtime dependencies; every version resolves against the lockfile. Registry fetches degrade per package. Ecosystems without a derivable graph keep no edges; operating-system packages inside images arrive with edges from syft.  
-check-currency.py| WI-006-09, Currency and obsolescence: version distance and upstream staleness. Operating-system packages excluded; container images checked by build date.  
+check-currency.py| WI-006-09-02, Currency and obsolescence: version distance and upstream staleness. Operating-system packages excluded; container images checked by build date.  
 check-fix-or-vex.sh| WI-006-09, Assess: the pull-request gate. Every vulnerability of the version needs a fix or a VEX statement.  
 resolve-deployed.sh| The deployed version from the GitHub deployment record, and its published inventory from the release asset.  
 monitor-kev.sh| The daily run. Refuses to exit 0 on an empty or invalid record, because an empty record read as success is indistinguishable from an all-clear.  
 track-lifecycle.py| Today's findings against yesterday's record: new, breached, resolved.  
 escalate-breaches.py| Breaches per remediation unit, with the decision deadline of WI-006-09, Decide.  
 compose-alert.sh| The notification. Four independent blocks, so a non-KEV breach is notified even when there is no KEV finding.  
-backstop-report.py| WI-006-09, Reconcile. Production deployments per repository, maintenance windows, expired risk acceptances, drift in the parameters of WI-006-09, Scope of the product and Service level, and whether this reconciliation itself fired as often as `reconciliation_interval` promises. The last one needs `--previous`, the earlier reports.  
+backstop-report.py| WI-006-09, Reconcile. Production deployments per repository, maintenance windows, expired risk acceptances, drift in the parameters of WI-006-09-02, Scope of the product and Service level, and whether this reconciliation itself fired as often as `reconciliation_interval` promises. The last one needs `--previous`, the earlier reports.  
 validate-policy.sh| Merge project configuration onto the defaults. Refuses a missing required parameter, an interval that is not a duration, a loosened value without a reason, and the two configurations TR-03161 forbids (WI-006-09, BSI TR-03161).  
 render-sbom-pdf.py| The SBOM report: composition only, direct dependencies with supplier/licence and record, every transitive/OS component with its via-path and containing artefact, scanned artefacts with digests; sections subdivided by platform. One per release; contains nothing that ages.  
 render-vdr-pdf.py| The Dependency & Vulnerability Report: the dated assessment against the configured rules, applied-rules block with config/default source, updates beyond and within the limits, CVEs per library with EPSS, via-path, fixed-in and VEX, stale/deprecated, remediation actions; sections subdivided by platform. Rows shaded by decision state.  
@@ -108,13 +108,13 @@ All three in the product repository, under version control, with CODEOWNERS on t
 
 File| Holds| Reviewer  
 ---|---|---  
-.soup-policy.yml| The parameters of WI-006-09, Parameters defined per project. Only what differs from the defaults.| QM, for the service-level and scope parameters  
+.soup-policy.yml| The parameters of WI-006-09-02, Parameters defined per project. Only what differs from the defaults.| QM, for the service-level and scope parameters  
 .soup-scope.yml| `include:` and `exclude:`, each entry an `id` and a `reason`. The run fails while a discovered candidate appears in neither.| Development lead  
 .soup-decisions.yml| Risk acceptances, revised remediation dates and `vendor_requests` with their follow-up dates.| SOUP approver  
   
 ## Configuration keys
 
-Defaults ship as `soup-discovery/policy-defaults.yml`. A project sets only what differs. Meaning, who decides each value and where it comes from: WI-006-09, Parameters defined per project.
+Defaults ship as `soup-discovery/policy-defaults.yml`. A project sets only what differs. Meaning, who decides each value and where it comes from: WI-006-09-02, Parameters defined per project.
 
 Key| Default| Note  
 ---|---|---  
@@ -124,7 +124,7 @@ maintenance_interval| —| Required. No upper bound is enforced.
 reconciliation_interval| 12m| How often the reconciliation runs. The cron in the product caller has to match it.  
 regulatory_scope| []| `tr-03161-1|-2|-3`, `cra`, `mdr`. An unknown entry fails the run.  
 tracks.<track>.mitigation  
-tracks.<track>.remediation | WI-006-09, Timeframes| `none`, a duration, or `next-release`.  
+tracks.<track>.remediation | WI-006-09-01, Timeframes| `none`, a duration, or `next-release`.  
 epss.elevated / epss.high| 0.10 / 0.50| —  
 breach.decision_within| 5d| —  
 breach.risk_acceptance_approvers| 1| —  

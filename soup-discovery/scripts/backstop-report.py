@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Periodic backstop reconciliation (WI: Service level).
+"""Periodic backstop reconciliation (WI-006-09-02: Service level).
 
 The backstop exists because automation fails silently. Everything else in this pipeline
 reports what it found; this one reports what it *did not* find, which is the failure mode
@@ -14,7 +14,7 @@ Five questions, in order of how badly a wrong answer would hurt:
   3. Have any recorded risk acceptances expired without being renewed?
   4. Does each product's declared release cadence match what it actually released? A
      cadence that no longer holds turns every Track 3 deadline into fiction, because those
-     deadlines are derived from it (WI: The maintenance window). Needs the release history, which comes from
+     deadlines are derived from it (WI-006-09-01: The maintenance window). Needs the release history, which comes from
      GitHub rather than the evidence store — the run record carries the repo name and the
      declared cadence so this can be checked without every project's policy file.
   5. Did this reconciliation itself happen as often as the product promised? The schedule that
@@ -328,7 +328,7 @@ def main():
                          "gaps": gaps, "incomplete_runs": incomplete,
                          "last_verdict": last.get("verdict")})
 
-        # --- the maintenance commitment vs. reality (WI: The maintenance window) -----------------------
+        # --- the maintenance commitment vs. reality (WI-006-09-01: The maintenance window) -----------------------
         # Not "does the observed rhythm match a declared one" any more. A product commits to a
         # maintenance release at least every `maintenance_interval`, every open Track 3/4
         # finding targets the same window, and the question here is whether the windows were

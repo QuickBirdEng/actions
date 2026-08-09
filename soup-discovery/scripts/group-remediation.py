@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Group findings by the action that resolves them (WI: What carries the timeframe).
+"""Group findings by the action that resolves them (WI-006-09-01: What carries the timeframe).
 
 A deadline on a CVE assumes the CVE is a unit of work. Usually it is not. Measured on
 one backend product, where the per-finding model demanded mitigation of 23 findings in 72 hours
@@ -12,7 +12,7 @@ vendor REST service we deploy but do not build, 99 inside a third-party WireGuar
 **Not one of the 521 is in code QuickBird writes.**
 
 That is why the per-finding deadlines could not be met, and it was never about capacity. The
-deadline was attached to the wrong thing. This is the same error WI: The maintenance window removed from Track 3,
+deadline was attached to the wrong thing. This is the same error WI-006-09-01: The maintenance window removed from Track 3,
 and the same repair applies: the deadline belongs to the action.
 
 A **remediation unit** is one action:
@@ -93,7 +93,7 @@ def load_vendor_requests(path):
     image", so
     the fix is on someone else's release schedule. A 30-day deadline on such a unit breaches
     with certainty and without anyone having done anything wrong — which produces exactly the
-    rubber stamps WI: What carries the timeframe was meant to remove.
+    rubber stamps WI-006-09-01: What carries the timeframe was meant to remove.
 
     So a documented request to the vendor puts the unit in `waiting-on-vendor`: not a breach,
     but not closed either. It carries a follow-up date, and when that passes with no new image
@@ -270,7 +270,7 @@ def main():
             "fix_status": sorted(u["fix_status"]),
         })
 
-    # --- vendor state (WI: What carries the timeframe) -------------------------------------------------
+    # --- vendor state (WI-006-09-01: What carries the timeframe) -------------------------------------------------
     # A third-party image is the case where remediation is not ours to perform. The state says
     # which of three situations a unit is in, and only the last one is a breach.
     for unit in out_units:
