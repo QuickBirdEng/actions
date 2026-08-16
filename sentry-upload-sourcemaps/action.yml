@@ -1,0 +1,67 @@
+name: 'Sentry Upload Sourcemaps'
+description: 'Download a sourcemaps artifact and upload it to Sentry for a release'
+inputs:
+  artifact-name:
+    description: 'Name of the sourcemaps artifact to download (produced by extract-docker-sourcemaps), e.g. "rest-sourcemaps"'
+    required: true
+  dist-dir:
+    description: 'Local directory to download the artifact into, e.g. "dist-rest"'
+    required: true
+  url-prefix:
+    description: 'sentry-cli sourcemaps upload --url-prefix value, e.g. "~/usr/src/app/dist/apps/rest" or "~/"'
+    required: true
+  dist:
+    description: 'sentry-cli sourcemaps upload --dist value, e.g. the commit SHA'
+    required: true
+  release:
+    description: 'sentry-cli sourcemaps upload --release value, e.g. the app package.json version'
+    required: true
+  node-version:
+    description: 'Node version to install sentry-cli with, e.g. "20"'
+    required: true
+  sentry-url:
+    description: 'Sentry instance URL'
+    required: true
+  sentry-auth-token:
+    description: 'Sentry auth token (secret)'
+    required: true
+  sentry-org:
+    description: 'Sentry organization slug'
+    required: true
+  sentry-project:
+    description: 'Sentry project slug'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Download source maps artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.dist-dir }}
+
+    - name: Sentry - Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Sentry - Setup CLI
+      shell: bash
+      run: npm install -g @sentry/cli
+
+    - name: Sentry - Upload source maps
+      shell: bash
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
+      run: |
+        sentry-cli \
+          --url ${{ inputs.sentry-url }} \
+          sourcemaps upload \
+          --log-level=info \
+          --auth-token "$SENTRY_AUTH_TOKEN" \
+          --org ${{ inputs.sentry-org }} \
+          --project ${{ inputs.sentry-project }} \
+          --release ${{ inputs.release }} \
+          --dist ${{ inputs.dist }} \
+          --url-prefix '${{ inputs.url-prefix }}' \
+          ./${{ inputs.dist-dir }}

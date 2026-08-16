@@ -1,0 +1,73 @@
+name: 'Extract Docker Sourcemaps'
+description: 'Build the builder stage of a Docker image and extract sourcemaps from it before they are stripped from the final image'
+inputs:
+  working-directory:
+    description: 'Directory to run the docker build from (also used as the artifact path prefix), e.g. "web/"'
+    required: true
+  dockerfile:
+    description: 'Path to the Dockerfile, relative to working-directory, e.g. "dockerfiles/Dockerfile.node"'
+    required: true
+  docker-target:
+    description: 'Docker build stage to target'
+    default: 'builder'
+  package:
+    description: 'The Nx package name (also used for the builder image/container name and artifact naming), e.g. "rest" or "ui"'
+    required: true
+  extra-build-args:
+    description: 'Additional newline-separated --build-arg flags to pass to the builder build, e.g. "--build-arg NX_PUBLIC_API_URL=https://api.example.com"'
+    default: ''
+  sourcemap-path:
+    description: 'Path inside the built image to copy sourcemaps out of, e.g. "/usr/src/app/dist/apps/rest"'
+    required: true
+  artifact-name:
+    description: 'Name to give the uploaded sourcemaps artifact, e.g. "rest-sourcemaps"'
+    required: true
+  artifact-retention-days:
+    description: 'Number of days to retain the uploaded sourcemaps artifact'
+    default: '1'
+  dist-dir:
+    description: 'Local directory to extract sourcemaps into, e.g. "dist-rest"'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Set ${{ inputs.package }} builder image name
+      shell: bash
+      run: echo "IMAGE_NAME=${{ inputs.package }}-builder-${{ github.run_id }}" >> "$GITHUB_ENV"
+
+    - name: Build ${{ inputs.package }} builder stage
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        EXTRA_BUILD_ARGS="${{ inputs.extra-build-args }}"
+        docker build --target ${{ inputs.docker-target }} -f ${{ inputs.dockerfile }} \
+          --build-arg PACKAGE=${{ inputs.package }} \
+          $EXTRA_BUILD_ARGS \
+          -t "$IMAGE_NAME" .
+
+    - name: Create ${{ inputs.package }} builder container
+      id: create-container
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        CONTAINER_ID=$(docker create "$IMAGE_NAME")
+        echo "container-id=$CONTAINER_ID" >> "$GITHUB_OUTPUT"
+
+    - name: Extract ${{ inputs.package }} source maps
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: docker cp ${{ steps.create-container.outputs.container-id }}:${{ inputs.sourcemap-path }} "./${{ inputs.dist-dir }}"
+
+    - name: Clean up ${{ inputs.package }} builder container/image
+      if: always()
+      shell: bash
+      run: |
+         docker rm ${{ steps.create-container.outputs.container-id }} || true
+         docker rmi "$IMAGE_NAME" || true
+
+    - name: Upload ${{ inputs.package }} source maps artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.working-directory }}/${{ inputs.dist-dir }}
+        retention-days: ${{ inputs.artifact-retention-days }}
