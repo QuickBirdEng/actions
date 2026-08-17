@@ -35,15 +35,16 @@ runs:
   using: "composite"
   steps:
     - name: Download source maps artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.dist-dir }}
 
     - name: Sentry - Setup Node
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
 
     - name: Sentry - Setup CLI
       shell: bash
