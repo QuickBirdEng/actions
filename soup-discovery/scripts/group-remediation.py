@@ -41,6 +41,11 @@ Nothing here softens a classification. Every finding keeps its track and its dat
 changes is that the deadline is attached to something a person can do, and that a missed
 deadline produces one decision instead of hundreds.
 
+A finding that affects components in more than one artifact, or more than one direct
+dependency of the same artifact, is a genuine member of more than one unit: fixing one does not
+fix the other. `shared_findings` on each unit names that overlap, so resolving a unit does not
+read as resolving a finding that is still open under a different one.
+
 Usage: group-remediation.py <classified-findings.json> <assessed-bom.cdx.json> [--out f]
 """
 
@@ -178,6 +183,10 @@ def main():
 
     units = {}
     unplaced = []
+    # fid -> set of unit keys it is a member of. A finding affecting more than one artifact,
+    # or more than one direct dependency of the same artifact, is a member of more than one
+    # unit for real: fixing one does not fix the other.
+    member_of = defaultdict(set)
     for f in doc.get("findings", []):
         fid = f.get("id")
         refs = affects.get(fid) or []
@@ -230,6 +239,7 @@ def main():
             u["findings"].append(fid)
             u["components"].add(f"{c['name']}@{c['version']}")
             u["fix_status"].add(fx)
+            member_of[fid].add(key)
             if fx == "none-published":
                 u["no_fix"].add(fid)
 
@@ -253,7 +263,15 @@ def main():
         # whose track was `kev`. "unknown" deliberately counts: it classifies as KEV.
         kev = [m for m in members
                if m in by_track and by_track[m].get("kev") in ("true", "unknown")]
+        # Which other units also claim one of this unit's findings, so a reader can tell
+        # "resolved here" apart from "resolved everywhere".
+        shared = {}
+        for m in members:
+            other = sorted(":".join(k) for k in member_of.get(m, ()) if k != key)
+            if other:
+                shared[m] = other
         out_units.append({
+            "id": ":".join(key),
             "kind": u["kind"],
             "artifact": u["artifact"],
             "action": u["action"],
@@ -268,6 +286,7 @@ def main():
             "mitigation_due": earliest("mitigation_due"),
             "remediation_due": earliest("remediation_due"),
             "fix_status": sorted(u["fix_status"]),
+            "shared_findings": shared,
         })
 
     # --- vendor state (WI-006-09-01: What carries the timeframe) -------------------------------------------------
@@ -315,9 +334,14 @@ def main():
 
     out_units.sort(key=lambda x: (TRACK_ORDER.index(x["track"]), -x["finding_count"]))
 
+    # A finding in more than one unit is counted once in findings_total (it is one finding) and
+    # once per unit in finding_memberships_total (it is fixed once per unit it belongs to).
+    # The two differ exactly by the shared-membership count. That gap is not an error.
     summary = {
         "findings_total": len(doc.get("findings", [])),
         "units_total": len(out_units),
+        "finding_memberships_total": sum(u["finding_count"] for u in out_units),
+        "findings_with_shared_membership": sum(1 for keys in member_of.values() if len(keys) > 1),
         "units_by_track": {},
         "findings_by_track": {},
     }
@@ -350,6 +374,10 @@ def main():
     if unplaced:
         print(f"::warning::{len(unplaced)} finding(s) could not be tied to an action and keep "
               f"their own deadline", file=sys.stderr)
+    if summary["findings_with_shared_membership"]:
+        print(f"::warning::{summary['findings_with_shared_membership']} finding(s) are members "
+              f"of more than one remediation unit, so resolving one does not resolve the others. "
+              f"See shared_findings on each unit", file=sys.stderr)
     for u in out_units:
         if u.get("state") == "vendor-overdue":
             print(f"::error::{u['action'][:80]} — {u['state_detail']}", file=sys.stderr)

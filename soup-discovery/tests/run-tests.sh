@@ -1046,6 +1046,34 @@ test_escalate_ignores_satisfied_findings() {
   assert "$(jq -r '.summary.total' "$TMP/eo.json")" "0"
 }
 
+# A finding that is a member of two units (WI-006-09-01: What carries the timeframe) must
+# escalate under both. A single `unit_of[fid] = i` overwrite used to silence the breach in
+# every unit but the last one seen.
+test_escalate_shared_finding_breaches_both_units() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[{"bom-ref":"c1",type:"library",name:"liba",version:"1.0",
+                       purl:"pkg:maven/com.foo/liba@1.0",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:server"}]},
+                      {"bom-ref":"c2",type:"library",name:"libb",version:"1.0",
+                       purl:"pkg:maven/com.foo/libb@1.0",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:worker"}]}],
+          vulnerabilities:[{id:"CVE-2026-2",affects:[{ref:"c1"},{ref:"c2"}],
+                            properties:[{name:"quickbird:vuln:fix",value:"available"}]}]}' \
+    > "$TMP/eb-bom.json"
+  jq -n '{findings:[{id:"CVE-2026-2",track:"immediate",kev:false,
+                      mitigation_due:"2026-01-01T00:00:00+00:00",
+                      remediation_due:"2026-01-15T00:00:00+00:00"}]}' > "$TMP/eb-f.json"
+  python3 "$S/group-remediation.py" "$TMP/eb-f.json" "$TMP/eb-bom.json" --out "$TMP/eb-u.json" \
+    >/dev/null 2>&1 || return 1
+  ESC "$TMP/eb-f.json" --units "$TMP/eb-u.json" --out "$TMP/eb-e.json" \
+    --now 2026-06-01T00:00:00+00:00 >/dev/null 2>&1
+
+  assert "$(jq -r '.escalations | length' "$TMP/eb-e.json")" "2" || return 1
+  assert "$(jq -r '[.escalations[].escalating_findings[0]] | unique | length' "$TMP/eb-e.json")" "1" || return 1
+  assert "$(jq -r '.escalations[0].shared_findings | length' "$TMP/eb-e.json")" "1"
+}
+
 # ---------------------------------------------------------------- currency
 test_currency_comparison_logic() { S="$S" python3 "$HERE/currency-logic.py"; }
 
@@ -1282,6 +1310,35 @@ test_units_unplaceable_finding_is_reported_not_dropped() {
   python3 "$S/group-remediation.py" "$TMP/ru-f.json" "$TMP/ru-bom.json" --out "$TMP/ru.json" 2>/dev/null || return 1
   assert "$(jq -r '.unplaced | length' "$TMP/ru.json")" "1" || return 1
   assert "$(jq -r '.unplaced[0].id' "$TMP/ru.json")" "CVE-X"
+}
+
+# A finding affecting components in two different artifacts is a real member of both units:
+# fixing one artifact does not fix the other. Resolving one must not read as resolving the CVE.
+test_units_shared_finding_is_named_on_both_units() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[{"bom-ref":"c1",type:"library",name:"liba",version:"1.0",
+                       purl:"pkg:maven/com.foo/liba@1.0",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:server"}]},
+                      {"bom-ref":"c2",type:"library",name:"libb",version:"1.0",
+                       purl:"pkg:maven/com.foo/libb@1.0",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:worker"}]}],
+          vulnerabilities:[{id:"CVE-2026-1",affects:[{ref:"c1"},{ref:"c2"}],
+                            properties:[{name:"quickbird:vuln:fix",value:"available"}]}]}' \
+    > "$TMP/ru-bom.json"
+  jq -n '{findings:[{id:"CVE-2026-1",track:"planned",kev:false,
+                      mitigation_due:"2026-10-01T00:00:00+00:00",
+                      remediation_due:"2027-01-01T00:00:00+00:00"}]}' > "$TMP/ru-f.json"
+  python3 "$S/group-remediation.py" "$TMP/ru-f.json" "$TMP/ru-bom.json" --out "$TMP/ru.json" 2>/dev/null || return 1
+
+  assert "$(jq -r '.units | length' "$TMP/ru.json")" "2" || return 1
+  assert "$(jq -r '.summary.findings_total' "$TMP/ru.json")" "1" || return 1
+  assert "$(jq -r '.summary.finding_memberships_total' "$TMP/ru.json")" "2" || return 1
+  assert "$(jq -r '.summary.findings_with_shared_membership' "$TMP/ru.json")" "1" || return 1
+  local other_named other_id
+  other_named="$(jq -r '.units[0].shared_findings["CVE-2026-1"][0]' "$TMP/ru.json")"
+  other_id="$(jq -r '.units[1].id' "$TMP/ru.json")"
+  assert "$other_named" "$other_id"
 }
 
 # ---------------------------------------------------------------- vendor state

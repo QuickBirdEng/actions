@@ -28,6 +28,7 @@ import argparse
 import json
 import subprocess
 import sys
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 OK, APPROACHING, BREACHED, UNDECIDED = "ok", "approaching", "breached", "undecided"
@@ -121,8 +122,11 @@ def main():
 
     doc = json.load(open(args.findings, encoding="utf-8"))
 
-    # finding id -> the action that resolves it
-    units, unit_of = [], {}
+    # finding id -> the action(s) that resolve it. A list, not a single index: a finding
+    # affecting more than one artifact or dependency is a real member of more than one unit
+    # (WI-006-09-01: What carries the timeframe), and a `unit_of[fid] = i` overwrite would
+    # escalate its breach under only the last unit found, silencing it in every other one.
+    units, unit_of = [], defaultdict(list)
     if args.units:
         try:
             u = json.load(open(args.units, encoding="utf-8"))
@@ -132,7 +136,7 @@ def main():
             return 1
         for i, unit in enumerate(units):
             for fid in unit.get("findings", []) or []:
-                unit_of[fid] = i
+                unit_of[fid].append(i)
     policy = json.load(open(args.policy, encoding="utf-8")) if args.policy else {}
     decision_window = int(str(policy.get("breach", {}).get("decision_within", "5d")).rstrip("d") or 5)
     decisions = load_decisions(args.decisions)
@@ -211,11 +215,13 @@ def main():
         per_unit = {}
         standalone = []
         for r in results:
-            idx = unit_of.get(r["id"])
-            if idx is None:
+            idxs = unit_of.get(r["id"])
+            if not idxs:
                 standalone.append(r)
                 continue
-            per_unit.setdefault(idx, []).append(r)
+            # Every unit this finding is a member of sees its breach, not just one of them.
+            for idx in idxs:
+                per_unit.setdefault(idx, []).append(r)
 
         collapsed = []
         for idx, members in per_unit.items():
@@ -248,13 +254,14 @@ def main():
                 "kind": unit.get("kind"),
                 "artifact": unit.get("artifact"),
                 "state": state,
-                "id": f"{unit.get('kind')}:{unit.get('artifact')}",
+                "id": unit.get("id") or f"{unit.get('kind')}:{unit.get('artifact')}",
                 "track": unit.get("track"),
                 "level": level,
                 "detail": detail,
                 "finding_count": len(unit.get("findings", []) or []),
                 "escalating_findings": [m["id"] for m in members],
                 "kev_findings": unit.get("kev_findings", []),
+                "shared_findings": unit.get("shared_findings", {}),
                 "mitigation_due": unit.get("mitigation_due"),
                 "remediation_due": unit.get("remediation_due"),
                 "vendor_request": unit.get("vendor_request"),

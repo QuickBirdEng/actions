@@ -532,6 +532,11 @@ def build(args):
                   "waiting-on-vendor": "waiting on vendor (on record)",
                   "vendor-request-undated": "vendor request without follow-up date",
                   "ours": "open"}.get(state, state or "open")
+        shared = u.get("shared_findings") or {}
+        if shared:
+            # A finding here is also open under another action. Closing this one does not
+            # close that finding, only this unit's part of it.
+            status = f"{status} · {len(shared)} finding(s) also open under another action"
         rows.append([
             Paragraph(esc(u.get("action", ""))[:220], small),
             Paragraph(f'<font color="{tcol}"><b>{esc(track)}</b></font>', cell),
