@@ -1,0 +1,61 @@
+name: 'Extract Docker Sourcemaps'
+description: 'Build a docker-compose builder-stage service and extract sourcemaps from it before they are stripped from the final image'
+inputs:
+  working-directory:
+    description: 'Directory to run docker-compose from (also used as the artifact path prefix), e.g. "web/"'
+    required: true
+  compose-file:
+    description: 'docker-compose file to build from, relative to working-directory'
+    default: 'docker-compose.yml'
+  compose-service:
+    description: 'The docker-compose builder-stage service to build, e.g. "rest-builder"'
+    required: true
+  image-name:
+    description: 'The compose service''s declared "image:" name, to extract sourcemaps from, e.g. "project-rest-builder"'
+    required: true
+  sourcemap-path:
+    description: 'Path inside the built image to copy sourcemaps out of, e.g. "/usr/src/app/dist/apps/rest"'
+    required: true
+  artifact-name:
+    description: 'Name to give the uploaded sourcemaps artifact, e.g. "rest-sourcemaps"'
+    required: true
+  artifact-retention-days:
+    description: 'Number of days to retain the uploaded sourcemaps artifact'
+    default: '1'
+  dist-dir:
+    description: 'Local directory to extract sourcemaps into, e.g. "dist-rest"'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Build builder stage
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: docker-compose -f ${{ inputs.compose-file }} build ${{ inputs.compose-service }}
+
+    - name: Create builder container
+      id: create-container
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        CONTAINER_ID=$(docker create "${{ inputs.image-name }}")
+        echo "container-id=$CONTAINER_ID" >> "$GITHUB_OUTPUT"
+
+    - name: Extract source maps
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: docker cp ${{ steps.create-container.outputs.container-id }}:${{ inputs.sourcemap-path }} "./${{ inputs.dist-dir }}"
+
+    - name: Clean up builder container/image
+      if: always()
+      shell: bash
+      run: |
+         docker rm ${{ steps.create-container.outputs.container-id }} || true
+         docker rmi "${{ inputs.image-name }}" || true
+
+    - name: Upload source maps artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.working-directory }}/${{ inputs.dist-dir }}
+        retention-days: ${{ inputs.artifact-retention-days }}
