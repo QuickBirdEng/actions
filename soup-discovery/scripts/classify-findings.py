@@ -20,6 +20,9 @@ import math
 import sys
 from datetime import datetime, timedelta, timezone
 
+from cvss import CVSS4
+from cvss.exceptions import CVSSError
+
 # --- CVSS 3.1 ---------------------------------------------------------------
 # Implemented from the specification rather than reused from action-scripts/
 # cvss-3-1-severity.sh, which diverges in two ways: it omits the scope-changed impact
@@ -67,6 +70,22 @@ def cvss31_base(vector: str):
     return _roundup(min(10.0, raw))
 
 
+# --- CVSS 4.0 ---------------------------------------------------------------
+# Unlike 3.1, 4.0 has no closed-form formula: the specification defers the actual numbers to a
+# lookup table of MacroVectors plus an interpolation step, computed by FIRST.org's own reference
+# calculator. Reused from the `cvss` library (RedHatProductSecurity) rather than hand-rolled: its
+# test suite checks all 104,976 possible base-only vectors against that reference calculator,
+# which is not something to redo by hand for a WI-006-09-01 input.
+def cvss40_base(vector: str):
+    """Base score from a CVSS:4.0 vector, or None if it cannot be parsed."""
+    if not vector or not vector.startswith("CVSS:4"):
+        return None
+    try:
+        return CVSS4(vector).base_score
+    except CVSSError:
+        return None
+
+
 # --- helpers ----------------------------------------------------------------
 def props(o):
     return {p["name"]: p["value"] for p in (o.get("properties") or [])}
@@ -101,7 +120,10 @@ def cvss_of(v):
     for r in v.get("ratings", []) or []:
         if (r.get("source") or {}).get("name") == "EPSS":
             continue
-        s = cvss31_base(r.get("vector") or "")
+        vec = r.get("vector") or ""
+        s = cvss31_base(vec)
+        if s is None:
+            s = cvss40_base(vec)
         if s is None and isinstance(r.get("score"), (int, float)):
             s = float(r["score"])
         if s is not None and (best is None or s > best):
@@ -138,24 +160,23 @@ def classify(v, policy):
         return "kev", 1, "KEV membership could not be established — treated as KEV until it can"
 
     if cvss is None:
-        # No parsable CVSS 3.x vector. Increasingly this means a CVSS 4.0-only advisory —
-        # there is no v4 scorer here, but the database severity is a usable band, and
-        # falling straight to rule 9 would put a v4 Critical three tracks too low.
+        # No parsable CVSS vector at all, 3.x or 4.0. The database severity is a usable band,
+        # and falling straight to rule 9 would put a Critical three tracks too low.
         band = (p.get("quickbird:vuln:osv-severity") or "").strip().upper()
         if band == "CRITICAL":
-            return "immediate", 2, "vendor severity Critical (no parsable CVSS 3.x vector)"
+            return "immediate", 2, "vendor severity Critical (no parsable CVSS vector)"
         if band == "HIGH":
             if epss is not None and epss >= hi:
                 return "immediate", 3, f"vendor severity High with EPSS {epss} >= {hi}"
-            return "expedited", 4, "vendor severity High (no parsable CVSS 3.x vector)"
+            return "expedited", 4, "vendor severity High (no parsable CVSS vector)"
         if band in ("MODERATE", "MEDIUM"):
             if epss is not None and epss >= el:
                 return "expedited", 5, f"vendor severity Medium with EPSS {epss} >= {el}"
-            return "planned", 6, "vendor severity Medium (no parsable CVSS 3.x vector)"
+            return "planned", 6, "vendor severity Medium (no parsable CVSS vector)"
         if band == "LOW":
             if epss is not None and epss >= el:
                 return "planned", 7, f"vendor severity Low with EPSS {epss} >= {el}"
-            return "monitor", 8, "vendor severity Low (no parsable CVSS 3.x vector)"
+            return "monitor", 8, "vendor severity Low (no parsable CVSS vector)"
         return "planned", 9, "no CVSS score available — an unknown is not a low"
     if cvss >= 9.0:
         return "immediate", 2, f"CVSS {cvss} (Critical)"

@@ -857,6 +857,30 @@ test_classify_missing_cvss_is_planned_not_low() {
   assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "9"
 }
 
+# Regression for the apellis pilot: 23 of 24 findings hitting the vendor-severity fallback
+# actually carried a real CVSS:4.0 vector. It must be scored on the normal numeric-band rules,
+# not fall to the coarser vendor-severity fallback for want of a v4 parser.
+test_classify_cvss4_vector_is_scored_not_fallback() {
+  mkpolicy; mkvuln CVE-2024-12798 \
+    "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:L/VI:H/VA:L/SC:L/SI:H/SA:L/RE:L/U:Clear" false null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].cvss' "$TMP/co.json")" "5.9" || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "planned" || return 1
+  assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "6"
+}
+
+# A malformed CVSS:4.0 vector must fall back to the vendor-severity rules, not crash the run.
+test_classify_cvss4_malformed_vector_falls_back() {
+  mkpolicy
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"p"}},components:[],
+          vulnerabilities:[{id:"GHSA-y",
+            ratings:[{source:{name:"OSV"},method:"CVSSv4",vector:"CVSS:4.0/AV:Z"}],
+            properties:[{name:"quickbird:vuln:osv-severity",value:"HIGH"}]}]}' > "$TMP/cv.json"
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "expedited" || return 1
+  contains "$(jq -r '.findings[0].why' "$TMP/co.json")" "vendor severity"
+}
+
 test_classify_vex_not_affected_is_suppressed() {
   mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" true null not_affected vulnerable_code_not_present
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
@@ -2395,8 +2419,9 @@ EOF
   assert "$(jq -r '.units[0].kev_findings | join(",")' "$TMP/ku.json")" "CVE-1"
 }
 
-# Regression: a CVSS-4-only advisory has no parsable 3.x vector and fell to rule 9
-# (expedited) whatever its severity. The database severity band now routes it.
+# Regression: a CVSS-4-only advisory used to have no parsable vector and fell to rule 9
+# (expedited) whatever its severity, routed only by the osv-severity property below. Now the
+# vector itself is scored (9.3, rule 2), and osv-severity is not even consulted for this one.
 test_classify_v4_only_critical_is_immediate() {
   cat > "$TMP/v4.json" <<'EOF'
 {"bomFormat":"CycloneDX","specVersion":"1.6","components":[],

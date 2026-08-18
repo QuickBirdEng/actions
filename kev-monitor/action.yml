@@ -60,6 +60,15 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    - name: Install CVSS v4 scoring dependency
+      shell: bash
+      # monitor-kev.sh re-assesses through assess-bom.sh -> classify-findings.py, the same
+      # classifier soup-discovery uses, and pinned the same way there.
+      run: |
+        python3 -c 'import cvss' 2>/dev/null \
+          || pip3 install --quiet cvss==3.6 2>/dev/null \
+          || pip3 install --quiet --break-system-packages cvss==3.6
+
     - name: Run the KEV check
       id: run
       shell: bash
