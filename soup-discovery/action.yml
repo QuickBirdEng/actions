@@ -83,8 +83,8 @@ inputs:
   do-access-key:
     description: >-
       DigitalOcean Spaces access key. With it, the bundle and the PDF are also written to the
-      quickbird-artifacts space, in addition to the release asset. The release asset covers a
-      tagged build; this covers every build, and it is where a bundle for a product without
+      quickbird-soup-artifacts space, in addition to the release asset. The release asset covers
+      a tagged build; this covers every build, and it is where a bundle for a product without
       releases has to live.
     required: false
     default: ''
@@ -335,7 +335,7 @@ runs:
       with:
         access_key: ${{ inputs.do-access-key }}
         secret_key: ${{ inputs.do-secret-key }}
-        space_name: quickbird-artifacts
+        space_name: quickbird-soup-artifacts
         space_region: fra1
         source: ${{ steps.store.outputs.dir }}
         out_dir: ${{ steps.store.outputs.out-dir }}

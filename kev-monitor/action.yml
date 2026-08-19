@@ -36,8 +36,8 @@ inputs:
   do-access-key:
     description: >-
       DigitalOcean Spaces access key. With it, the dated run record is also written to the
-      quickbird-artifacts space, which is what makes it a durable record: the workflow artifact
-      below is retained for 90 days, and an annual backstop has to reconcile 365.
+      quickbird-soup-artifacts space, which is what makes it a durable record: the workflow
+      artifact below is retained for 90 days, and an annual backstop has to reconcile 365.
     required: false
     default: ''
   do-secret-key:
@@ -153,7 +153,7 @@ runs:
       with:
         access_key: ${{ inputs.do-access-key }}
         secret_key: ${{ inputs.do-secret-key }}
-        space_name: quickbird-artifacts
+        space_name: quickbird-soup-artifacts
         space_region: fra1
         source: ${{ steps.evidence.outputs.record }}
         out_dir: ${{ steps.evidence.outputs.out-dir }}

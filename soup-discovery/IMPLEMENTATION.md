@@ -143,7 +143,7 @@ process_version| date| Stamped into every record, so a record states which versi
   
 ## Object store layout
 
-Space `quickbird-artifacts`, region `fra1`, the same space and the same upload action as the mobile build artefacts. Credentials per product as repository secrets.
+Space `quickbird-soup-artifacts`, region `fra1`, dedicated to SOUP data so a sync of it never pulls in unrelated build artefacts. Credentials per product as repository secrets.
 
 Prefix| Content  
 ---|---  

@@ -57,7 +57,7 @@ jobs:
           for product in $(echo '${{ inputs.products }}' | tr ',' ' '); do
             for year in $YEARS; do
               aws s3 sync \
-                "s3://quickbird-artifacts/$product/soup-evidence/$year/" "evidence/" \
+                "s3://quickbird-soup-artifacts/$product/soup-evidence/$year/" "evidence/" \
                 --endpoint-url https://fra1.digitaloceanspaces.com \
                 --only-show-errors || true
             done
@@ -70,7 +70,7 @@ jobs:
           mkdir -p previous
           for year in $YEARS; do
             aws s3 sync \
-              "s3://quickbird-artifacts/${{ github.event.repository.name }}/soup-backstop/$year/" \
+              "s3://quickbird-soup-artifacts/${{ github.event.repository.name }}/soup-backstop/$year/" \
               "previous/" \
               --endpoint-url https://fra1.digitaloceanspaces.com \
               --only-show-errors || true
@@ -98,7 +98,7 @@ jobs:
         with:
           access_key: ${{ secrets.DO_ACCESS_KEY }}
           secret_key: ${{ secrets.DO_SECRET_KEY }}
-          space_name: quickbird-artifacts
+          space_name: quickbird-soup-artifacts
           space_region: fra1
           source: backstop-report.json
           out_dir: ${{ steps.path.outputs.out-dir }}
