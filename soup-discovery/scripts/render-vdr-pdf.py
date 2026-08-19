@@ -333,7 +333,7 @@ def build(args):
     el.append(Paragraph(
         f"CVEs by severity: <font color='#b91c1c'><b>{n_crit} Critical</b></font> · "
         f"<font color='#b45309'><b>{n_high} High</b></font> · {n_med} Medium · {n_low} Low · "
-        f"{n_unscored} unscored (Planned until scored, per the classification rules above). "
+        f"{n_unscored} unscored (see 5 Remediation actions for each one's own track). "
         f"Fix availability: "
         f"<b>{fixes.count('available')} with a published fix</b> · "
         f"{fixes.count('none-published')} without · "
