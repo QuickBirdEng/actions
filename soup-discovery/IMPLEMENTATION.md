@@ -178,7 +178,7 @@ quickbird:soup:direct-without-record
 quickbird:currency:latest  
 :status / :detail | The latest available version next to the shipped one, per component: current, behind, stale, stale-and-behind, or unknown with the reason.  
   
-The scanner version is pinned, currently syft 1.20.0, and never `latest`: the component list must not change because a scanner updated itself between two runs of the same commit.
+The scanner version is pinned, currently syft 1.51.0, and never `latest`: the component list must not change because a scanner updated itself between two runs of the same commit.
 
 ## Implementation limits
 

@@ -17,7 +17,7 @@ REPO="${3:-.}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="${SBOM_OUT_DIR:-$REPO/sbom}"
-SYFT_VERSION="${SYFT_VERSION:-1.20.0}"
+SYFT_VERSION="${SYFT_VERSION:-1.51.0}"
 SYFT_BIN="${SYFT_BIN:-}"
 
 log() { printf '%s\n' "$*" >&2; }
