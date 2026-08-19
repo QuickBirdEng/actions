@@ -200,7 +200,8 @@ def build(args):
         f"{sha[:16]}…</font> &nbsp;·&nbsp; "
         f"<b>Data sources</b> OSV · KEV catalog "
         f"{esc(mp.get('quickbird:vuln:kev-catalog-version', '?'))} · EPSS "
-        f"{esc(mp.get('quickbird:vuln:epss-model-version', '?'))}", small)]],
+        f"{esc(mp.get('quickbird:vuln:epss-model-version', '?'))} "
+        f"({esc(mp.get('quickbird:vuln:epss-score-date', '?'))})", small)]],
         colWidths=[170 * mm], style=TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), BOX),
             ("BOX", (0, 0), (-1, -1), 0.5, LINE),

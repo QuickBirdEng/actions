@@ -56,7 +56,12 @@ jq --slurpfile e "$ENRICH" '
                 .properties = ((.properties // []) + [{name:"quickbird:vuln:kev-ransomware", value:"true"}])
               else . end )
           # EPSS as an extra rating rather than a property: it is a score, and CycloneDX
-          # models multiple scoring methods on one vulnerability.
+          # models multiple scoring methods on one vulnerability. The rating object itself has
+          # no room for a date (CycloneDX 1.6 fixes ratings to source/score/severity/method/
+          # vector/justification, additionalProperties: false), so the model version and score
+          # date that make an EPSS score reproducible go onto the properties of the
+          # vulnerability instead, per finding, not only into metadata.properties for the whole
+          # document. WI-006-09-01 asks for them written onto the finding.
           | ( if $c.epss != null then
                 .ratings = ((.ratings // []) + [{
                   source: {name: "EPSS"},
@@ -64,6 +69,11 @@ jq --slurpfile e "$ENRICH" '
                   method: "other",
                   justification: ("EPSS " + ($enr.feeds.epss.model_version // "unknown")
                                   + ", percentile " + (($c.epss_percentile // 0) | tostring)) }])
+                | .properties = ((.properties // []) + [
+                    {name:"quickbird:vuln:epss-model-version",
+                     value: ($enr.feeds.epss.model_version // "unknown")},
+                    {name:"quickbird:vuln:epss-score-date",
+                     value: ($enr.feeds.epss.score_date // "unknown")}])
               else . end )
           | .properties = ((.properties // []) | sort_by(.name, (.value // "")))
         end ] )

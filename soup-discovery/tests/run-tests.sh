@@ -547,6 +547,21 @@ test_enrichment_records_feed_provenance() {
   assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:vuln:epss-model-version")][0].value' "$TMP/eo2.json")" "v2026.06.15"
 }
 
+# WI-006-09-01 asks for the EPSS model version and score date "written onto the finding", not
+# only into the document-wide metadata: EPSS scores are not comparable across model versions,
+# so a finding's own record must be reproducible without cross-referencing the enrichment run.
+test_enrichment_epss_model_and_date_are_on_the_finding() {
+  jq -n '{schema:"quickbird.cve-enrichment/v1", stale:false,
+          feeds:{kev:{available:false,catalog_version:null},
+                 epss:{available:true,model_version:"v2026.06.15",score_date:"2026-08-02"}},
+          cves:{"CVE-1":{kev:null,epss:0.42,epss_percentile:0.81,in_epss:true}}}' > "$TMP/enr3.json"
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"p"}},components:[],
+          vulnerabilities:[{id:"CVE-1"}]}' > "$TMP/eb3.json"
+  bash "$S/merge-enrichment.sh" "$TMP/eb3.json" "$TMP/enr3.json" "$TMP/eo3.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.vulnerabilities[0].properties[]|select(.name=="quickbird:vuln:epss-model-version")][0].value' "$TMP/eo3.json")" "v2026.06.15" || return 1
+  assert "$(jq -r '[.vulnerabilities[0].properties[]|select(.name=="quickbird:vuln:epss-score-date")][0].value' "$TMP/eo3.json")" "2026-08-02"
+}
+
 # ---------------------------------------------------------------- policy
 pol() { printf 'product: p\ncra_scope: %s\nmaintenance_interval: 90d\n%s' "$1" "${2:-}" > "$TMP/pol.yml"; }
 
