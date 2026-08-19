@@ -190,6 +190,19 @@ test_discover_classifies_android_not_jvm() {
   assert "$(jq -r '[.candidates[]|select(.ecosystem=="jvm-gradle")]|length' "$TMP/cand.json")" "0"
 }
 
+# A JVM gradle.lockfile needs configuration filtering before it can be scanned (lockAllConfigurations
+# tags every configuration onto one line), so discovery routes it through its own source kind
+# rather than a plain file: scan.
+test_discover_jvm_gradle_lockfile_needs_filtering() {
+  mkrepo
+  mkdir -p "$TMP/repo/services/worker"
+  printf 'dependencies {}\n' > "$TMP/repo/services/worker/build.gradle"
+  : > "$TMP/repo/services/worker/gradle.lockfile"
+  discover
+  assert "$(jq -r '.candidates[]|select(.ecosystem=="jvm-gradle")|.scan_source' "$TMP/cand.json")" \
+    "gradle-lockfile:services/worker/gradle.lockfile"
+}
+
 # Regression: the same image referenced from prod/staging/dev manifests produced one
 # candidate per reference — 8 id collisions in mindnet, and a scope rule then matched an
 # arbitrary one of them.
@@ -560,6 +573,40 @@ test_enrichment_epss_model_and_date_are_on_the_finding() {
   bash "$S/merge-enrichment.sh" "$TMP/eb3.json" "$TMP/enr3.json" "$TMP/eo3.json" >/dev/null 2>&1 || return 1
   assert "$(jq -r '[.vulnerabilities[0].properties[]|select(.name=="quickbird:vuln:epss-model-version")][0].value' "$TMP/eo3.json")" "v2026.06.15" || return 1
   assert "$(jq -r '[.vulnerabilities[0].properties[]|select(.name=="quickbird:vuln:epss-score-date")][0].value' "$TMP/eo3.json")" "2026-08-02"
+}
+
+# ---------------------------------------------------------------- gradle lockfile filtering
+GLF() { bash "$S/filter-gradle-lockfile.sh" "$@"; }
+
+# lockAllConfigurations() tags every configuration onto one line. Measured on a real
+# lockfile: 56 of 143 components were tagged only with test/build-tooling configurations and
+# never ship, yet got real classified findings and remediation burden.
+test_gradle_lockfile_drops_test_only_entries() {
+  cat > "$TMP/glf-in.lockfile" <<'EOF'
+# This is a Gradle generated file for dependency locking.
+com.google.guava:guava:31.0-jre=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.squareup.okhttp3:mockwebserver:4.9.0=testCompileClasspath,testImplementationDependenciesMetadata,testRuntimeClasspath
+empty=annotationProcessor,testAnnotationProcessor
+EOF
+  GLF "$TMP/glf-in.lockfile" "$TMP/glf-out" >/dev/null 2>&1 || return 1
+  grep -q "guava" "$TMP/glf-out/gradle.lockfile" || return 1
+  ! grep -q "mockwebserver" "$TMP/glf-out/gradle.lockfile"
+}
+
+# A line with no discernible configuration tag is kept, not dropped: not knowing whether
+# something ships is not the same as knowing it does not.
+test_gradle_lockfile_keeps_untagged_lines() {
+  printf 'com.example:untagged:1.0\n' > "$TMP/glf-in2.lockfile"
+  GLF "$TMP/glf-in2.lockfile" "$TMP/glf-out2" >/dev/null 2>&1 || return 1
+  grep -q "untagged" "$TMP/glf-out2/gradle.lockfile"
+}
+
+# syft's gradle-lockfile cataloger triggers on the literal filename, not on content — a
+# filtered copy under any other name is invisible to it.
+test_gradle_lockfile_output_is_named_exactly_gradle_lockfile() {
+  printf 'com.example:x:1.0=runtimeClasspath\n' > "$TMP/glf-in3.lockfile"
+  GLF "$TMP/glf-in3.lockfile" "$TMP/glf-out3" >/dev/null 2>&1 || return 1
+  [[ -f "$TMP/glf-out3/gradle.lockfile" ]]
 }
 
 # ---------------------------------------------------------------- policy

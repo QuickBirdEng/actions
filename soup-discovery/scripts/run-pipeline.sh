@@ -87,6 +87,21 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers; do
       target="$kind:$arg"
       [[ "$kind" != "registry" ]] && target="$kind:$REPO/$arg"
       ;;
+    gradle-lockfile)
+      # lockAllConfigurations() tags every configuration onto one line; scanning it
+      # undifferentiated would count test/build-only dependencies as shipped. Filtered to
+      # the runtimeClasspath closure before syft ever sees it. The filtered copy lives under
+      # $OUT_DIR keyed by $id, not a random temp name: the scan target is recorded onto the
+      # BOM, and a random name there would make two runs of the same commit disagree.
+      lockfile="$REPO/$arg"
+      if [[ ! -f "$lockfile" ]]; then
+        log "  gap  $id — $arg not found"; GAPS+=("$id"); continue
+      fi
+      fdir="$OUT_DIR/.gradle-runtime/$id"
+      bash "$HERE/filter-gradle-lockfile.sh" "$lockfile" "$fdir" >&2 || {
+        log "  gap  $id — could not filter gradle.lockfile"; GAPS+=("$id"); continue; }
+      target="file:$fdir/gradle.lockfile"
+      ;;
     installDist)
       # The resolved runtime closure. Declared dependencies alone omit transitives and
       # leave BOM-managed versions empty, which is the defect this pipeline exists for.

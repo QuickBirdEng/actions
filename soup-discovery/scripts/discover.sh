@@ -121,7 +121,11 @@ while IFS= read -r f; do
   fi
 
   if [[ -f "$dir/gradle.lockfile" ]]; then
-    src="file:$dir/gradle.lockfile"; note="dependency locking enabled — lockfile is the resolved set"
+    # lockAllConfigurations() tags every configuration onto one shared line, so the lockfile
+    # cannot be scanned as-is: a component locked only for testRuntimeClasspath would be
+    # counted as shipped. run-pipeline.sh filters it to runtimeClasspath first.
+    src="gradle-lockfile:$dir/gradle.lockfile"
+    note="dependency locking enabled — lockfile filtered to runtimeClasspath and used as the resolved set"
   else
     src="installDist:$dir"
     note="no gradle.lockfile — scan installDist output for the resolved runtime closure; declared deps alone would omit transitives and leave BOM-managed versions empty"
