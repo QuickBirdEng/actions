@@ -160,24 +160,28 @@ def classify(v, policy):
         return "kev", 1, "KEV membership could not be established — treated as KEV until it can"
 
     if cvss is None:
-        # No parsable CVSS vector at all, 3.x or 4.0. The database severity is a usable band,
-        # and falling straight to rule 9 would put a Critical three tracks too low.
+        # No parsable CVSS vector, 3.x or 4.0. The database severity gives a usable band.
+        # Without this band, an unscored Critical finding would get the same track as an
+        # unscored finding with no label: planned, two tracks below immediate.
+        # Rules 9-16, not a reuse of 2-9. WI-006-09-01 gives the vendor-label fallback its
+        # own rule numbers. Two conditions must not share one rule number: a shared number
+        # stops the reader from finding which condition set the record.
         band = (p.get("quickbird:vuln:osv-severity") or "").strip().upper()
         if band == "CRITICAL":
-            return "immediate", 2, "vendor severity Critical (no parsable CVSS vector)"
+            return "immediate", 9, "vendor severity Critical (no parsable CVSS vector)"
         if band == "HIGH":
             if epss is not None and epss >= hi:
-                return "immediate", 3, f"vendor severity High with EPSS {epss} >= {hi}"
-            return "expedited", 4, "vendor severity High (no parsable CVSS vector)"
+                return "immediate", 10, f"vendor severity High with EPSS {epss} >= {hi}"
+            return "expedited", 11, "vendor severity High (no parsable CVSS vector)"
         if band in ("MODERATE", "MEDIUM"):
             if epss is not None and epss >= el:
-                return "expedited", 5, f"vendor severity Medium with EPSS {epss} >= {el}"
-            return "planned", 6, "vendor severity Medium (no parsable CVSS vector)"
+                return "expedited", 12, f"vendor severity Medium with EPSS {epss} >= {el}"
+            return "planned", 13, "vendor severity Medium (no parsable CVSS vector)"
         if band == "LOW":
             if epss is not None and epss >= el:
-                return "planned", 7, f"vendor severity Low with EPSS {epss} >= {el}"
-            return "monitor", 8, "vendor severity Low (no parsable CVSS vector)"
-        return "planned", 9, "no CVSS score available — an unknown is not a low"
+                return "planned", 14, f"vendor severity Low with EPSS {epss} >= {el}"
+            return "monitor", 15, "vendor severity Low (no parsable CVSS vector)"
+        return "planned", 16, "no CVSS score available — an unknown is not a low"
     if cvss >= 9.0:
         return "immediate", 2, f"CVSS {cvss} (Critical)"
     if cvss >= 7.0:

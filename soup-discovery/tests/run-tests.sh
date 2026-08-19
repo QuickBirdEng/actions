@@ -916,6 +916,19 @@ test_classify_missing_cvss_is_planned_not_low() {
   mkpolicy; mkvuln GHSA-x null false null
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
   assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "planned" || return 1
+  assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "16"
+}
+
+# The vendor-severity fallback has its own rule numbers, 9 to 16. It does not reuse the
+# CVSS-based rule numbers, 2 to 8. Two conditions must not share one rule number: a shared
+# number stops the reader from finding which condition set the record.
+test_classify_vendor_critical_with_no_cvss_is_its_own_rule() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"p"}},components:[],
+          vulnerabilities:[{id:"GHSA-crit",
+            properties:[{name:"quickbird:vuln:osv-severity",value:"CRITICAL"}]}]}' > "$TMP/cv.json"
+  mkpolicy
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].track' "$TMP/co.json")" "immediate" || return 1
   assert "$(jq -r '.findings[0].rule' "$TMP/co.json")" "9"
 }
 
@@ -2481,9 +2494,9 @@ EOF
   assert "$(jq -r '.units[0].kev_findings | join(",")' "$TMP/ku.json")" "CVE-1"
 }
 
-# Regression: a CVSS-4-only advisory used to have no parsable vector and fell to rule 9
-# (expedited) whatever its severity, routed only by the osv-severity property below. Now the
-# vector itself is scored (9.3, rule 2), and osv-severity is not even consulted for this one.
+# Regression: a CVSS-4-only advisory used to have no parsable vector. classify() then used the
+# osv-severity property below, not the real score. Now the vector itself is scored (9.3, rule 2),
+# and osv-severity is not even read for this finding.
 test_classify_v4_only_critical_is_immediate() {
   cat > "$TMP/v4.json" <<'EOF'
 {"bomFormat":"CycloneDX","specVersion":"1.6","components":[],
