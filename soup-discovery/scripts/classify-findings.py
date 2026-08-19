@@ -424,10 +424,11 @@ def main():
         # and Critical; the `expedited` track also holds Medium findings escalated by EPSS and
         # unscored ones, and pulling those in would blunt the signal. VEX-suppressed findings are
         # already excluded above — a justified not_affected means the component is not exposed, so
-        # it does not contradict anything.
+        # it does not contradict anything. Rules 9-11 add the same severity band for the
+        # no-CVSS-vector case: a vendor label of Critical or High still counts as major or critical.
         _cvss = cvss_of(v)
         _kev = props(v).get("quickbird:vuln:kev") == "true"
-        if _kev or (_cvss is not None and _cvss >= 7.0):
+        if _kev or (_cvss is not None and _cvss >= 7.0) or rule in (9, 10, 11):
             note_contradiction(v, _cvss, _kev)
 
     for e in recheck.values():

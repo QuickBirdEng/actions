@@ -761,7 +761,7 @@ test_consolidate_keeps_the_subject_hashes_and_properties() {
 # but the vulnerability picture can change underneath it, and nothing reconciled the two. A record
 # could keep asserting "no major or critical security issues" while the monitor reported a Critical
 # in the same component.
-mkg4() {  # <grq4-fulfilled> <vector> [vex-state] [justification]
+mkg4() {  # <grq4-fulfilled> <vector> [vex-state] [justification] [vendor-severity]
   rm -rf "$TMP/g4"; mkdir -p "$TMP/g4/soups"
   jq -n --argjson ful "$1" \
     '{package:"linkerd",version:"25.x.x",
@@ -770,7 +770,7 @@ mkg4() {  # <grq4-fulfilled> <vector> [vex-state] [justification]
                              fulfilled:$ful,
                              reason_if_requirement_not_fulfilled:(if $ful then "" else "known, accepted" end),
                              metadata:{vulnerabilities_count:0}}}}' > "$TMP/g4/soups/linkerd.json"
-  jq -n --arg vec "$2" --arg vs "${3:-}" --arg j "${4:-}" \
+  jq -n --arg vec "$2" --arg vs "${3:-}" --arg j "${4:-}" --arg sev "${5:-}" \
     '{bomFormat:"CycloneDX",specVersion:"1.6",
       metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
       components:[{"bom-ref":"c1",type:"library",name:"linkerd",version:"25.12.1",
@@ -778,7 +778,8 @@ mkg4() {  # <grq4-fulfilled> <vector> [vex-state] [justification]
       vulnerabilities:[({id:"CVE-2026-1",affects:[{ref:"c1"}],
                          ratings:[{source:{name:"OSV"},method:"CVSSv31",vector:$vec}]}
                         + (if $vs != "" then {analysis:({state:$vs}
-                             + (if $j != "" then {justification:$j} else {} end))} else {} end))]}' \
+                             + (if $j != "" then {justification:$j} else {} end))} else {} end)
+                        + (if $sev != "" then {properties:[{name:"quickbird:vuln:osv-severity",value:$sev}]} else {} end))]}' \
     > "$TMP/g4/in.json"
   bash "$S/merge-assessment.sh" "$TMP/g4/in.json" "$TMP/g4/soups" "$TMP/g4/a.json" >/dev/null 2>&1 || return 1
   mkpolicy
@@ -805,6 +806,14 @@ test_grq4_a_medium_does_not_contradict() {
 test_grq4_vex_not_affected_does_not_contradict() {
   mkg4 true "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" not_affected vulnerable_code_not_present || return 1
   assert "$(jq -r '.soup_records_to_recheck | length' "$TMP/g4/cl.json")" "0"
+}
+
+# A vendor label of Critical or High still counts as major or critical, even with no CVSS
+# vector to score. The check must not miss it just because it took the fallback path.
+test_grq4_vendor_critical_fallback_contradicts_a_fulfilled_record() {
+  mkg4 true "" "" "" CRITICAL || return 1
+  assert "$(jq -r '.findings[0].rule' "$TMP/g4/cl.json")" "9" || return 1
+  assert "$(jq -r '.soup_records_to_recheck | length' "$TMP/g4/cl.json")" "1"
 }
 
 # If grq-4 is already recorded as unfulfilled with a reason, the record says so — no contradiction.
