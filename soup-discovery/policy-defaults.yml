@@ -135,6 +135,11 @@ dependency_currency:
   # answer — there is nothing to upgrade to. 12 months matches the analysis period the
   # SOUP records already use in grq-3 ("Is maintained and support is available").
   stale_after: 12m
+  # Written explicitly, not left implicit: validate-policy.sh's TR-03161 check already
+  # treats an absent key the same as false, so this changes nothing about what is allowed.
+  # It exists so policy.effective.json shows the value in force instead of being silent
+  # about a parameter that is real, schema-checked and tested.
+  obsolescence_may_be_accepted: false
 
 # WI-006-09-02: Service level. How often the reconciliation runs and reports what did not happen.
 #
