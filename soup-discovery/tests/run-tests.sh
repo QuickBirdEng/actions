@@ -1260,6 +1260,44 @@ test_monitor_writes_a_record_when_optional_policy_fields_are_blank() {
   assert "$(jq -r '.maintenance_interval' "$rec")" "90d"
 }
 
+# Regression: the asset was fetched with a bare `curl "$url"`. The url resolve-deployed.sh records
+# is an API url, and it needs two headers: without a token it is a 404 on a private repository, and
+# without Accept: application/octet-stream the API answers 200 with the asset *metadata* — JSON that
+# is not a BOM, so the file is non-empty and gets scanned. Every monitor run on a private repo
+# reported "SBOM asset could not be downloaded" and scanned nothing, on every product.
+test_monitor_downloads_the_asset_with_a_token_and_octet_stream() {
+  rm -rf "$TMP/mdl"; mkdir -p "$TMP/mdl/bin" "$TMP/mdl/out"
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/mdl/.soup-policy.yml"
+  cat > "$TMP/mdl/bin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"/environments"*)            echo '{"environments":[{"name":"Production"}]}' ;;
+  *"deployments?environment="*) echo '[{"id":1,"environment":"Production","ref":"v1.0.0","sha":"a","created_at":"2026-01-01T00:00:00Z"}]' ;;
+  *"/deployments/1/statuses"*)  echo '[{"state":"success"}]' ;;
+  *"matching-refs/tags"*)       echo '[{"ref":"refs/tags/v1.0.0"}]' ;;
+  *"/releases/tags/v1.0.0"*)    echo '{"assets":[{"name":"sbom-v1.0.0.cdx.json","url":"https://api.github.test/assets/1"}]}' ;;
+  *) echo '[]' ;;
+esac
+GH
+  cat > "$TMP/mdl/bin/curl" <<'CURL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${CURL_ARGS_LOG:-/dev/null}"
+out=""; prev=""
+for a in "$@"; do [[ "$prev" == "-o" ]] && out="$a"; prev="$a"; done
+if [[ -n "$out" ]]; then
+  printf '%s' '{"bomFormat":"CycloneDX","specVersion":"1.6","metadata":{"component":{"name":"p","bom-ref":"p","type":"application"},"properties":[{"name":"quickbird:sbom:tier","value":"candidate"}]},"components":[],"vulnerabilities":[]}' > "$out"
+fi
+printf '200'
+CURL
+  chmod +x "$TMP/mdl/bin/gh" "$TMP/mdl/bin/curl"
+  CURL_ARGS_LOG="$TMP/mdl/curl.log" GH_TOKEN=t0ken PATH="$TMP/mdl/bin:$PATH" \
+    SOUP_POLICY_FILE="$TMP/mdl/.soup-policy.yml" \
+    bash "$S/monitor-kev.sh" QuickBirdEng/x p "$TMP/mdl/out" >/dev/null 2>&1
+  [[ -s "$TMP/mdl/curl.log" ]] || return 1
+  grep -q 'Accept: application/octet-stream' "$TMP/mdl/curl.log" || return 1
+  grep -q 'Authorization: Bearer t0ken' "$TMP/mdl/curl.log"
+}
+
 # And the run must refuse to look clean if the record did not survive.
 test_monitor_fails_when_the_record_would_be_empty() {
   rm -rf "$TMP/mrec2"; mkdir -p "$TMP/mrec2/out"
