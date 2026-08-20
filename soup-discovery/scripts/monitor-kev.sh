@@ -313,6 +313,7 @@ jq -n \
   --arg interval "$(jq -r '.maintenance_interval // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg onboarded "$(jq -r '.onboarded // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --arg recon "$(jq -r '.reconciliation_interval // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
+  --arg baseline "$(jq -r '.baseline_clocks_start // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
   --argjson prodrel "$(jq -c '.production_release // null' <<<"${POLICY_JSON:-{\}}" 2>/dev/null || echo null)" \
   --argjson classified "$CLASSIFIED" \
   --argjson lifecycle "$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -c '{summary, release_required, transitions}' "$LIFECYCLE" || echo null )" \
@@ -332,6 +333,7 @@ jq -n \
      # classifier lands every Track 3/4 finding on the next one.
      maintenance_interval: ($interval | blank_to_null),
      onboarded: ($onboarded | blank_to_null),
+     baseline_clocks_start: ($baseline | blank_to_null),
      reconciliation_interval: ($recon | blank_to_null),
      # Which releases this product counts as production. Three signals answer that and they
      # disagree on most of the portfolio, so the backstop must not pick one on its own —
