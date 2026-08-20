@@ -1,0 +1,38 @@
+# Goes into <product>/.github/workflows/soup-backstop.yml — WI-006-09: Reconcile.
+#
+# The reconciliation: what did NOT happen. Days without a record, breaches without a decision,
+# expired risk acceptances, missed maintenance windows, and parameters that changed between runs.
+#
+# One caller may cover several products by listing them, which is the point — a product missing from
+# the evidence store entirely is the finding this catches, and a per-product workflow cannot notice
+# that its own product is absent.
+
+name: SOUP Backstop
+
+on:
+  schedule:
+    # Must match the product's reconciliation_interval (WI-006-09-02: Service level). Set one, delete the other.
+    - cron: '0 7 1 1,4,7,10 *'    # every 3m: 1 January, April, July, October
+    # - cron: '0 7 15 1 *'        # every 12m: 15 January
+
+  workflow_dispatch:
+    inputs:
+      window:
+        description: 'Days of history to reconcile. Match reconciliation_interval, e.g. 92 for 3m, 366 for 12m.'
+        required: false
+        default: '92'
+        type: string
+
+# deployments: the reconciliation checks the maintenance windows against the production
+# deployment records — same requirement, same reason as the monitor.
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  backstop:
+    uses: QuickBirdEng/workflows/.github/workflows/soup-backstop.yml@main
+    with:
+      products: <product>[,<product>,...]
+      window: ${{ fromJSON(inputs.window || '92') }}
+    secrets: inherit

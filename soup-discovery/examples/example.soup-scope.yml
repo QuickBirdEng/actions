@@ -1,0 +1,56 @@
+# Template for `<product>/.soup-scope.yml`.
+#
+# Every candidate `discover.sh` finds must appear below, in `include:` or in `exclude:`, each with a
+# reason. A candidate in neither list stops the run: without that rule, "not listed" and "deliberately
+# excluded" look identical in the document, and the inventory can no longer claim to be complete
+# (WI-006-09-02: Scope of the product, BSI TR-03161 O.TrdP_1).
+#
+# Ids are per artefact, not per component. The same image can therefore be in scope where it is shipped
+# and out of scope where it is only a developer convenience, and neither decision contradicts the other.
+#
+# To start: `SCOPE_SCAFFOLD=1 scripts/resolve-scope.sh candidates.json` emits every candidate with an
+# empty reason. Classify each one, then run the gate without the variable.
+
+include:
+  # A dependency manifest whose lock file is the resolved set — the straightforward case.
+  - id: backend
+    reason: The service we ship. The lock file is the resolved dependency set.
+
+  # A build file without a lock file. Worth stating explicitly, because declared is not resolved: the
+  # closure needs the build tool to run, and the document says so rather than presenting the declared
+  # set as complete.
+  - id: extension-module
+    reason: >-
+      Provider extension we build and deploy. Its dependencies are SOUP. The manifest lists declared
+      dependencies only; the resolved closure comes from the build.
+
+  # A third-party image pinned in the deployment configuration. These are the ones whose CVEs nobody
+  # else is watching, which is why an unresolvable image reference is reported rather than skipped.
+  - id: values-image-cache
+    reason: Third-party image pinned in the deployment values and shipped as part of the stack.
+
+  # The final stage of a Dockerfile we build — this is what covers the components of our own image.
+  - id: dockerfiles-image-final
+    reason: Final stage of the service Dockerfile — the base of the image we ship.
+
+exclude:
+  # Same image as an included candidate, in a different artefact. Legitimate, and the reason is what
+  # makes it legitimate.
+  - id: dev-compose-cache
+    reason: Local developer stack only. Never deployed; the shipped instance is values-image-cache.
+
+  # Our own release-versioned image. Not skipped for convenience: its concrete version is the chart
+  # appVersion, resolved only from the deployment record, and its contents are already covered by the
+  # Dockerfile candidate that builds it.
+  - id: deployed-service--version-
+    reason: >-
+      Our own image at the release version. The tag is substituted at deploy time, so it cannot be
+      resolved here; its components are covered by dockerfiles-image-final, which builds it.
+
+  # Infrastructure, not shipped software. State which it is — "infrastructure" alone is not a decision.
+  - id: terraform-root
+    reason: Provider versions for infrastructure we operate. No component ships to the user.
+
+  # An intermediate build stage. Its packages do not reach the shipped image.
+  - id: dockerfiles-image-builder
+    reason: Builder stage. Discarded in the final image, so none of its packages ship.

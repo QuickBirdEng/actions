@@ -1,0 +1,38 @@
+# Goes into <product>/.github/workflows/soup-kev-monitor.yml — WI-006-09: Observe.
+#
+# The daily run. Pick a minute per product rather than copying this one: the KEV catalog and the
+# EPSS feed are single shared endpoints, and every product hitting them in the same minute is a
+# self-inflicted rate limit.
+#
+# The schedule is what makes the timeframes of WI-006-09-01: Timeframes measurable — both clocks start on the date a
+# finding is first reported by a run, so a workflow that only ever runs manually starts every clock
+# on the day someone remembered to press the button.
+
+name: SOUP - KEV monitor
+
+on:
+  schedule:
+    - cron: '17 6 * * *'      # daily, 06:17 UTC. Change the minute per product.
+
+  # A scheduled workflow runs only from the default branch, and it stops running after 60 days of
+  # repository inactivity without saying so. The manual trigger is how a run is reproduced when a
+  # record is questioned, and how a product is checked on the day it is onboarded.
+  workflow_dispatch:
+
+# deployments: the monitor answers "what is running" from the deployment records, and with
+# contents:read alone the per-environment fetch 403s — the environment then shows up as a
+# named gap instead of a version. Proven on the first end-to-end run.
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  kev:
+    uses: QuickBirdEng/workflows/.github/workflows/soup-kev-monitor.yml@main
+    with:
+      product: <product>
+      # true | false | unknown — WI-006-09-02: Scope of the product. Left at unknown, the alert says so; assuming false is the
+      # one wrong answer with a legal consequence attached.
+      cra-scope: unknown
+      slack-channel-id: <channel id>
+    secrets: inherit

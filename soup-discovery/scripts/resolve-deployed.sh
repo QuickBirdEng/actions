@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# Resolve what a product currently has deployed, and whether an SBOM exists for it.
+#
+# This is what the daily monitoring needs: "scan the deployed version" has to resolve to
+# something. The convention (decided 2026-08-02) is git tag + release assets, with the
+# deploy step recording what went live.
+#
+# The script's job is as much to report when the question CANNOT be answered as to answer
+# it. Three distinct negative results, deliberately not collapsed into one:
+#
+#   - no deployment recorded for an environment  -> we do not know what is running
+#   - deployed ref is not a tag (a branch build) -> no release, therefore no SBOM
+#   - deployed tag has no SBOM asset             -> released before the pipeline existed
+#
+# Reporting "unknown" is the correct answer to a question we cannot answer. Falling back to
+# "the newest tag" would produce a confident wrong one.
+#
+# Usage: resolve-deployed.sh <owner/repo> [environment]
+
+set -uo pipefail
+
+REPO="${1:?usage: resolve-deployed.sh <owner/repo> [environment]}"
+WANT_ENV="${2:-}"
+ASSET_PATTERN="${SBOM_ASSET_PATTERN:-sbom-%s.cdx.json}"
+
+for t in gh jq; do command -v "$t" >/dev/null 2>&1 || { echo "::error::$t required" >&2; exit 1; }; done
+
+TMPD=$(mktemp -d) || exit 1
+trap 'rm -rf "$TMPD"' EXIT
+
+# --- mobile: the last production build is what is live ----------------------
+# For the apps there is no deployment record, because the release goes straight to the
+# stores. The convention that already exists in the release assets carries the answer:
+# a build is tagged -android-production / -ios-production, and the newest release carrying
+# one is what users are running. Staging, study and develop flavours are not live.
+#
+# This is derived from what the release pipeline already produces rather than requiring new
+# instrumentation — but it does mean the *asset naming* is now load-bearing, which is worth
+# knowing before someone renames it.
+MOBILE_PATTERN="${MOBILE_PROD_PATTERN:-production}"
+# Note: `gh api --jq` takes only an expression — it does not forward --arg to jq. Passing
+# one silently loses the variable and every repo comes back "not live", which is a wrong
+# answer that looks like a legitimate one. Pipe to jq instead.
+mobile=$(gh api "repos/$REPO/releases?per_page=100" 2>/dev/null \
+  | jq -c --arg pat "$MOBILE_PATTERN" '
+      [ .[] | select([.assets[].name] | any(test($pat; "i")))
+        | { tag: .tag_name, published: .published_at,
+            artifacts: [.assets[].name | select(test($pat; "i"))],
+            # The API asset URL, not browser_download_url: these repos are private, and the
+            # browser URL answers only an authenticated browser session. The API URL with
+            # Accept: application/octet-stream is what a token can download.
+            sbom: ([.assets[] | select(.name | test("^sbom-.*\\.cdx\\.json$")) | .url][0] // null) } ]
+      | sort_by(.published) | last // null' 2>/dev/null) || mobile=null
+[[ -z "$mobile" ]] && mobile=null
+
+# Per environment, server-side — the same access pattern the backstop uses, and for the
+# same reason: the first 100 records of the whole history are dominated by whichever
+# environment deploys most often. An environment that deploys rarely (Study on a product
+# that ships to prod daily) fell off that page and silently vanished from the answer —
+# not as "unresolvable", but as if it did not exist.
+# Environments whose deployment records could not be read. The environments list is
+# readable with plain repository read, the deployments themselves need the `deployments`
+# permission — a workflow that grants only `contents: read` gets the list and a 403 for
+# every fetch. The first end-to-end run hit exactly that, and the `|| continue` this block
+# used to have made Production silently vanish from the answer instead of naming the
+# problem. Silence is the one failure mode this script exists to prevent.
+UNREADABLE='[]'
+# Two gh behaviours shape this block, both proven on a real runner. First: `gh api` prints
+# the RESPONSE BODY to stdout even on an HTTP error, so capturing stdout without checking
+# the exit code turns {"message":"Resource not accessible..."} into data — here it became a
+# phantom environment name, the filtered query for it politely returned [], and every real
+# environment vanished without a single error. Second: the workflow token can be allowed to
+# read deployments while /environments still answers 403, so the environment names have to
+# come from the deployment records themselves when the listing is refused.
+ENV_NAMES=""
+if ENVS_JSON=$(gh api "repos/$REPO/environments" 2>/dev/null); then
+  ENV_NAMES=$(jq -r '.environments[]?.name // empty' <<<"$ENVS_JSON" 2>/dev/null || true)
+fi
+if [[ -z "$ENV_NAMES" ]]; then
+  # Listing refused or empty: derive the names from the newest records of the whole
+  # history. An environment that has not deployed within these records stays invisible —
+  # said here once rather than silently.
+  gh api "repos/$REPO/deployments?per_page=100" 2>/dev/null > "$TMPD/page0.json" || {
+    echo "::error::cannot read deployments for $REPO — the token lacks the deployments permission" >&2; exit 1; }
+  ENV_NAMES=$(jq -r '[.[].environment] | unique | .[]' "$TMPD/page0.json" 2>/dev/null || true)
+  [[ -n "$ENV_NAMES" ]] && echo "::warning::$REPO: the environments listing is not readable with this token — environment names derived from the newest 100 deployment records; an environment quiet for longer than that is not visible" >&2
+fi
+# Pages accumulate in FILES, never in a variable passed back through --argjson: Linux caps
+# a single process argument at 128KB (MAX_ARG_STRLEN), and one hundred deployment records
+# exceed that comfortably. On the runner jq died with "Argument list too long", the failed
+# command substitution left an empty string, and every environment vanished downstream with
+# no error in the output — while the same script passed on macOS, whose limit is larger.
+# Found by running the script on the runner with stderr visible; nothing else showed it.
+i=0
+while IFS= read -r e; do
+  [[ -z "$e" ]] && continue
+  i=$((i+1))
+  if gh api "repos/$REPO/deployments?environment=$(jq -rn --arg e "$e" '$e|@uri')&per_page=100" \
+       2>/dev/null > "$TMPD/env-$i.json" \
+     && jq -e 'type == "array"' "$TMPD/env-$i.json" >/dev/null 2>&1; then
+    :
+  else
+    rm -f "$TMPD/env-$i.json"
+    UNREADABLE=$(jq -c --arg e "$e" '. + [{environment:$e, ref:null,
+      why:"deployment records for this environment could not be read — the token likely lacks the deployments permission. Not knowing what runs here is not the same as nothing running here."}]' <<<"$UNREADABLE")
+  fi
+done <<<"$ENV_NAMES"
+DEPLOY_ALL="$TMPD/deployments.json"
+if ls "$TMPD"/env-*.json >/dev/null 2>&1; then
+  jq -c -s 'add // []' "$TMPD"/env-*.json > "$DEPLOY_ALL"
+elif [[ -s "$TMPD/page0.json" ]]; then
+  cp "$TMPD/page0.json" "$DEPLOY_ALL"
+else
+  echo '[]' > "$DEPLOY_ALL"
+fi
+
+if [[ "$(jq 'length' "$DEPLOY_ALL")" == "0" && "$mobile" == "null" ]]; then
+  # The specific reasons win over the generic one: "every per-environment fetch failed"
+  # names a permissions problem someone can fix, "nothing states what is running" does not.
+  jq -n --arg repo "$REPO" --argjson unreadable "$UNREADABLE" '{
+    schema: "quickbird.deployed-version/v1",
+    repo: $repo,
+    environments: [],
+    mobile: null,
+    unresolvable: (if ($unreadable | length) > 0 then $unreadable
+                   else [{environment: "*", why: "no GitHub deployments and no production release artifact — nothing states what is running, and the latest tag is not evidence of it"}] end)
+  }'
+  echo "::warning::$REPO: nothing states what is running — the deployed version is unknown" >&2
+  exit 0
+fi
+# From here on only the five fields the grouping needs survive — the full records with
+# their payloads are what blew past the argument limit. 
+
+# A GitHub deployment record does not mean an application was deployed. *Any* workflow that
+# declares an environment creates one — including jobs that ship no code at all. One product's
+# "Staging to Production Content Migration Workflow" migrates the Strapi database and
+# created a Production deployment record pointing at whatever branch it happened to be
+# dispatched from; GitHub then auto-marked the real v1.0.15 app deployment `inactive` as a
+# side effect. Reading that as "production runs a branch" was wrong, and it is exactly the
+# mistake this filter exists to prevent.
+#
+# The rule, which matches how releases are actually versioned here: an application
+# deployment is one whose ref is a tag. Records with a non-tag ref are reported separately
+# as informational rather than treated as the live version.
+latest=$(jq -c '[.[] | {env: .environment, ref: .ref, sha: .sha, at: .created_at, id: .id}]
+                | group_by(.env) | map(sort_by(.at))' "$DEPLOY_ALL")
+[[ -n "$WANT_ENV" ]] && latest=$(jq -c --arg e "$WANT_ENV" 'map(select(.[0].env == $e))' <<<"$latest")
+
+# Fetch the tag list once. Checking each record with its own API call meant 100 requests
+# for a repo that deployed `main` a hundred times, which was slow enough to time
+# out and would also burn API quota on every scheduled run.
+TAGS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags" 2>/dev/null \
+       | jq -r '.[].ref | sub("^refs/tags/";"")' 2>/dev/null | sort -u)
+is_tag() { printf '%s\n' "$TAGS" | grep -Fxq "$1"; }
+
+# per environment: newest tag-ref deployment, plus a note if newer non-tag records exist
+picked='[]'; NONTAG='[]'
+while IFS= read -r group; do
+  [[ -z "$group" ]] && continue
+  env=$(jq -r '.[0].env' <<<"$group")
+  chosen=""; skipped=0
+  while IFS=$'\t' read -r ref sha at id; do
+    [[ -z "$ref" ]] && continue
+    if is_tag "$ref"; then
+      chosen=$(jq -c --arg r "$ref" --arg s "$sha" --arg a "$at" --arg i "$id" --arg e "$env" \
+                 -n '{env:$e, ref:$r, sha:$s, at:$a, id:$i}')
+      break
+    fi
+    skipped=$((skipped+1))
+    NONTAG=$(jq -c --arg e "$env" --arg r "$ref" --arg a "$at" \
+      '. + [{environment:$e, ref:$r, at:$a}]' <<<"$NONTAG")
+  done < <(jq -r 'reverse | .[] | "\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$group")
+  if [[ -n "$chosen" ]]; then
+    picked=$(jq -c --argjson c "$chosen" '. + [$c]' <<<"$picked")
+  else
+    # Every record for this environment is a non-tag ref. The environment is real and
+    # something deploys to it; dropping it here would hide it from both lists.
+    UNREADABLE=$(jq -c --arg e "$env" --argjson n "$skipped" '. + [{environment:$e, ref:null,
+      why:"\($n) deployment record(s), none from a tag — nothing states which application release runs here"}]' <<<"$UNREADABLE")
+  fi
+done < <(jq -c '.[]' <<<"$latest")
+latest="$picked"
+
+out='[]'
+while IFS=$'\t' read -r env ref sha at id; do
+  [[ -z "$env" ]] && continue
+
+  state=$(gh api "repos/$REPO/deployments/$id/statuses?per_page=1" 2>/dev/null \
+          | jq -r '.[0].state // "unknown"' 2>/dev/null || echo "unknown")
+
+  ref_is_tag=false
+  is_tag "$ref" && ref_is_tag=true
+
+  sbom_url=""; sbom_state=""
+  if $ref_is_tag; then
+    asset=$(printf "$ASSET_PATTERN" "$ref")
+    # Pipe to jq rather than using `gh api --jq` — the comment at the top of this file
+    # already says why: --jq takes only an expression and does not forward --arg, so the
+    # variable is silently lost. The first version of THIS block made exactly that mistake
+    # anyway: gh refused the extra arguments, `|| echo ""` swallowed the refusal, and every
+    # deployed tag reported "release carries no SBOM asset" — a wrong answer that read like
+    # a missing publish step. Caught by the code review, not by a run, because every
+    # monitor run until then had used MONITOR_LOCAL_SBOM.
+    sbom_url=$(gh api "repos/$REPO/releases/tags/$ref" 2>/dev/null \
+                 | jq -r --arg a "$asset" '[.assets[] | select(.name==$a) | .url][0] // ""' \
+                 2>/dev/null || echo "")
+    if [[ -n "$sbom_url" ]]; then
+      sbom_state="available"
+    else
+      # Distinguish "no release" from "release without the asset" — different fixes.
+      if gh api "repos/$REPO/releases/tags/$ref" >/dev/null 2>&1; then
+        sbom_state="release exists but carries no $asset — released before the SBOM pipeline, or the publish step did not run"
+      else
+        sbom_state="tag exists but has no GitHub release, so there is nowhere for an SBOM asset to live"
+      fi
+    fi
+  else
+    sbom_state="deployed ref is not a tag — a branch build has no release and therefore no SBOM"
+  fi
+
+  out=$(jq -c --arg env "$env" --arg ref "$ref" --arg sha "$sha" --arg at "$at" \
+           --arg state "$state" --argjson is_tag "$ref_is_tag" \
+           --arg url "$sbom_url" --arg sstate "$sbom_state" \
+    '. + [{environment:$env, ref:$ref, sha:$sha, deployed_at:$at, status:$state,
+           ref_is_tag:$is_tag, sbom: (if $url == "" then null else $url end),
+           sbom_status:$sstate}]' <<<"$out")
+done < <(jq -r '.[] | "\(.env)\t\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$latest")
+
+jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argjson nontag "$NONTAG" \
+      --argjson unreadable "$UNREADABLE" '{
+  schema: "quickbird.deployed-version/v1",
+  repo: $repo,
+  # The apps and the backend are separately live and can differ — that is the concrete
+  # case behind "multiple concurrent live versions", not a hypothetical.
+  mobile: (if $mobile == null then null else {
+      live_version: $mobile.tag,
+      published: $mobile.published,
+      artifacts: $mobile.artifacts,
+      sbom: $mobile.sbom,
+      sbom_status: (if $mobile.sbom != null then "available"
+                    else "production release carries no sbom-*.cdx.json asset" end)
+    } end),
+  environments: $envs,
+  # Deployment records that are not application releases — another workflow declaring the
+  # same environment. Reported so they are visible, never treated as the live version.
+  non_release_deployments: $nontag,
+  scannable: ([$envs[] | select(.sbom != null) | .environment]
+              + (if ($mobile != null and $mobile.sbom != null) then ["mobile"] else [] end)),
+  unresolvable: ($unreadable
+                 + [$envs[] | select(.sbom == null) | {environment, ref, why: .sbom_status}]
+                 + (if $mobile != null and $mobile.sbom == null
+                    then [{environment: "mobile", ref: $mobile.tag,
+                           why: "production release carries no SBOM asset"}] else [] end)
+                 + (if $mobile == null
+                    then [{environment: "mobile", ref: null,
+                           why: "no release carries a production artifact — the product may not be live yet (study/staging flavours only)"}] else [] end))
+}'
+
+# Warnings on stderr so a CI job surfaces them without parsing the JSON.
+jq -r '.[] | select(.sbom == null)
+       | "::warning::\(.environment): deployed ref \(.ref) has no SBOM — \(.sbom_status)"' <<<"$out" >&2

@@ -1,0 +1,349 @@
+name: 'SOUP Discovery + SBOM'
+description: 'Discover dependencies across every ecosystem, enforce a recorded scope, and produce a verified CycloneDX SBOM'
+
+inputs:
+  product:
+    description: 'Product name for the consolidated BOM subject'
+    required: true
+  version:
+    description: 'Product version. Use the release tag; do not leave at a placeholder.'
+    required: true
+  repo-root:
+    description: 'Root to scan'
+    required: false
+    default: '.'
+  scope-file:
+    description: 'Scope declaration. Every discovered candidate must be classified in it or the run fails.'
+    required: false
+    default: '.soup-scope.yml'
+  policy-file:
+    description: >-
+      Per-product policy. With it, the bundle is assessed — vulnerabilities, classification,
+      currency, remediation units — and the release asset is the assessed document. Without
+      it the bundle carries components only, and the run says so. Found by the first
+      end-to-end run: the pipeline supported the policy all along and nothing in CI ever
+      passed it, so no CI bundle had ever been assessed.
+    required: false
+    default: '.soup-policy.yml'
+  output-dir:
+    description: 'Where to write candidates.json, scan-plan.json and bom/'
+    required: false
+    default: 'sbom'
+  syft-version:
+    description: 'Pinned syft version. Not "latest" on purpose — the component list must not change because a scanner auto-updated between two runs of the same commit.'
+    required: false
+    default: '1.51.0'
+  tier:
+    description: >-
+      candidate | staging | branch. Stamped into the document and onto the PDF cover. Derived from
+      the tag shape by scripts/resolve-tier.sh, so it normally needs no input. `candidate` means
+      built from a release-shaped tag; it does not claim the version reached production, because a
+      tag build only ever deploys to staging in this pipeline.
+    required: false
+    default: ''
+  release-tag:
+    description: >-
+      The tag this build belongs to. Defaults to the ref when the tag itself triggered the run. Must
+      be passed when the run is triggered any other way — by workflow_run after the release
+      workflow, or manually — because github.ref_name is then the default branch, and the bundle
+      would be attached to a release named after it.
+    required: false
+    default: ''
+  keep-timestamp:
+    description: 'Set true when the document needs metadata.timestamp. Leave false for a committable, diffable BOM — successive builds of the same commit then differ only where the components differ.'
+    required: false
+    default: 'false'
+  registry-username:
+    description: 'Registry login for private images. Without it, private images are recorded as gaps rather than scanned — verified against a private registry namespace.'
+    required: false
+    default: ''
+  registry-password:
+    description: 'Registry password/token'
+    required: false
+    default: ''
+  registry-server:
+    description: 'Registry host'
+    required: false
+    default: 'docker.io'
+  render-pdf:
+    description: 'Render the two human-readable reports: the SBOM report (composition, per release) and the Dependency & Vulnerability Report (dated assessment). Installs reportlab if absent.'
+    required: false
+    default: 'true'
+  upload-artifact:
+    description: 'Upload the sbom directory as a workflow artifact'
+    required: false
+    default: 'true'
+  publish-to-release:
+    description: >-
+      On a tag, attach the bundle to the GitHub release as sbom-<tag>.cdx.json (and the PDF).
+      The stable name is what makes the deployed version resolvable to its SBOM —
+      resolve-deployed.sh looks for exactly this asset.
+    required: false
+    default: 'true'
+  do-access-key:
+    description: >-
+      DigitalOcean Spaces access key. With it, the bundle and the PDF are also written to the
+      quickbird-soup-artifacts space, in addition to the release asset. The release asset covers
+      a tagged build; this covers every build, and it is where a bundle for a product without
+      releases has to live.
+    required: false
+    default: ''
+  do-secret-key:
+    description: 'DigitalOcean Spaces secret key'
+    required: false
+    default: ''
+  repo-token:
+    description: 'Token for attaching release assets. Required when publish-to-release is on and the run is on a tag.'
+    required: false
+    default: ''
+  runs-on-note:
+    description: 'Unused. Present so callers can document their runner choice; the workflow, not the action, selects the runner.'
+    required: false
+    default: ''
+
+outputs:
+  solution-bom:
+    description: 'Path to the consolidated CycloneDX document'
+    value: ${{ steps.run.outputs.solution-bom }}
+  complete:
+    description: 'false if any in-scope candidate could not be scanned'
+    value: ${{ steps.run.outputs.complete }}
+  gaps:
+    description: 'Comma-separated ids of in-scope candidates that produced no BOM'
+    value: ${{ steps.run.outputs.gaps }}
+  component-count:
+    description: 'Components in the consolidated BOM'
+    value: ${{ steps.run.outputs.component-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check prerequisites
+      shell: bash
+      env:
+        IN_PUBLISH: ${{ inputs.publish-to-release }}
+      run: |
+        missing=()
+        # docker: images are scanned by pulling them. python3: classification, currency and
+        # the PDF. gh: attaching the bundle to the release — required only when publishing,
+        # and checked HERE so a runner without it fails in the first second rather than
+        # after the whole pipeline has run, which is how the tag e2e found it.
+        for t in jq yq curl docker python3; do command -v "$t" >/dev/null 2>&1 || missing+=("$t"); done
+        if [ "$IN_PUBLISH" = "true" ]; then
+          command -v gh >/dev/null 2>&1 || missing+=("gh (needed to attach the bundle to the release)")
+        fi
+        if [ ${#missing[@]} -gt 0 ]; then
+          echo "::error::missing required tools: ${missing[*]}"
+          echo "::error::install them on the runner, or use a runner image that has them"
+          exit 1
+        fi
+
+    - name: Registry login
+      if: ${{ inputs.registry-username != '' }}
+      shell: bash
+      env:
+        REG_PASS: ${{ inputs.registry-password }}
+      run: |
+        echo "$REG_PASS" | docker login "${{ inputs.registry-server }}" \
+          -u "${{ inputs.registry-username }}" --password-stdin
+
+    - name: Install CVSS v4 scoring dependency
+      shell: bash
+      # Same PEP 668 handling as the PDF renderer step below. Unconditional, unlike that one:
+      # classification (WI-006-09-01) is not optional, so a v4-only advisory must be scored the
+      # same way a v3.x one is, not left to the vendor-severity fallback for want of a library.
+      run: |
+        python3 -c 'import cvss' 2>/dev/null \
+          || pip3 install --quiet cvss==3.6 2>/dev/null \
+          || pip3 install --quiet --break-system-packages cvss==3.6
+
+    - name: Install PDF renderer dependency
+      if: ${{ inputs.render-pdf == 'true' }}
+      shell: bash
+      # ubuntu-24.04 runners mark the system python externally managed (PEP 668) and refuse
+      # a bare pip install; the fallback flag scopes the install to this runner image.
+      run: |
+        python3 -c 'import reportlab' 2>/dev/null \
+          || pip3 install --quiet reportlab 2>/dev/null \
+          || pip3 install --quiet --break-system-packages reportlab
+
+    # The tag this build belongs to, resolved once and used for the tier, the release asset and the
+    # object key. Deriving it from github.ref_name works only when the tag itself triggered the run.
+    # Under workflow_run — which is how the SBOM workflow is triggered, because images have to be
+    # pushed before they can be scanned — github.ref_name is the default branch, and the bundle would
+    # be attached to a release called "main" and stored under soup-sbom/branch/main.
+    - name: Resolve the tag and the document tier
+      id: tier
+      shell: bash
+      env:
+        IN_RELEASE_TAG: ${{ inputs.release-tag }}
+        IN_TIER: ${{ inputs.tier }}
+        IN_ROOT: ${{ inputs.repo-root }}
+        REF_TYPE_CTX: ${{ github.ref_type }}
+        REF_NAME_CTX: ${{ github.ref_name }}
+      run: |
+        TAG="$IN_RELEASE_TAG"
+        if [ -z "$TAG" ] && [ "$REF_TYPE_CTX" = "tag" ]; then
+          TAG="$REF_NAME_CTX"
+        fi
+        if [ -n "$IN_TIER" ]; then
+          TIER="$IN_TIER"
+        else
+          # A run with no tag is a branch build whatever its ref is called.
+          REF_TYPE="branch"; [ -n "$TAG" ] && REF_TYPE="tag"
+          TIER=$(bash "$GITHUB_ACTION_PATH/scripts/resolve-tier.sh" \
+            "$REF_TYPE" "${TAG:-$REF_NAME_CTX}" \
+            "$IN_ROOT/.soup-policy.yml") || exit 1
+        fi
+        {
+          echo "tier=$TIER"
+          echo "tag=$TAG"
+        } >> "$GITHUB_OUTPUT"
+        echo "document tier: $TIER (tag ${TAG:-none}, ref $REF_NAME_CTX)"
+
+    - name: Discover, scope, scan, consolidate
+      id: run
+      shell: bash
+      env:
+        RENDER_PDF: ${{ inputs.render-pdf }}
+        SBOM_TIER: ${{ steps.tier.outputs.tier }}
+        SBOM_OUT_DIR: ${{ inputs.output-dir }}
+        SOUP_SCOPE_FILE: ${{ inputs.scope-file }}
+        SYFT_VERSION: ${{ inputs.syft-version }}
+        KEEP_TIMESTAMP: ${{ inputs.keep-timestamp == 'true' && '1' || '0' }}
+        IN_PRODUCT: ${{ inputs.product }}
+        IN_VERSION: ${{ inputs.version }}
+        IN_ROOT: ${{ inputs.repo-root }}
+        IN_POLICY: ${{ inputs.policy-file }}
+      run: |
+        # Resolve the policy against the repo root; run-pipeline warns and skips assessment
+        # when the file does not exist, which is the correct degradation for a product that
+        # has not adopted one yet.
+        if [ -f "$IN_POLICY" ]; then
+          export SOUP_POLICY_FILE="$IN_POLICY"
+        elif [ -f "$IN_ROOT/$IN_POLICY" ]; then
+          export SOUP_POLICY_FILE="$IN_ROOT/$IN_POLICY"
+        fi
+        bash "$GITHUB_ACTION_PATH/scripts/run-pipeline.sh" \
+          "$IN_PRODUCT" "$IN_VERSION" "$IN_ROOT"
+
+        SOL="${{ inputs.output-dir }}/bom/solution.cdx.json"
+        {
+          echo "solution-bom=$SOL"
+          echo "complete=$(jq -r '.metadata.properties[] | select(.name=="quickbird:sbom:complete") | .value' "$SOL")"
+          echo "gaps=$(jq -r '[.metadata.properties[] | select(.name=="quickbird:sbom:missing") | .value] | join(",")' "$SOL")"
+          echo "component-count=$(jq '[.components[]] | length' "$SOL")"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Summary
+      shell: bash
+      run: |
+        {
+          echo "### SBOM"
+          echo ""
+          echo "| | |"
+          echo "|---|---|"
+          echo "| Components | ${{ steps.run.outputs.component-count }} |"
+          echo "| Complete | ${{ steps.run.outputs.complete }} |"
+          if [ -n "${{ steps.run.outputs.gaps }}" ]; then
+            echo "| Gaps | \`${{ steps.run.outputs.gaps }}\` |"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Attach bundle to the release
+      if: ${{ inputs.publish-to-release == 'true' && steps.tier.outputs.tag != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.repo-token }}
+      run: |
+        # the assessed bundle when a policy produced one, otherwise the component list
+        BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
+        [ -f "$BOM" ] || BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
+        SBOM_PDF="${{ inputs.output-dir }}/bom/sbom-report.pdf"
+        VDR_PDF="${{ inputs.output-dir }}/bom/vdr-report.pdf"
+        TAG="${{ steps.tier.outputs.tag }}"
+        TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
+        # Both candidate and staging bundles are attached, each to the release of its own tag.
+        # That is the point of producing them: a 90-day workflow artifact cannot be pulled later,
+        # and the asset name carries the tag, so sbom-v1.0.15-qa4.cdx.json is not confusable with
+        # sbom-v1.0.15.cdx.json. What keeps them apart as *evidence* is the tier inside the
+        # document and the banner on the PDF, not where the file is stored — and ultimately the
+        # deployment record, which says which tag is live.
+        #
+        # A `branch` bundle has no version identity at all, so there is nothing to attach it
+        # to and nothing that could resolve it later.
+        if [ "$TIER" = "branch" ] || [ "$TIER" = "unmarked" ]; then
+          echo "::error::refusing to attach a '$TIER' bundle to $TAG — it carries no version"
+          echo "::error::  identity, so nothing could resolve it back to a build later"
+          exit 1
+        fi
+        if [ -z "$GH_TOKEN" ]; then
+          echo "::error::publish-to-release is on but repo-token is empty — the bundle would not be attached and the deployed version would have no resolvable SBOM"
+          exit 1
+        fi
+        # Stable, predictable names. resolve-deployed.sh looks for exactly sbom-<tag>.cdx.json;
+        # a per-project naming scheme would make the lookup guesswork.
+        cp "$BOM" "sbom-$TAG.cdx.json"
+        args=("sbom-$TAG.cdx.json")
+        [ -f "$SBOM_PDF" ] && cp "$SBOM_PDF" "sbom-$TAG.pdf" && args+=("sbom-$TAG.pdf")
+        [ -f "$VDR_PDF" ] && cp "$VDR_PDF" "vdr-$TAG.pdf" && args+=("vdr-$TAG.pdf")
+        # A staging tag's release is a prerelease; creating it as one keeps the release list
+        # honest if the build ran before anyone published it.
+        PRE=""
+        [ "$TIER" = "staging" ] && PRE="--prerelease"    # a QA tag's release is a prerelease
+        gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "" $PRE
+        gh release upload "$TAG" "${args[@]}" --clobber
+        echo "attached ${args[*]} to release $TAG (tier $TIER)"
+
+    # Same space and same action as the mobile build artifacts. Path:
+    # <repo>/soup-sbom/<tier>/<ref>/. The tier segment keeps candidate documents, which may become
+    # release evidence, apart from staging and branch documents, which cannot.
+    - name: Store the bundle durably
+      id: store
+      if: ${{ inputs.do-access-key != '' }}
+      shell: bash
+      run: |
+        BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
+        [ -f "$BOM" ] || BOM="${{ inputs.output-dir }}/bom/solution.cdx.json"
+        TIER=$(jq -r '[.metadata.properties[]? | select(.name=="quickbird:sbom:tier")][0].value // "unmarked"' "$BOM")
+        REF="${{ steps.tier.outputs.tag }}"
+        [ -n "$REF" ] || REF="${{ github.sha }}"
+        DIR="${{ inputs.output-dir }}/store"
+        mkdir -p "$DIR"
+        # Named after the ref so the object identifies what it describes without opening it. A
+        # product that deploys by commit SHA and has no tags gets the SHA, which is the only
+        # durable location its bundle can have.
+        cp "$BOM" "$DIR/sbom-$REF.cdx.json"
+        [ -f "${{ inputs.output-dir }}/bom/sbom-report.pdf" ] \
+          && cp "${{ inputs.output-dir }}/bom/sbom-report.pdf" "$DIR/sbom-$REF.pdf"
+        [ -f "${{ inputs.output-dir }}/bom/vdr-report.pdf" ] \
+          && cp "${{ inputs.output-dir }}/bom/vdr-report.pdf" "$DIR/vdr-$REF.pdf"
+        {
+          echo "dir=$DIR"
+          echo "out-dir=${{ github.event.repository.name }}/soup-sbom/$TIER/$REF"
+        } >> "$GITHUB_OUTPUT"
+        echo "storing $(ls -1 "$DIR" | tr '\n' ' ')under soup-sbom/$TIER/$REF"
+
+    - name: Upload the bundle to the object store
+      if: ${{ inputs.do-access-key != '' && steps.store.outputs.dir != '' }}
+      # Pinned to an exact release: this action publishes no moving major tag, so `@v2` does not
+      # resolve. Its newest release is v2.0.146 from 2024-02-12, which is over two years old and
+      # would be an obsolescence finding under WI-006-09-02: Currency and obsolescence if it were a product dependency. The existing
+      # upload-artifact-qb action in this repository uses `@latest` for the same upload, which is
+      # worth revisiting separately.
+      uses: BetaHuhn/do-spaces-action@v2.0.146
+      with:
+        access_key: ${{ inputs.do-access-key }}
+        secret_key: ${{ inputs.do-secret-key }}
+        space_name: quickbird-soup-artifacts
+        space_region: fra1
+        source: ${{ steps.store.outputs.dir }}
+        out_dir: ${{ steps.store.outputs.out-dir }}
+
+    - name: Upload SBOM
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom
+        path: ${{ inputs.output-dir }}
+        retention-days: 90

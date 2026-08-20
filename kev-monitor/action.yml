@@ -1,0 +1,186 @@
+name: 'KEV monitor — is anything we run actively exploited?'
+description: 'Daily check of the deployed version against the CISA KEV catalog, with a dated evidence record on every run'
+
+inputs:
+  product:
+    description: 'Product name, used in the record and the alert'
+    required: true
+  repo:
+    description: 'owner/repo to resolve the deployed version from'
+    required: false
+    default: ${{ github.repository }}
+  policy-file:
+    description: 'Per-product policy. Supplies cra_scope, the alert channel and the deadlines, validated against the process defaults.'
+    required: false
+    default: '.soup-policy.yml'
+  cra-scope:
+    description: >-
+      Override for the policy's cra_scope — true | false | unknown. Normally left empty so
+      the value comes from the policy file, where it is versioned and reviewable. Empty and
+      with no policy file, the alert says the scope is unknown rather than assuming either
+      way: assuming "false" is the one wrong answer with a legal consequence.
+    required: false
+    default: ''
+  slack-channel-id:
+    description: 'Channel to post to. Without it the run still produces its record; only the notification is skipped.'
+    required: false
+    default: ''
+  slack-bot-token:
+    description: 'Slack bot token'
+    required: false
+    default: ''
+  evidence-dir:
+    description: 'Where the dated run record is written'
+    required: false
+    default: 'kev-monitor'
+  do-access-key:
+    description: >-
+      DigitalOcean Spaces access key. With it, the dated run record is also written to the
+      quickbird-soup-artifacts space, which is what makes it a durable record: the workflow
+      artifact below is retained for 90 days, and an annual backstop has to reconcile 365.
+    required: false
+    default: ''
+  do-secret-key:
+    description: 'DigitalOcean Spaces secret key'
+    required: false
+    default: ''
+  gh-token:
+    description: 'Token for reading deployments and release assets'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict:
+    description: 'all-clear | kev-findings | incomplete'
+    value: ${{ steps.run.outputs.verdict }}
+  record:
+    description: 'Path to the dated run record'
+    value: ${{ steps.run.outputs.record }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install CVSS v4 scoring dependency
+      shell: bash
+      # monitor-kev.sh re-assesses through assess-bom.sh -> classify-findings.py, the same
+      # classifier soup-discovery uses, and pinned the same way there.
+      run: |
+        python3 -c 'import cvss' 2>/dev/null \
+          || pip3 install --quiet cvss==3.6 2>/dev/null \
+          || pip3 install --quiet --break-system-packages cvss==3.6
+
+    - name: Run the KEV check
+      id: run
+      shell: bash
+      # Inputs reach the script through env, not through ${{ }} inside the run block: an
+      # expression is substituted into the script text before bash parses it, so quoting
+      # does not protect it — the env indirection is what does.
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        CRA_SCOPE: ${{ inputs.cra-scope }}
+        SOUP_POLICY_FILE: ${{ inputs.policy-file }}
+        IN_REPO: ${{ inputs.repo }}
+        IN_PRODUCT: ${{ inputs.product }}
+        IN_OUT: ${{ inputs.evidence-dir }}
+      run: |
+        set -o pipefail
+        OUT="$IN_OUT"
+        bash "$GITHUB_ACTION_PATH/../soup-discovery/scripts/monitor-kev.sh" \
+          "$IN_REPO" "$IN_PRODUCT" "$OUT"
+        REC=$(ls -1 "$OUT"/*-"$IN_PRODUCT".json | head -1)
+        {
+          echo "verdict=$(jq -r '.verdict' "$REC")"
+          echo "record=$REC"
+          echo "has-alert=$([ -s "$OUT/alert.txt" ] && echo true || echo false)"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Post to Slack
+      if: ${{ steps.run.outputs.has-alert == 'true' && inputs.slack-channel-id != '' }}
+      shell: bash
+      env:
+        SLACK_TOKEN: ${{ inputs.slack-bot-token }}
+        IN_OUT: ${{ inputs.evidence-dir }}
+        IN_CHANNEL: ${{ inputs.slack-channel-id }}
+      run: |
+        # curl rather than slackapi/slack-github-action: the alert is multi-line markdown
+        # assembled by the script, and routing it through the action's YAML payload template
+        # mangles the newlines. chat.postMessage is the same API either way.
+        #
+        # A failed post fails the step. An alert exists because something needs a person;
+        # an annotation nobody reads is not a notification, and the failed job is the only
+        # remaining channel that reaches one.
+        BODY=$(cat "$IN_OUT/alert.txt")
+        jq -n --arg ch "$IN_CHANNEL" --arg t "$BODY" \
+          '{channel:$ch, text:$t, mrkdwn:true}' \
+        | curl -sS --retry 3 --retry-delay 2 -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_TOKEN" \
+            -H 'Content-Type: application/json; charset=utf-8' \
+            --data @- | jq -e '.ok' >/dev/null \
+          || { echo "::error::Slack post failed — the record exists, but nobody was notified. Failing so the alert is not lost."; exit 1; }
+
+    # The durable copy. Written with the same action and into the same space as the mobile build
+    # artifacts, so the retention and access rules are the ones already in place. The workflow
+    # artifact below is kept for 90 days; an annual backstop has to reconcile 365, which is why
+    # this step exists.
+    #
+    # Path: <repo>/soup-evidence/<year>/. The year segment lets a yearly backstop sync one prefix
+    # rather than the whole history.
+    - name: Resolve the evidence path
+      id: evidence
+      if: ${{ always() && inputs.do-access-key != '' }}
+      shell: bash
+      env:
+        IN_OUT: ${{ inputs.evidence-dir }}
+        IN_PRODUCT: ${{ inputs.product }}
+      run: |
+        REC=$(ls -1 "$IN_OUT"/[0-9]*-*.json 2>/dev/null | head -1)
+        if [ -z "$REC" ]; then
+          echo "::error::no dated run record to store — this run produced no evidence that"
+          echo "::error::  $IN_PRODUCT was monitored, so it must not be treated as a clean run"
+          exit 1
+        fi
+        echo "record=$REC" >> "$GITHUB_OUTPUT"
+        echo "out-dir=${{ github.event.repository.name }}/soup-evidence/$(basename "$REC" | cut -d- -f1)" >> "$GITHUB_OUTPUT"
+
+    - name: Store the record durably
+      if: ${{ always() && inputs.do-access-key != '' && steps.evidence.outputs.record != '' }}
+      # Pinned to an exact release: this action publishes no moving major tag, so `@v2` does not
+      # resolve. Its newest release is v2.0.146 from 2024-02-12, which is over two years old and
+      # would be an obsolescence finding under WI-006-09-02: Currency and obsolescence if it were a product dependency. The existing
+      # upload-artifact-qb action in this repository uses `@latest` for the same upload, which is
+      # worth revisiting separately.
+      uses: BetaHuhn/do-spaces-action@v2.0.146
+      with:
+        access_key: ${{ inputs.do-access-key }}
+        secret_key: ${{ inputs.do-secret-key }}
+        space_name: quickbird-soup-artifacts
+        space_region: fra1
+        source: ${{ steps.evidence.outputs.record }}
+        out_dir: ${{ steps.evidence.outputs.out-dir }}
+
+    - name: Keep the record
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        # Retained on every run, including all-clear ones. The dated record is what
+        # distinguishes "we checked and found nothing" from "nobody looked", and only the
+        # second of those is a finding at an audit.
+        name: kev-monitor-${{ inputs.product }}
+        path: ${{ inputs.evidence-dir }}
+        retention-days: 90
+
+    - name: Summary
+      if: always()
+      shell: bash
+      env:
+        IN_OUT: ${{ inputs.evidence-dir }}
+      run: |
+        V="${{ steps.run.outputs.verdict }}"
+        case "$V" in
+          all-clear)    echo "### KEV monitor: all clear" ;;
+          kev-findings) echo "### KEV monitor: ACTIVELY EXPLOITED vulnerability in the running version" ;;
+          incomplete)   echo "### KEV monitor: could not complete — this is not an all-clear" ;;
+        esac >> "$GITHUB_STEP_SUMMARY"
+        [ -s "$IN_OUT/alert.txt" ] && {
+          echo '```'; cat "$IN_OUT/alert.txt"; echo '```'
+        } >> "$GITHUB_STEP_SUMMARY" || true

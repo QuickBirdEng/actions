@@ -1,0 +1,36 @@
+# Worked example of a justified relaxation — the case the `reason:` rule exists for.
+#
+# A product installed and operated by the customer: we can ship a fix, we cannot deploy it. Holding it
+# to the default remediation timeframe would mark almost every finding as breached, and a breach signal
+# that always fires carries no information.
+
+product: customer-operated-product
+
+reconciliation_interval: 3m
+cra_scope: true
+regulatory_scope: []
+
+tracks:
+  immediate:
+    mitigation: 72h        # unchanged — publishing an advisory and a workaround is still ours to do
+    remediation: 60d
+    reason: >-
+      Customer-operated installation. We control the release, the operator controls the deploy, so
+      "the fix is live" is not ours to meet within the default period. 60 d reflects the contractual
+      maintenance window. Mitigation stays at 72 h because publishing the advisory and a compensating
+      control is entirely within our control.
+
+# A customer-operated product is where a short commitment matters: an operator running an older
+# installation is not reached by our next deploy.
+maintenance_interval: 60d
+
+onboarded: ""
+baseline_clocks_start: ""
+
+alerts:
+  slack_channel: ""
+  threshold: high
+
+# What a reason has to do: name what is outside our control, say what the number is derived from, and
+# leave untouched whatever remains within our control. A reason that only says "not achievable" moves
+# the deadline without moving the risk, and the reconciliation will surface it at the next review.

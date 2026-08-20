@@ -1,0 +1,62 @@
+# Goes into <product>/.github/workflows/soup-sbom.yml — WI-006-09: Inventory.
+#
+# Two triggers, and the reason for each:
+#
+#   workflow_run   fires when the release workflow has finished. Not `push: tags`, because the
+#                  release workflow is what pushes the images of this tag, and an image that is
+#                  not in the registry yet cannot be scanned — it would be recorded as a gap. Set
+#                  `workflows:` to the release workflow of this product; the name must match the
+#                  `name:` inside that file, not its file name.
+#
+#   workflow_dispatch  to re-run for a tag afterwards: after a scope declaration was completed,
+#                  after a credential was added, or to produce the inventory of a version that was
+#                  released before this workflow existed.
+#
+# Placing the reusable workflow as a final job of the release workflow instead removes the
+# ordering question altogether, at the cost of editing that workflow. Either is fine; this file
+# is the variant that needs no change to an existing release path.
+
+name: SOUP - SBOM
+
+on:
+  workflow_run:
+    workflows: ["<name of the release workflow>"]
+    types: [completed]
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to produce the inventory for, e.g. v1.2.3'
+        required: true
+        type: string
+
+permissions:
+  contents: write        # attaching the bundle to the release of this tag
+
+jobs:
+  sbom:
+    # Optional, for products with a mobile build: the Android closure needs the built
+    # artifact, which the SBOM run cannot produce itself. Hand it over by downloading the
+    # build output this release already carries and pointing the pipeline at it:
+    #
+    #   env:
+    #     SBOM_ARTIFACT_app_android: build/app-release.apk   # id with non-alphanumerics as _
+    #
+    # plus a step before the action that fetches <tag>-android-*.tar.gz from the release
+    # and extracts the APK to that path. Without it, the Android candidate is a named gap
+    # and the Dart side is still covered by pubspec.lock.
+    # On workflow_run: only for a successful release run with a resolvable ref. No tag-shape
+    # check here — the shape is per product (`tag_pattern` in .soup-policy.yml) and the tier
+    # resolution downstream classifies QA tags as staging and everything else on its own.
+    # NOTE verify on the first real run that head_branch carries the tag name for your
+    # release workflow; if it is empty, trigger the SBOM as a final job of that workflow instead.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch != '')
+    uses: QuickBirdEng/workflows/.github/workflows/soup-sbom.yml@main
+    with:
+      product: <product>
+      version: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+      ref: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+    secrets: inherit

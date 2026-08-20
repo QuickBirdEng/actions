@@ -1,0 +1,159 @@
+# Machine-readable form of WI-006-09-01: Classification of a finding and WI-006-09-01: Timeframes, the classification and the timeframes.
+#
+# This file is the counterpart to the Work Instruction: the document is what a person reads and what
+# an auditor is shown, this is what the tooling applies. They must not diverge, so a change here is a
+# change to the process and belongs in the same review as the document.
+#
+# The document itself is not kept in this repository. It lives in the QMS, together with Annex A
+# (the measurements it is based on) and Annex B (the implementation reference). Section references in
+# this repository point there.
+#
+# Ships with the tooling. A project overrides parts of it in its own .soup-policy.yml;
+# validate-policy.sh merges the two and refuses overrides that loosen a deadline or a
+# threshold without a stated reason.
+
+process_version: "2026-08-02"
+
+# WI-006-09-01: Classification of a finding — EPSS thresholds that escalate a finding within its CVSS band.
+epss:
+  elevated: 0.10          # Medium+elevated -> Expedited, Low+elevated -> Planned
+  high: 0.50              # High+high       -> Immediate
+
+# WI-006-09-01: Timeframes — two clocks per track, in calendar time.
+#   mitigation  = exposure measurably reduced and documented
+#   remediation = the fix is live in the version users run; only a deploy stops this clock
+# Revised 2026-08-03. The previous values (72h/21d, 20d/40d) came from the first draft and
+# could not be met — not for lack of capacity but because the deadline hung on each CVE. WI-006-09-01: What carries the timeframe
+# moved it to the action, and these numbers are set for what an action actually takes: an image
+# bump on a regulated product means a regression test and a release.
+#
+# Mitigation is deliberately much shorter than remediation everywhere, because they are
+# different kinds of work. Mitigation is triage: assess applicability, and either reduce
+# exposure or document that there is none. Remediation needs a release.
+tracks:
+  kev:                    # in the CISA KEV catalog, or membership unestablished
+    # Kept at 72h while everything else lengthened. This is the one case where speed is
+    # justified by an observation rather than a score, and from 2026-09-11 the CRA puts a
+    # 24-hour *reporting* obligation beside it — a remediation deadline six times longer than
+    # the reporting deadline would not survive a question about it.
+    mitigation: 72h
+    remediation: 30d
+  immediate:              # CVSS >= 9.0, or High + EPSS >= 0.50 — severe, but not observed in use
+    # On one backend product, 0 of 23 Critical findings were in KEV. A 72h clock here was being
+    # justified by a risk none of them carried.
+    mitigation: 14d
+    remediation: 30d
+  expedited:              # CVSS 7.0-8.9, or Medium + EPSS >= 0.10
+    mitigation: 30d
+    remediation: next-release
+  planned:                # CVSS 4.0-6.9, or Low + EPSS >= 0.10, or unscored
+    # No mitigation clock. It stood at 30d over 196 findings on one product, and "mitigate a
+    # medium" in practice meant writing a document. A control that only produces paper costs
+    # the attention the critical findings need.
+    mitigation: none
+    remediation: next-release
+  monitor:                # CVSS < 4.0
+    mitigation: none
+    remediation: next-release
+
+# WI-006-09: Decide — after a breach, how long until a decision is required.
+breach:
+  decision_within: 5d
+  risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)
+
+# WI-006-09-01: The maintenance window — the maintenance release commitment.
+#
+# Track 3 remediation is "next regular release". Deriving that date from a product's *observed*
+# rhythm does not work: three of four products have a rhythm that has already lapsed, so the
+# derived date lands in the past and a finding is born overdue — on one product it would have been 109
+# days late on the day it was found.
+#
+# So a product declares a commitment instead: a maintenance release happens at least every
+# `maintenance_interval` days, and the remediation deadline is the next window on that grid.
+# Every open Track 3/4 finding shares that window, which is what makes a missed window one
+# breach about a release rather than one per finding (measured: 1 instead of 196).
+maintenance_interval: 90d
+
+# WI-006-09-02: Onboarding — the onboarding baseline.
+#
+# Deliberately without defaults. Both dates are per-product facts, and a default here would hand a
+# product a baseline nobody agreed to. Absent `baseline_clocks_start`, every pre-existing finding
+# runs from its first scan — correct for a product already under monitoring, and on the first day
+# of a product with a backlog it means the whole backlog is due at once.
+#
+#   onboarded              the date monitoring began for this product
+#   baseline_clocks_start  the date the pre-existing backlog becomes due
+#
+# KEV is never baselined: active exploitation is not something a plan can defer. Measured on
+# one backend product, 0 of its 23 Critical findings were in KEV, so the exemption keeps the case that
+# matters sharp without holding up the other 520.
+
+# WI-006-09: Which build produces evidence — which tags are QA builds.
+#
+# NOT "what counts as a production release" — that is not a property of a tag. Read from the
+# pipeline: a tag push triggers the *staging* workflow (both `v1.0.15` and `v1.0.15-qa4`), and
+# production is a manual `workflow_dispatch` of a separate workflow behind a named allow-list. So
+# what reached production is answered by the GitHub deployment record, not by a tag shape, and the
+# the reconciliation reads it from there.
+#
+# This pattern is used for one narrower thing: deciding whether a build produces a release-tier
+# document or a staging-tier one (WI-006-09: Which build produces evidence). A tag matching it is a candidate for production; a
+# `-qaN` tag never is.
+production_release:
+  tag_pattern: '^v?[0-9]+\.[0-9]+\.[0-9]+$'
+
+# WI-006-09-01: Timeframes — which regulatory regimes a product is in scope of.
+#
+# Not documentation. Each entry tightens a check, because some regimes are stricter than the
+# process default:
+#
+#   tr-03161-1   BSI TR-03161 part 1, mobile applications
+#   tr-03161-2   part 2, web applications
+#   tr-03161-3   part 3, backend systems
+#   cra          Cyber Resilience Act product requirements
+#   mdr          MDR/IVDR medical device
+#
+# What TR-03161 changes, from its O.TrdP requirement family:
+#   O.TrdP_2  third-party software MUST be the newest version or the one preceding it. Stricter
+#             than the default max_behind, which tolerates unlimited patch drift.
+#   O.TrdP_8  third-party software that is no longer maintained MUST NOT be used. So the default
+#             answer to obsolescence ("replace, fork, or accept with a recorded reason") loses its
+#             third option: an acceptance is not available.
+#   O.TrdP_4  after the grace period the application MUST refuse to operate. That is a product
+#             behaviour, outside this process, and it is why the deadlines here have to match the
+#             security concept the same requirement demands.
+regulatory_scope: []
+
+# WI-006-09-02: Currency and obsolescence — how far a dependency may lag. 0 major, 1 minor, unlimited patch.
+dependency_currency:
+  max_behind:
+    major: 0
+    minor: 1
+    patch: unlimited
+  # Upstream staleness: no release in this long means the component is no longer
+  # maintained, which is a different finding from us being behind and has a different
+  # answer — there is nothing to upgrade to. 12 months matches the analysis period the
+  # SOUP records already use in grq-3 ("Is maintained and support is available").
+  stale_after: 12m
+  # Written explicitly, not left implicit: validate-policy.sh's TR-03161 check already
+  # treats an absent key the same as false, so this changes nothing about what is allowed.
+  # It exists so policy.effective.json shows the value in force instead of being silent
+  # about a parameter that is real, schema-checked and tested.
+  obsolescence_may_be_accepted: false
+
+# WI-006-09-02: Service level. How often the reconciliation runs and reports what did not happen.
+#
+# Like maintenance_interval, this follows from the customer's SLA and is not determined here.
+# Deliberately without a companion reference field: a pointer to a contract version held in YAML
+# goes stale the first time the SLA is amended and then asserts a provenance that no longer holds.
+# The controls are the CODEOWNERS review on the project file and the reconciliation reporting a
+# value that changes between runs.
+#
+# The schedule that actually fires is the cron in the product's reconciliation workflow. This
+# value is what the product committed to, so a drifting schedule is visible against it.
+reconciliation_interval: 12m
+
+# Which findings reach Slack. Everything below the threshold goes to the report and the
+# overview only. KEV is unconditional and is not subject to this.
+alerts:
+  threshold: high         # critical | high | medium | low

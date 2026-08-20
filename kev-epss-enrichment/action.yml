@@ -1,0 +1,71 @@
+name: 'CVE Enrichment — KEV + EPSS'
+description: 'Annotates CVE IDs with CISA KEV membership and EPSS score, with reproducible feed provenance'
+
+inputs:
+  cves:
+    description: 'Comma- or whitespace-separated CVE IDs. Combined with input-file if both are given.'
+    required: false
+    default: ''
+  input-file:
+    description: 'Any file containing CVE IDs (OSV-Scanner, Docker Scout, Dependabot, Trivy, CycloneDX). Scanned for CVE identifiers; no per-tool schema assumed.'
+    required: false
+    default: ''
+  output:
+    description: 'Path of the enrichment JSON to write'
+    required: false
+    default: 'cve-enrichment.json'
+  snapshot-date:
+    description: 'Pin EPSS to a specific date (YYYY-MM-DD) to reproduce a past enrichment. Empty = current feed.'
+    required: false
+    default: ''
+  cache-ttl-hours:
+    description: 'Reuse a cached feed younger than this instead of refetching'
+    required: false
+    default: '6'
+  allow-missing-feeds:
+    description: 'Emit an empty, stale-marked enrichment instead of failing when no feed and no cache is available'
+    required: false
+    default: 'false'
+  upload-artifact:
+    description: 'Upload the enrichment JSON as a workflow artifact'
+    required: false
+    default: 'false'
+
+outputs:
+  enrichment-file:
+    description: 'Path to the enrichment JSON'
+    value: ${{ steps.enrich.outputs.enrichment-file }}
+  stale:
+    description: 'true if any feed came from cache rather than a successful refresh'
+    value: ${{ steps.enrich.outputs.stale }}
+  kev-count:
+    description: 'Number of requested CVEs that are in the KEV catalog'
+    value: ${{ steps.enrich.outputs.kev-count }}
+  kev-catalog-version:
+    description: 'CISA KEV catalogVersion used — record this for reproducibility'
+    value: ${{ steps.enrich.outputs.kev-catalog-version }}
+  epss-model-version:
+    description: 'EPSS model version used — scores are NOT comparable across model versions'
+    value: ${{ steps.enrich.outputs.epss-model-version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Enrich CVEs with KEV + EPSS
+      id: enrich
+      shell: bash
+      env:
+        QB_ENRICH_CVES: ${{ inputs.cves }}
+        QB_ENRICH_CVE_FILE: ${{ inputs.input-file }}
+        QB_ENRICH_OUTPUT: ${{ inputs.output }}
+        QB_ENRICH_SNAPSHOT_DATE: ${{ inputs.snapshot-date }}
+        QB_ENRICH_CACHE_TTL_HOURS: ${{ inputs.cache-ttl-hours }}
+        QB_ENRICH_ALLOW_MISSING_FEEDS: ${{ inputs.allow-missing-feeds }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/enrich.sh"
+
+    - name: Upload enrichment
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: cve-enrichment
+        path: ${{ inputs.output }}

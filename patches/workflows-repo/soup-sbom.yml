@@ -1,0 +1,138 @@
+# Reusable workflow for QuickBirdEng/workflows.
+#
+# WI-006-09: Inventory: produce the inventory of a build and assess it. Called by a thin workflow in
+# the product repository, which owns the trigger — same pattern as soup-version-check.yml.
+#
+# Must run AFTER the release workflow has pushed the images of this tag. The pipeline scans an
+# image by pulling it and records the digest of what it pulled; an image that is not in the
+# registry yet becomes a gap, and a gap is what an incomplete inventory looks like. The product
+# caller therefore triggers on the release workflow completing, not on the tag push.
+
+name: SOUP - SBOM
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: 'Product name. Becomes the subject of the document.'
+        required: true
+        type: string
+      version:
+        description: >-
+          The version this inventory describes. Use the release tag. A placeholder here produces a
+          document that cannot be resolved back to a build, which is the one thing it exists for.
+        required: true
+        type: string
+      ref:
+        description: 'Ref to check out. Defaults to the calling ref.'
+        required: false
+        type: string
+        default: ''
+      scope-file:
+        description: 'Scope declaration. Every discovered candidate must be classified in it.'
+        required: false
+        type: string
+        default: '.soup-scope.yml'
+      publish-to-release:
+        description: >-
+          Attach the bundle to the release of this tag. The fixed asset name is what lets the daily
+          monitor resolve a deployed version to its inventory.
+        required: false
+        type: boolean
+        default: true
+      render-pdf:
+        description: 'Also render the readable version.'
+        required: false
+        type: boolean
+        default: true
+      runs-on:
+        description: 'Runner label(s). JSON array or a single label.'
+        required: false
+        type: string
+        default: '["self-hosted", "Linux"]'
+    secrets:
+      REGISTRY_USERNAME:
+        required: false
+      REGISTRY_PASSWORD:
+        required: false
+      # Without these, private images cannot be pulled and are recorded as gaps rather than
+      # scanned. The run does not fail; the inventory says it is incomplete.
+      GH_API_TOKEN:
+        required: false
+      DO_ACCESS_KEY:
+        required: false
+      DO_SECRET_KEY:
+        required: false
+    outputs:
+      complete:
+        description: 'false if any in-scope candidate could not be scanned'
+        value: ${{ jobs.sbom.outputs.complete }}
+      gaps:
+        description: 'ids of in-scope candidates that produced no BOM'
+        value: ${{ jobs.sbom.outputs.gaps }}
+
+jobs:
+  sbom:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    outputs:
+      complete: ${{ steps.discovery.outputs.complete }}
+      gaps: ${{ steps.discovery.outputs.gaps }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # gh is required here and the self-hosted runners do not ship it (proven on the first
+      # e2e run). Fetched once into the tool cache, which persists on a self-hosted runner —
+      # after the first run this is a no-op. Provisioning gh on the runner image makes this
+      # a no-op from the start; nothing breaks either way.
+      - name: Ensure gh
+        shell: bash
+        run: |
+          command -v gh >/dev/null 2>&1 && exit 0
+          V=2.63.2
+          case "$(uname -m)" in aarch64|arm64) A=arm64;; *) A=amd64;; esac
+          CACHE="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/gh-cli/$V-$A"
+          if [ ! -x "$CACHE/bin/gh" ]; then
+            mkdir -p "$CACHE"
+            curl -sSL --fail --retry 3 \
+              "https://github.com/cli/cli/releases/download/v$V/gh_${V}_linux_$A.tar.gz" \
+              | tar -xz -C "$CACHE" --strip-components=1
+          fi
+          echo "$CACHE/bin" >> "$GITHUB_PATH"
+
+      - name: Discover, scan, assess, publish
+        id: discovery
+        uses: QuickBirdEng/actions/soup-discovery@main
+        with:
+          product: ${{ inputs.product }}
+          version: ${{ inputs.version }}
+          # Also passed as the release tag. Under workflow_run — the normal trigger — the
+          # ref is the default branch, so the action cannot derive the tag itself; without
+          # this line the bundle would be tiered `branch`, never attached to the release,
+          # and stored under the branch prefix. `version` is documented as the release tag,
+          # which is what makes this pass-through correct.
+          release-tag: ${{ inputs.version }}
+          scope-file: ${{ inputs.scope-file }}
+          render-pdf: ${{ inputs.render-pdf }}
+          publish-to-release: ${{ inputs.publish-to-release }}
+          registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          repo-token: ${{ secrets.GH_API_TOKEN || github.token }}
+          do-access-key: ${{ secrets.DO_ACCESS_KEY }}
+          do-secret-key: ${{ secrets.DO_SECRET_KEY }}
+
+      # An incomplete inventory is a finding, not a failure: the document states which artefacts
+      # are missing and why, and that is the record WI-006-09: Inventory asks for. Failing the job here
+      # would delete the evidence of the gap along with the run.
+      - name: Verdict
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.discovery.outputs.complete }}" = "true" ]; then
+            echo "inventory complete — ${{ steps.discovery.outputs.component-count }} components"
+          else
+            echo "::warning::inventory incomplete, gaps: ${{ steps.discovery.outputs.gaps }}"
+            echo "::warning::  the document records each gap and its reason; resolve them before"
+            echo "::warning::  this version is used as release evidence"
+          fi

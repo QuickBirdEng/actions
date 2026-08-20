@@ -1,1 +1,9 @@
 .idea
+
+# Python bytecode from the SOUP tooling
+__pycache__/
+*.pyc
+
+# Local only: QMS documents live in the QMS, per-product drafts in the product repos
+qms-documents/
+product-drafts/

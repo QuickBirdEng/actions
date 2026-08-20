@@ -1,0 +1,106 @@
+# Reusable workflow for QuickBirdEng/workflows.
+#
+# Daily check of whether anything a product currently runs contains a vulnerability that is
+# known to be actively exploited. From 11 September 2026 that question carries a 24-hour
+# reporting clock for CRA-scoped products, and it is the only question this workflow asks.
+# Severity grading, deadlines and the finding lifecycle are handled by the assessment, not here.
+
+# No trigger here on purpose. `workflow_dispatch` on a reusable workflow gets its inputs from the
+# dispatch form, not from workflow_call, so `product` would arrive empty and `runs-on` would arrive
+# as "" — fromJSON("") then fails the job before anything runs. The product caller owns both the
+# schedule and the manual trigger, which is also how soup-version-check.yml is wired.
+
+name: SOUP - KEV monitor
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: 'Product name, used in the evidence record and the alert'
+        required: true
+        type: string
+      cra-scope:
+        description: >-
+          true | false | unknown. Whether this product is in scope of the Cyber Resilience Act.
+          Left at "unknown" the alert says so — assuming "false" is the one wrong answer with a
+          legal consequence attached.
+        required: false
+        type: string
+        default: 'unknown'
+      slack-channel-id:
+        description: 'Channel for alerts. Omitted, the run still writes its record; only the notification is skipped.'
+        required: false
+        type: string
+        default: ''
+      runs-on:
+        description: 'Runner label(s). JSON array or a single label.'
+        required: false
+        type: string
+        default: '["self-hosted", "Linux"]'
+    secrets:
+      SLACK_BOT_TOKEN:
+        required: false
+      GH_API_TOKEN:
+        required: false
+      # Without these the dated record exists only as a 90-day workflow artifact, and an annual
+      # backstop cannot reconcile its own review period. Declared as not required so the workflow
+      # still runs without them, but the backstop then reports the coverage it cannot see.
+      DO_ACCESS_KEY:
+        required: false
+      DO_SECRET_KEY:
+        required: false
+
+jobs:
+  kev-check:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # gh is required here and the self-hosted runners do not ship it (proven on the first
+      # e2e run). Fetched once into the tool cache, which persists on a self-hosted runner —
+      # after the first run this is a no-op. Provisioning gh on the runner image makes this
+      # a no-op from the start; nothing breaks either way.
+      - name: Ensure gh
+        shell: bash
+        run: |
+          command -v gh >/dev/null 2>&1 && exit 0
+          V=2.63.2
+          case "$(uname -m)" in aarch64|arm64) A=arm64;; *) A=amd64;; esac
+          CACHE="${RUNNER_TOOL_CACHE:-$RUNNER_TEMP}/gh-cli/$V-$A"
+          if [ ! -x "$CACHE/bin/gh" ]; then
+            mkdir -p "$CACHE"
+            curl -sSL --fail --retry 3 \
+              "https://github.com/cli/cli/releases/download/v$V/gh_${V}_linux_$A.tar.gz" \
+              | tar -xz -C "$CACHE" --strip-components=1
+          fi
+          echo "$CACHE/bin" >> "$GITHUB_PATH"
+
+      - name: KEV monitor
+        id: monitor
+        uses: QuickBirdEng/actions/kev-monitor@main
+        with:
+          product: ${{ inputs.product }}
+          cra-scope: ${{ inputs.cra-scope }}
+          slack-channel-id: ${{ inputs.slack-channel-id }}
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
+          gh-token: ${{ secrets.GH_API_TOKEN || github.token }}
+          do-access-key: ${{ secrets.DO_ACCESS_KEY }}
+          do-secret-key: ${{ secrets.DO_SECRET_KEY }}
+
+      # The job fails on a KEV finding so it is visible without reading Slack, and on an
+      # incomplete run so that "could not check" is never mistaken for "nothing found".
+      # An all-clear passes and leaves its dated record behind as the evidence of monitoring.
+      - name: Verdict
+        if: always()
+        shell: bash
+        run: |
+          case "${{ steps.monitor.outputs.verdict }}" in
+            all-clear)
+              echo "all clear — record retained as evidence that the product was monitored today" ;;
+            kev-findings)
+              echo "::error::actively exploited vulnerability present in the running version"; exit 1 ;;
+            incomplete)
+              echo "::error::the check could not be completed — this is not an all-clear"; exit 1 ;;
+            *)
+              echo "::error::no verdict produced"; exit 1 ;;
+          esac
