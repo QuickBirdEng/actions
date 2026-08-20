@@ -244,8 +244,13 @@ def main():
         # behind it, so the evidence store gets a detection to go with it. Each of these moves a
         # real obligation: the two intervals move every Track 3/4 deadline and the reconciliation
         # cadence, cra_scope decides whether a KEV alert says a 24-hour reporting clock is
-        # running. A change is not necessarily wrong. Going unnoticed is.
-        for field in ("cra_scope", "maintenance_interval", "reconciliation_interval"):
+        # running, and baseline_clocks_start decides the day a whole pre-existing backlog falls
+        # due. A change is not necessarily wrong. Going unnoticed is.
+        #
+        # A record that predates a field carries it as null and is skipped below, so adding one
+        # here does not invent drift out of the records that came before it.
+        for field in ("cra_scope", "maintenance_interval", "reconciliation_interval",
+                      "baseline_clocks_start"):
             seen = []
             for at, rec, _ in rs:
                 val = rec.get(field)

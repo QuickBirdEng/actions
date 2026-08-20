@@ -1298,6 +1298,32 @@ CURL
   grep -q 'Authorization: Bearer t0ken' "$TMP/mdl/curl.log"
 }
 
+# The record stated three of the four per-project service-level values. The one it left out is the
+# one that decides when a pre-existing backlog becomes due, so nothing in the evidence said which
+# baseline had been in force on the day a finding was assessed.
+test_monitor_record_carries_the_baseline() {
+  rm -rf "$TMP/mbl"; mkdir -p "$TMP/mbl"
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nonboarded: "2026-08-01"\nbaseline_clocks_start: "2026-08-15"\n' \
+    > "$TMP/mbl/.soup-policy.yml"
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"},
+                    properties:[{name:"quickbird:sbom:tier",value:"candidate"}]},
+          components:[],vulnerabilities:[]}' > "$TMP/mbl/bom.json"
+  MONITOR_LOCAL_SBOM="$TMP/mbl/bom.json" SOUP_POLICY_FILE="$TMP/mbl/.soup-policy.yml" \
+    bash "$S/monitor-kev.sh" QuickBirdEng/x p "$TMP/mbl/out" >/dev/null 2>&1 || return 1
+  local rec; rec=$(ls "$TMP/mbl/out"/*-p.json 2>/dev/null | head -1)
+  assert "$(jq -r '.baseline_clocks_start' "$rec")" "2026-08-15" || return 1
+  # and a blank one stays null rather than taking the whole record down with it
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\nbaseline_clocks_start: ""\n' \
+    > "$TMP/mbl/.soup-policy.yml"
+  rm -rf "$TMP/mbl/out"
+  MONITOR_LOCAL_SBOM="$TMP/mbl/bom.json" SOUP_POLICY_FILE="$TMP/mbl/.soup-policy.yml" \
+    bash "$S/monitor-kev.sh" QuickBirdEng/x p "$TMP/mbl/out" >/dev/null 2>&1 || return 1
+  rec=$(ls "$TMP/mbl/out"/*-p.json 2>/dev/null | head -1)
+  [[ -s "$rec" ]] || return 1
+  assert "$(jq -r '.baseline_clocks_start // "null"' "$rec")" "null"
+}
+
 # And the run must refuse to look clean if the record did not survive.
 test_monitor_fails_when_the_record_would_be_empty() {
   rm -rf "$TMP/mrec2"; mkdir -p "$TMP/mrec2/out"
@@ -1588,6 +1614,37 @@ test_backstop_detects_a_changed_determination() {
   assert "$(jq -r '[.determination_drift[].field] | sort | join(",")' "$TMP/bd.json")" "cra_scope,reconciliation_interval" || return 1
   # drift alone must make the verdict action-required
   assert "$(jq -r '.verdict' "$TMP/bd.json")" "action-required"
+}
+
+# baseline_clocks_start decides the day a whole pre-existing backlog falls due, which makes moving
+# it the cheapest way to make an overdue finding stop being overdue.
+test_backstop_detects_a_moved_baseline() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  for spec in 2026-07-01:2026-01-01 2026-08-01:2026-06-01; do
+    d="${spec%%:*}"; b="${spec#*:}"
+    jq -n --arg d "${d}T06:00:00+00:00" --arg b "$b" \
+      '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",run_at:$d,
+        baseline_clocks_start:$b,synthetic:false,scanned:[{name:"x",version:"1"}],
+        not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-$d.json"
+  done
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
+    --now 2026-08-03T06:00:00+00:00 --out "$TMP/bd.json" >/dev/null 2>&1
+  assert "$(jq -r '[.determination_drift[].field] | join(",")' "$TMP/bd.json")" "baseline_clocks_start"
+}
+
+# Adding a field to the record must not turn the records written before it into drift. Those
+# carry it as null, and a null is an absence rather than a value that changed.
+test_backstop_a_field_appearing_is_not_drift() {
+  rm -rf "$TMP/ev"; mkdir -p "$TMP/ev"
+  jq -n '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",
+          run_at:"2026-07-01T06:00:00+00:00",synthetic:false,scanned:[{name:"x",version:"1"}],
+          not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-1.json"
+  jq -n '{schema:"quickbird.kev-monitor-run/v1",product:"p",repo:"QuickBirdEng/nope",
+          run_at:"2026-08-01T06:00:00+00:00",baseline_clocks_start:"2026-06-01",synthetic:false,
+          scanned:[{name:"x",version:"1"}],not_scanned:[],kev_findings:[]}' > "$TMP/ev/p-2.json"
+  python3 "$S/backstop-report.py" "$TMP/ev" --window 90 --max-gap 40 \
+    --now 2026-08-03T06:00:00+00:00 --out "$TMP/bd.json" >/dev/null 2>&1
+  assert "$(jq -r '[.determination_drift[] | select(.field=="baseline_clocks_start")] | length' "$TMP/bd.json")" "0"
 }
 
 # A product whose determinations never change must stay silent, or the check becomes noise.
