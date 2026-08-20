@@ -116,10 +116,35 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   [[ -z "$name" ]] && continue
   log "  $name @ $version"
   bom="$OUT_DIR/$name.cdx.json"
+  DL_WHY="SBOM asset could not be downloaded"
   if [[ "$sbom_url" == file://* ]]; then
     cp "${sbom_url#file://}" "$bom" 2>/dev/null || true
   else
-    curl -sSL --fail --max-time 180 "$sbom_url" -o "$bom" 2>/dev/null || true
+    # resolve-deployed.sh records the release asset's API url, and that url needs two headers.
+    # Without a token it is a 404 on a private repository. Without Accept: application/octet-stream
+    # the API answers 200 with the asset *metadata* — JSON that is not a BOM, which is the worse of
+    # the two failures because the file is then non-empty. curl drops Authorization on the
+    # cross-host redirect to the asset CDN, which is what should happen.
+    if [[ -n "${GH_TOKEN:-}" ]]; then
+      HTTP=$(curl -sSL --max-time 180 -w '%{http_code}' \
+        -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+        "$sbom_url" -o "$bom" 2>/dev/null || echo 000)
+    else
+      HTTP=$(curl -sSL --max-time 180 -w '%{http_code}' \
+        -H "Accept: application/octet-stream" "$sbom_url" -o "$bom" 2>/dev/null || echo 000)
+      log "::warning::$name: no GH_TOKEN — a private repository answers 404 here"
+    fi
+    if [[ "$HTTP" != "200" ]]; then
+      DL_WHY="SBOM asset could not be downloaded (HTTP $HTTP)"
+      : > "$bom"
+    fi
+  fi
+
+  # A non-empty file is not yet a document. The metadata answer above is valid JSON, and so is
+  # anything else the url might serve, so the check is on what the file claims to be.
+  if [[ -s "$bom" ]] && ! jq -e '.bomFormat == "CycloneDX"' "$bom" >/dev/null 2>&1; then
+    DL_WHY="what was downloaded is not a CycloneDX document"
+    : > "$bom"
   fi
   # What matters is that the document describes the version that is actually deployed, and
   # resolve-deployed.sh already established which version that is — so the version identity
@@ -143,8 +168,8 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   fi
 
   if [[ ! -s "$bom" ]]; then
-    UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" \
-      '. + [{name:$n, version:$v, why:"SBOM asset could not be downloaded"}]' <<<"$UNSCANNABLE")
+    UNSCANNABLE=$(jq -c --arg n "$name" --arg v "$version" --arg w "$DL_WHY" \
+      '. + [{name:$n, version:$v, why:$w}]' <<<"$UNSCANNABLE")
     continue
   fi
 
