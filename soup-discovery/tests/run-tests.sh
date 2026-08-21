@@ -1993,11 +1993,13 @@ PYEOF
 # "Direct" used to mean "carries a SOUP record" — a proxy that could not fail. The scope
 # now comes from the manifests; these pin each parser.
 
-scope_bom() {  # <file> <name...>
+scope_bom() {  # <file> <name[@version]...>   version defaults to 1.0.0
   local f="$1"; shift
   local comps=""
-  for n in "$@"; do
-    comps+="{\"bom-ref\":\"$n\",\"type\":\"library\",\"name\":\"$n\",\"version\":\"1.0.0\",\"purl\":\"pkg:npm/$n@1.0.0\"},"
+  for spec in "$@"; do
+    local n="${spec%@*}" v="1.0.0"
+    [[ "$spec" == *@* ]] && v="${spec##*@}"
+    comps+="{\"bom-ref\":\"$spec\",\"type\":\"library\",\"name\":\"$n\",\"version\":\"$v\",\"purl\":\"pkg:npm/$n@$v\"},"
   done
   printf '{"bomFormat":"CycloneDX","specVersion":"1.6","components":[%s]}' "${comps%,}" > "$f"
 }
@@ -2033,7 +2035,7 @@ test_scope_npm_joins_every_package_json() {
   mkdir -p "$TMP/sc-npm/web" "$TMP/sc-npm/web/packages/member"
   echo '{"dependencies":{"axios":"^1.0.0"},"devDependencies":{"eslint":"^9.0.0"}}' > "$TMP/sc-npm/web/package.json"
   echo '{"dependencies":{"lodash":"^4.0.0"}}' > "$TMP/sc-npm/web/packages/member/package.json"
-  scope_bom "$TMP/sc-npm/bom.json" axios lodash eslint follow-redirects
+  scope_bom "$TMP/sc-npm/bom.json" axios@1.0.0 lodash@4.0.0 eslint@9.0.0 follow-redirects
   python3 "$S/mark-scope.py" "$TMP/sc-npm/bom.json" --ecosystem npm --repo "$TMP/sc-npm" \
     --markers "web/package.json,web/packages/member/package.json" >/dev/null 2>&1 || return 1
   assert "$(scope_of "$TMP/sc-npm/bom.json" axios)" "direct" || return 1
@@ -2042,6 +2044,37 @@ test_scope_npm_joins_every_package_json() {
   # direct-without-record finding does not demand SOUP records for eslint and babel
   assert "$(scope_of "$TMP/sc-npm/bom.json" eslint)" "dev" || return 1
   assert "$(scope_of "$TMP/sc-npm/bom.json" follow-redirects)" "transitive"
+}
+
+# Regression: npm installs one copy per incompatible range, so a name we depend on appears in
+# the lock file at versions nobody chose. Matching on the name alone called every copy direct.
+# On mindnet that was uuid three times — our ^13.0.0, plus * from @types/uuid and ^8.3.2 from
+# sockjs — which inflated "chosen, shipped, never approved" and ran the currency check over
+# components nobody picked.
+test_scope_npm_a_second_copy_of_a_direct_name_is_transitive() {
+  mkdir -p "$TMP/sc-npm2/web"
+  echo '{"dependencies":{"uuid":"^13.0.0"}}' > "$TMP/sc-npm2/web/package.json"
+  scope_bom "$TMP/sc-npm2/bom.json" uuid@13.0.2 uuid@14.0.1 uuid@8.3.2
+  python3 "$S/mark-scope.py" "$TMP/sc-npm2/bom.json" --ecosystem npm --repo "$TMP/sc-npm2" \
+    --markers "web/package.json" >/dev/null 2>&1 || return 1
+  local f="$TMP/sc-npm2/bom.json"
+  assert "$(jq -r '[.components[] | select(.version=="13.0.2") | .properties[] | select(.name=="quickbird:dependency:scope") | .value][0]' "$f")" "direct" || return 1
+  assert "$(jq -r '[.components[] | select(.version=="14.0.1") | .properties[] | select(.name=="quickbird:dependency:scope") | .value][0]' "$f")" "transitive" || return 1
+  assert "$(jq -r '[.components[] | select(.version=="8.3.2") | .properties[] | select(.name=="quickbird:dependency:scope") | .value][0]' "$f")" "transitive"
+}
+
+# A range this cannot parse must keep the benefit of the doubt, or the fix would demote real
+# direct dependencies. Comparators, unions, git and file specs and dist-tags all land here.
+test_scope_npm_an_undecidable_range_stays_direct() {
+  mkdir -p "$TMP/sc-npm3/web"
+  echo '{"dependencies":{"a":">=1.0.0","b":"1.0.0 || 2.0.0","c":"github:o/r","d":"*"}}' \
+    > "$TMP/sc-npm3/web/package.json"
+  scope_bom "$TMP/sc-npm3/bom.json" a@9.9.9 b@2.0.0 c@0.0.1 d@7.0.0
+  python3 "$S/mark-scope.py" "$TMP/sc-npm3/bom.json" --ecosystem npm --repo "$TMP/sc-npm3" \
+    --markers "web/package.json" >/dev/null 2>&1 || return 1
+  for n in a b c d; do
+    assert "$(scope_of "$TMP/sc-npm3/bom.json" $n)" "direct" || return 1
+  done
 }
 
 test_scope_maven_reads_declared_dependencies() {
