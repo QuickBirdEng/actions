@@ -19,7 +19,8 @@ proved why the distinction matters: without it, 100 babel/eslint/test packages r
 Per ecosystem:
   pub             pubspec.lock marks every entry: dependency: "direct main" | "direct
                   dev" | "transitive"
-  npm             dependencies -> direct, devDependencies -> dev, across every
+  npm             dependencies -> direct, devDependencies -> dev, but only for the copy
+                  whose version satisfies the declared range, across every
                   package.json that resolves against the scanned lockfile
   jvm-maven       direct = <dependencies> declared in the module pom.xml
   android-gradle  direct = coordinates named by implementation/api/... lines in the
@@ -67,12 +68,58 @@ def direct_set_pub(markers, repo):
     return direct, dev, transitive
 
 
+def _semver(v):
+    """(major, minor, patch) or None. Pre-release and build metadata are dropped: they do
+    not change which range a version falls in for the purpose here."""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(v).strip())
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def satisfies(version, spec):
+    """Does `version` fall inside the npm range `spec`?
+
+    Returns True when it does, False when it provably does not, and None when the spec is
+    one this cannot decide. None matters: a name declared with a range nobody here can parse
+    must keep the benefit of the doubt, or the fix would demote real direct dependencies.
+    Only ^, ~, an exact version and the match-anything forms are decided; unions, hyphen
+    ranges, comparators, aliases, git and file specs and dist-tags are left undecided.
+    """
+    v = _semver(version)
+    spec = (spec or "").strip()
+    if spec in ("", "*", "x", "X", "latest") or spec.startswith(("workspace:", "npm:")):
+        return True
+    if v is None or any(ch in spec for ch in "|| ,>=<") or spec.count(" ") or "-" in spec[1:]:
+        return None
+    if spec.startswith("^"):
+        b = _semver(spec[1:])
+        if b is None:
+            return None
+        if b[0] > 0:
+            return v >= b and v[0] == b[0]
+        if b[1] > 0:                      # ^0.y.z -> >=0.y.z <0.(y+1).0
+            return v >= b and v[:2] == b[:2]
+        return v == b                     # ^0.0.z is exact
+    if spec.startswith("~"):
+        b = _semver(spec[1:])
+        return None if b is None else (v >= b and v[:2] == b[:2])
+    b = _semver(spec)
+    return None if b is None else v == b
+
+
 def direct_set_npm(markers, repo):
     """dependencies -> direct, devDependencies -> dev, over every package.json marker.
     In a workspace the members' choices are direct choices of the product, so all
     markers count — that is exactly why discovery folds members into the root candidate.
-    A name in both sets ships: direct wins."""
-    direct, dev = set(), set()
+    A name in both sets ships: direct wins.
+
+    The declared range is carried, not just the name. npm installs one copy per
+    incompatible range, so a name we depend on can appear several times in the lock file at
+    versions nobody here chose: web/package.json asks for uuid ^13.0.0, @types/uuid drags in
+    uuid * and sockjs uuid ^8.3.2, and matching on the name alone called all three direct.
+    That inflated "chosen, shipped, never approved" with components nobody chose, and ran the
+    currency check over them.
+    """
+    direct, dev = {}, {}
     for m in markers:
         pj = Path(repo) / m
         if pj.name != "package.json" or not pj.is_file():
@@ -81,9 +128,10 @@ def direct_set_npm(markers, repo):
             doc = json.loads(pj.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        direct.update((doc.get("dependencies") or {}).keys())
-        dev.update((doc.get("devDependencies") or {}).keys())
-    return direct, dev - direct
+        for field, target in (("dependencies", direct), ("devDependencies", dev)):
+            for name, spec in (doc.get(field) or {}).items():
+                target.setdefault(name, []).append(spec)
+    return direct, {k: v for k, v in dev.items() if k not in direct}
 
 
 def direct_set_maven(markers, repo):
@@ -146,6 +194,18 @@ def direct_set_go(markers, repo):
     return direct, None
 
 
+def in_declared(name, version, declared):
+    """`declared` is either a set of names (every ecosystem but npm) or a name -> ranges
+    mapping. With ranges, a component counts as declared unless every range it was declared
+    under provably excludes its version."""
+    if name not in declared:
+        return False
+    if not isinstance(declared, dict):
+        return True
+    verdicts = [satisfies(version, spec) for spec in declared[name]]
+    return any(x is not False for x in verdicts)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("bom")
@@ -193,9 +253,9 @@ def main():
             scope = "direct"
         elif all_transitive:
             scope = "transitive"
-        elif direct is not None and name in direct:
+        elif direct is not None and in_declared(name, c.get("version"), direct):
             scope = "direct"
-        elif dev is not None and name in dev:
+        elif dev is not None and in_declared(name, c.get("version"), dev):
             scope = "dev"
         elif transitive is not None and name not in transitive:
             # pub knows all three sides; a name in none of them is undetermined
