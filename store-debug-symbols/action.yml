@@ -55,18 +55,105 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - id: collect
-      name: Collect debug symbols
+    - name: Collect debug symbols
+      id: collect
       shell: bash
-      env:
-        INPUT_PLATFORM: ${{ inputs.platform }}
-        INPUT_BUILD_NUMBER: ${{ inputs.build-number }}
-        INPUT_DSYMS_PATH: ${{ inputs.dsyms-path }}
-        INPUT_PROGUARD_MAPPING_FILE_PATH: ${{ inputs.proguard-mapping-file-path }}
-        INPUT_DART_SYMBOLS_FILE_PATH: ${{ inputs.dart-symbols-file-path }}
-        INPUT_DART_OBFUSCATION_MAP_FILE_PATH: ${{ inputs.dart-obfuscation-map-file-path }}
-        INPUT_RELEASE: ${{ inputs.release }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/store_debug_symbols.sh"
+      run: |
+        platform="${{ inputs.platform }}"
+        build_number="${{ inputs.build-number }}"
+        build_number="${build_number:-$GITHUB_RUN_ID}"
+
+        if [[ ! "$platform" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::Invalid platform label '$platform' (allowed: letters, digits, '.', '_', '-')"
+          exit 1
+        fi
+
+        if [[ ! "$build_number" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::Invalid build number '$build_number' (allowed: letters, digits, '.', '_', '-')"
+          exit 1
+        fi
+
+        staging="$RUNNER_TEMP/qb-debug-symbols-staging/$platform"
+        rm -rf "$staging"
+        mkdir -p "$staging"
+
+        requested=0
+        collected=0
+
+        stage_dir() {
+          local source="$1" target="$2" label="$3"
+          requested=$((requested + 1))
+          if [[ -d "$source" ]] && [[ -n "$(ls -A "$source")" ]]; then
+            mkdir -p "$staging/$target"
+            cp -R "$source"/. "$staging/$target"/
+            collected=$((collected + 1))
+            echo "Collected $label from $source"
+          else
+            echo "::warning::No $label found at '$source' - skipping"
+          fi
+        }
+
+        stage_file() {
+          local source="$1" target="$2" label="$3"
+          requested=$((requested + 1))
+          if [[ -f "$source" ]]; then
+            mkdir -p "$staging/$(dirname "$target")"
+            cp "$source" "$staging/$target"
+            collected=$((collected + 1))
+            echo "Collected $label from $source"
+          else
+            echo "::warning::No $label found at '$source' - skipping"
+          fi
+        }
+
+        if [[ -n "${{ inputs.dsyms-path }}" ]]; then
+          stage_dir "${{ inputs.dsyms-path }}" "dsyms" "iOS dSYMs"
+        fi
+
+        if [[ -n "${{ inputs.dart-symbols-file-path }}" ]]; then
+          stage_dir "${{ inputs.dart-symbols-file-path }}" "dart-symbols" "Dart symbols"
+        fi
+
+        if [[ -n "${{ inputs.dart-obfuscation-map-file-path }}" ]]; then
+          stage_file "${{ inputs.dart-obfuscation-map-file-path }}" "dart-symbols/obfuscation.map.json" "Dart obfuscation map"
+        fi
+
+        if [[ -n "${{ inputs.proguard-mapping-file-path }}" ]]; then
+          stage_file "${{ inputs.proguard-mapping-file-path }}" "proguard/mapping.txt" "ProGuard mapping"
+        fi
+
+        if [[ "$collected" -eq 0 ]]; then
+          echo "stored=false" >> $GITHUB_OUTPUT
+          if [[ "$requested" -gt 0 ]]; then
+            echo "::error::None of the $requested requested debug symbol paths exist - nothing to store for '$platform'"
+            exit 1
+          fi
+          echo "::warning::No debug symbol paths given for '$platform' - nothing to store"
+          exit 0
+        fi
+
+        {
+          echo "platform=$platform"
+          echo "release=${{ inputs.release }}"
+          echo "build_number=$build_number"
+          echo "run_id=$GITHUB_RUN_ID"
+          echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+          echo "sha=$GITHUB_SHA"
+          echo "ref=$GITHUB_REF"
+        } > "$staging/metadata.env"
+
+        # The upload action resolves its source relative to the workspace, so keep
+        # the archive in the workspace and hand out a workspace-relative name.
+        archive_name="debug-symbols-$platform.tar.gz"
+        archive="$GITHUB_WORKSPACE/$archive_name"
+        rm -f "$archive"
+        tar -C "$staging" -czf "$archive" .
+
+        echo "stored=true" >> $GITHUB_OUTPUT
+        echo "archive=$archive_name" >> $GITHUB_OUTPUT
+        echo "key-prefix=${GITHUB_REPOSITORY##*/}/debug-symbols/$build_number" >> $GITHUB_OUTPUT
+
+        echo "Archive: $(du -h "$archive" | cut -f1) at $archive"
     - name: Upload debug symbols to QB Spaces
       if: ${{ steps.collect.outputs.stored == 'true' }}
       uses: BetaHuhn/do-spaces-action@latest

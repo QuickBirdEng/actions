@@ -50,17 +50,128 @@ runs:
     - name: Download debug symbols from QB Spaces
       shell: bash
       env:
-        INPUT_ACCESS_KEY: ${{ inputs.access-key }}
-        INPUT_SECRET_KEY: ${{ inputs.secret-key }}
-        INPUT_SPACE_NAME: ${{ inputs.space-name }}
-        INPUT_SPACE_REGION: ${{ inputs.space-region }}
-        INPUT_BUILD_NUMBER: ${{ inputs.build-number }}
-        INPUT_PLATFORMS: ${{ inputs.platforms }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/download_debug_symbols.sh"
-    - id: extract
-      name: Extract debug symbols
+        SPACES_ACCESS_KEY: ${{ inputs.access-key }}
+        SPACES_SECRET_KEY: ${{ inputs.secret-key }}
+      run: |
+        build_number="${{ inputs.build-number }}"
+        build_number="${build_number:-$GITHUB_RUN_ID}"
+
+        if [[ ! "$build_number" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::Invalid build number '$build_number' (allowed: letters, digits, '.', '_', '-')"
+          exit 1
+        fi
+
+        # curl signs the S3 requests itself since 7.75. Fail with a clear message
+        # instead of a confusing 403 when the runner ships something older.
+        if ! curl --help all 2>/dev/null | grep -q -- '--aws-sigv4'; then
+          echo "::error::curl on this runner cannot sign S3 requests (needs curl 7.75+), found: $(curl --version | head -1)"
+          exit 1
+        fi
+
+        # Passing the keys as --user would expose them in the process list, which
+        # matters on shared self-hosted runners. A 0600 config file does not.
+        credentials="$RUNNER_TEMP/qb-spaces-curl.conf"
+        (umask 077 && printf 'user = "%s:%s"\n' "$SPACES_ACCESS_KEY" "$SPACES_SECRET_KEY" > "$credentials")
+        trap 'rm -f "$credentials"' EXIT
+
+        download_dir="$RUNNER_TEMP/qb-debug-symbols-download"
+        rm -rf "$download_dir"
+        mkdir -p "$download_dir"
+
+        endpoint="https://${{ inputs.space-name }}.${{ inputs.space-region }}.digitaloceanspaces.com"
+        prefix="${GITHUB_REPOSITORY##*/}/debug-symbols/$build_number"
+        downloaded=0
+
+        echo "Looking for debug symbols under '$prefix/'"
+
+        for platform in ${{ inputs.platforms }}; do
+          archive="debug-symbols-$platform.tar.gz"
+          target="$download_dir/$archive"
+
+          curl_status=0
+          status="$(curl --silent --show-error --config "$credentials" \
+            --aws-sigv4 "aws:amz:${{ inputs.space-region }}:s3" \
+            --output "$target" --write-out '%{http_code}' \
+            "$endpoint/$prefix/$archive")" || curl_status=$?
+
+          if [[ "$curl_status" -ne 0 ]]; then
+            echo "::error::Downloading '$archive' failed, could not reach $endpoint (curl exit $curl_status)"
+            exit 1
+          fi
+
+          case "$status" in
+            200)
+              downloaded=$((downloaded + 1))
+              echo "Downloaded $archive"
+              ;;
+            404)
+              rm -f "$target"
+              echo "No symbols stored for '$platform'"
+              ;;
+            *)
+              echo "::error::Downloading '$archive' failed with HTTP $status"
+              cat "$target" || true
+              exit 1
+              ;;
+          esac
+        done
+
+        echo "Downloaded $downloaded archive(s)"
+    - name: Extract debug symbols
+      id: extract
       shell: bash
-      env:
-        INPUT_DESTINATION: ${{ inputs.destination }}
-        INPUT_FAIL_IF_EMPTY: ${{ inputs.fail-if-empty }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/extract_debug_symbols.sh"
+      run: |
+        # The destination is wiped before extracting, so refuse an empty value.
+        if [[ -z "${{ inputs.destination }}" ]]; then
+          echo "::error::destination must not be empty"
+          exit 1
+        fi
+
+        download_dir="$RUNNER_TEMP/qb-debug-symbols-download"
+        symbols_dir="${{ inputs.destination }}"
+
+        rm -rf "$symbols_dir"
+        mkdir -p "$symbols_dir"
+
+        platforms=""
+        release=""
+
+        for archive in "$download_dir"/debug-symbols-*.tar.gz; do
+          [[ -f "$archive" ]] || continue
+
+          name="$(basename "$archive" .tar.gz)"
+          platform="${name#debug-symbols-}"
+          target="$symbols_dir/$platform"
+
+          mkdir -p "$target"
+          tar -xzf "$archive" -C "$target"
+          platforms="${platforms:+$platforms }$platform"
+          echo "Restored '$platform' from $(basename "$archive")"
+
+          if [[ -z "$release" && -f "$target/metadata.env" ]]; then
+            release="$(sed -n 's/^release=//p' "$target/metadata.env" | head -1)"
+          fi
+        done
+
+        if [[ -z "$platforms" ]]; then
+          echo "found=false" >> $GITHUB_OUTPUT
+          echo "platforms=" >> $GITHUB_OUTPUT
+          echo "release=" >> $GITHUB_OUTPUT
+          echo "symbols-dir=$symbols_dir" >> $GITHUB_OUTPUT
+
+          if [[ "${{ inputs.fail-if-empty }}" == "true" ]]; then
+            echo "::error::No debug symbols were stored for this build - check the 'Store debug symbols for Sentry' step of the build jobs"
+            exit 1
+          fi
+
+          echo "::warning::No debug symbols were stored for this build"
+          exit 0
+        fi
+
+        echo "found=true" >> $GITHUB_OUTPUT
+        echo "platforms=$platforms" >> $GITHUB_OUTPUT
+        echo "release=$release" >> $GITHUB_OUTPUT
+        echo "symbols-dir=$symbols_dir" >> $GITHUB_OUTPUT
+
+        echo "Restored platforms: $platforms"
+        echo "Sentry release: ${release:-<none>}"

@@ -50,25 +50,118 @@ runs:
     - name: Sentry CLI Version
       shell: bash
       run: sentry-cli --version
-    - name: Upload debug symbols
+    - name: Upload Debug Symbols from Directory
+      if: ${{ inputs.symbols-dir != '' }}
       shell: bash
       env:
-        INPUT_AUTH_TOKEN: ${{ inputs.auth-token }}
-        INPUT_URL: ${{ inputs.url }}
-        INPUT_ORGANIZATION: ${{ inputs.organization }}
-        INPUT_PROJECT: ${{ inputs.project }}
-        INPUT_SYMBOLS_DIR: ${{ inputs.symbols-dir }}
-        INPUT_DSYMS_PATH: ${{ inputs.dsyms-path }}
-        INPUT_PROGUARD_MAPPING_FILE_PATH: ${{ inputs.proguard-mapping-file-path }}
-        INPUT_DART_SYMBOLS_FILE_PATH: ${{ inputs.dart-symbols-file-path }}
-        INPUT_DART_OBFUSCATION_MAP_FILE_PATH: ${{ inputs.dart-obfuscation-map-file-path }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/upload_debug_symbols_to_sentry.sh"
+        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+      run: |
+        if [ ! -d "${{ inputs.symbols-dir }}" ]; then
+          echo "::error::symbols-dir '${{ inputs.symbols-dir }}' does not exist"
+          exit 1
+        fi
+
+        uploaded=0
+
+        for platform_dir in "${{ inputs.symbols-dir }}"/*/; do
+          platform_dir="${platform_dir%/}"
+          [ -d "$platform_dir" ] || continue
+          echo "::group::Sentry upload for $(basename "$platform_dir")"
+
+          if [ -d "$platform_dir/dsyms" ]; then
+            echo "Uploading dSYMs from $platform_dir/dsyms"
+            sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} debug-files upload --org ${{ inputs.organization }} --project ${{ inputs.project }} "$platform_dir/dsyms"
+            uploaded=$((uploaded + 1))
+          fi
+
+          if [ -d "$platform_dir/dart-symbols" ]; then
+            echo "Uploading dart symbols from $platform_dir/dart-symbols"
+            sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} debug-files upload --org ${{ inputs.organization }} --project ${{ inputs.project }} "$platform_dir/dart-symbols"
+            uploaded=$((uploaded + 1))
+
+            for debug_file in "$platform_dir"/dart-symbols/*.symbols; do
+              if [ -f "$debug_file" ] && [ -f "$platform_dir/dart-symbols/obfuscation.map.json" ]; then
+                echo "Uploading obfuscation map for $debug_file"
+                sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} dart-symbol-map upload --org ${{ inputs.organization }} --project ${{ inputs.project }} "$platform_dir/dart-symbols/obfuscation.map.json" "$debug_file"
+              fi
+            done
+          fi
+
+          if [ -f "$platform_dir/proguard/mapping.txt" ]; then
+            echo "Uploading proguard mapping $platform_dir/proguard/mapping.txt"
+            sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} upload-proguard --org ${{ inputs.organization }} --project ${{ inputs.project }} "$platform_dir/proguard/mapping.txt"
+            uploaded=$((uploaded + 1))
+          fi
+
+          echo "::endgroup::"
+        done
+
+        if [ "$uploaded" -eq 0 ]; then
+          echo "::error::No debug symbols found under '${{ inputs.symbols-dir }}'"
+          exit 1
+        fi
+    - name: Upload Dart Symbols
+      if: ${{ inputs.dart-symbols-file-path != '' }}
+      shell: bash
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+      run: |
+        if [ ! -d "${{ inputs.dart-symbols-file-path }}" ]; then
+          echo "::warning::No dart symbols found at '${{ inputs.dart-symbols-file-path }}' - skipping"
+          exit 0
+        fi
+        sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} debug-files upload --org ${{ inputs.organization }} --project ${{ inputs.project }} ${{ inputs.dart-symbols-file-path }}
+    - name: Upload Dart Obfuscation Map
+      if: ${{ inputs.dart-obfuscation-map-file-path != '' && inputs.dart-symbols-file-path != '' }}
+      shell: bash
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+      run: |
+        for debug_file in ${{ inputs.dart-symbols-file-path }}/*.symbols; do
+          if [ -f "$debug_file" ] && [ -f "${{ inputs.dart-obfuscation-map-file-path }}" ]; then
+            echo "Uploading obfuscation map for $debug_file"
+            sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} dart-symbol-map upload --org ${{ inputs.organization }} --project ${{ inputs.project }} ${{ inputs.dart-obfuscation-map-file-path }} "$debug_file"
+          fi
+        done
+    - name: Upload Debug Symbols (iOS)
+      if: ${{ inputs.dsyms-path != '' }}
+      shell: bash
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+      run: |
+        if [ ! -d "${{ inputs.dsyms-path }}" ]; then
+          echo "::warning::No dSYMs found at '${{ inputs.dsyms-path }}' - skipping"
+          exit 0
+        fi
+        sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} debug-files upload --org ${{ inputs.organization }} --project ${{ inputs.project }} ${{ inputs.dsyms-path }}
+    - name: Upload Proguard Mapping (Android)
+      if: ${{ inputs.proguard-mapping-file-path != '' }}
+      shell: bash
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+      run: |
+        if [ ! -f "${{ inputs.proguard-mapping-file-path }}" ]; then
+          echo "::warning::No proguard mapping found at '${{ inputs.proguard-mapping-file-path }}' - skipping"
+          exit 0
+        fi
+        sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} upload-proguard --org ${{ inputs.organization }} --project ${{ inputs.project }} ${{ inputs.proguard-mapping-file-path }}
     - name: Create & Finalize Sentry Release
       if: ${{ inputs.release != '' }}
       shell: bash
       env:
-        INPUT_AUTH_TOKEN: ${{ inputs.auth-token }}
-        INPUT_URL: ${{ inputs.url }}
-        INPUT_ORGANIZATION: ${{ inputs.organization }}
-        INPUT_RELEASE: ${{ inputs.release }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/create_sentry_release.sh"
+        SENTRY_AUTH_TOKEN: ${{ inputs.auth-token }}
+      run: |
+        sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} releases --org ${{ inputs.organization }} new "${{ inputs.release }}"
+
+        # --auto reads the local git tree, so the job has to check out the full
+        # history (fetch-depth: 0) for the commits to be found.
+        commits_status=0
+        sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} releases --org ${{ inputs.organization }} set-commits "${{ inputs.release }}" --auto || commits_status=$?
+
+        # Finalize either way, so a failed association never leaves a half-created release.
+        sentry-cli --url ${{ inputs.url || 'https://sentry.io' }} releases --org ${{ inputs.organization }} finalize "${{ inputs.release }}"
+
+        if [ "$commits_status" -ne 0 ]; then
+          echo "::error::Could not associate commits with release '${{ inputs.release }}'. The checkout needs the full git history (fetch-depth: 0) for sentry-cli to see them."
+          exit 1
+        fi
