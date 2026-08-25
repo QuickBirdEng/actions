@@ -19,6 +19,10 @@ proved why the distinction matters: without it, 100 babel/eslint/test packages r
 Per ecosystem:
   pub             pubspec.lock marks every entry: dependency: "direct main" | "direct
                   dev" | "transitive"
+  cocoapods       direct = DEPENDENCIES in Podfile.lock that are not sourced from a local
+                  path, which excludes the Flutter plugin pods and the engine
+  swift           not classified: Package.resolved is a flat list of pins with no direct or
+                  transitive distinction, and the direct set lives in the Xcode project
   npm             dependencies -> direct, devDependencies -> dev, but only for the copy
                   whose version satisfies the declared range, across every
                   package.json that resolves against the scanned lockfile
@@ -134,6 +138,40 @@ def direct_set_npm(markers, repo):
     return direct, {k: v for k, v in dev.items() if k not in direct}
 
 
+def direct_set_cocoapods(markers, repo):
+    """DEPENDENCIES in Podfile.lock, minus everything sourced from a local path.
+
+    A pod written `- name (from `...`)` is not an iOS choice. On a Flutter app almost all of
+    them are the iOS half of a Dart package that pubspec.lock already records as direct, and the
+    engine pod comes in the same shape. Counting them again here would demand a second SOUP
+    record for one choice and run the currency check on it twice, once under pkg:pub and once
+    under pkg:cocoapods. Measured on two products, 33 of 34 and 23 of 24 entries are of that
+    kind, so this is the rule rather than an edge case, and both leave zero direct pods.
+
+    A real iOS choice carries a version constraint instead: `- IOSSecuritySuite (~> 1.9)`.
+    """
+    direct = set()
+    for m in markers:
+        pl = Path(repo) / m
+        if pl.name != "Podfile.lock" or not pl.is_file():
+            continue
+        in_deps = False
+        try:
+            lines = pl.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if re.match(r"^[A-Z][A-Z ]*:\s*$", line):
+                in_deps = line.startswith("DEPENDENCIES:")
+                continue
+            if not in_deps:
+                continue
+            entry = re.match(r"^\s+-\s+(\S+)(.*)$", line)
+            if entry and "(from " not in entry.group(2):
+                direct.add(entry.group(1))
+    return direct, set()
+
+
 def direct_set_maven(markers, repo):
     """artifactIds declared in the module pom(s). Parent-managed versions are still
     declared in the module, which is what makes this readable without resolving."""
@@ -224,6 +262,8 @@ def main():
         direct, dev, transitive = direct_set_pub(markers, args.repo)
     elif eco == "npm":
         direct, dev = direct_set_npm(markers, args.repo)
+    elif eco == "cocoapods":
+        direct, _ = direct_set_cocoapods(markers, args.repo)
     elif eco == "jvm-maven":
         direct, _ = direct_set_maven(markers, args.repo)
     elif eco in ("android-gradle", "jvm-gradle"):
