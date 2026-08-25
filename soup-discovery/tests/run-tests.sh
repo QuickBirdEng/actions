@@ -2118,6 +2118,38 @@ test_scope_npm_an_undecidable_range_stays_direct() {
   done
 }
 
+# A pod written `- name (from `...`)` is not an iOS choice. On a Flutter app it is the iOS half
+# of a Dart package that pubspec.lock already records as direct, or the engine itself. Counting
+# it again would demand a second SOUP record for one choice and assess its currency twice, once
+# under pkg:pub and once under pkg:cocoapods. On two real products that is 33 of 34 and 23 of 24
+# entries, so both come out with no direct pods at all.
+test_scope_cocoapods_ignores_locally_sourced_pods() {
+  mkdir -p "$TMP/sc-pods/app/ios"
+  cat > "$TMP/sc-pods/app/ios/Podfile.lock" <<'EOF'
+PODS:
+  - audio_service (0.0.1)
+  - IOSSecuritySuite (1.9.11)
+  - OrderedSet (6.0.3)
+
+DEPENDENCIES:
+  - audio_service (from `.symlinks/plugins/audio_service/darwin`)
+  - Flutter (from `Flutter`)
+  - IOSSecuritySuite (~> 1.9)
+
+SPEC CHECKSUMS:
+  audio_service: abc
+EOF
+  scope_bom "$TMP/sc-pods/bom.json" audio_service Flutter IOSSecuritySuite OrderedSet
+  python3 "$S/mark-scope.py" "$TMP/sc-pods/bom.json" --ecosystem cocoapods --repo "$TMP/sc-pods" \
+    --markers "app/ios/Podfile.lock" >/dev/null 2>&1 || return 1
+  # the one entry with a version constraint is the choice
+  assert "$(scope_of "$TMP/sc-pods/bom.json" IOSSecuritySuite)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-pods/bom.json" audio_service)" "transitive" || return 1
+  assert "$(scope_of "$TMP/sc-pods/bom.json" Flutter)" "transitive" || return 1
+  # not named in DEPENDENCIES at all
+  assert "$(scope_of "$TMP/sc-pods/bom.json" OrderedSet)" "transitive"
+}
+
 test_scope_maven_reads_declared_dependencies() {
   mkdir -p "$TMP/sc-mvn/mod"
   cat > "$TMP/sc-mvn/mod/pom.xml" <<'EOF'
