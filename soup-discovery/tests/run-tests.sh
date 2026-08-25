@@ -206,6 +206,47 @@ test_discover_jvm_gradle_lockfile_needs_filtering() {
 # Regression: the same image referenced from prod/staging/dev manifests produced one
 # candidate per reference — 8 id collisions in mindnet, and a scope rule then matched an
 # arbitrary one of them.
+# Regression: iOS was in no ecosystem discovery knew, so a mobile product's native iOS closure
+# was neither scanned nor reported as a gap. Android is a candidate that can be recorded as a
+# gap; iOS was absent from the candidate list, so a document could say complete with a whole
+# platform never looked at. Both files are resolved sets and need no build.
+test_discover_finds_the_ios_cocoapods_lockfile() {
+  mkrepo
+  mkdir -p "$TMP/repo/app/ios"
+  printf 'name: a\n' > "$TMP/repo/app/pubspec.yaml"
+  printf 'PODS:\n  - Sentry (8.0.0)\n' > "$TMP/repo/app/ios/Podfile.lock"
+  discover
+  assert "$(jq -r '.candidates[]|select(.ecosystem=="cocoapods")|.id' "$TMP/cand.json")" "app-ios-pods" || return 1
+  assert "$(jq -r '.candidates[]|select(.ecosystem=="cocoapods")|.scan_source' "$TMP/cand.json")" \
+    "file:app/ios/Podfile.lock"
+}
+
+# The id is keyed on the app root, not on the file's directory: Package.resolved sits several
+# levels down inside the workspace, and an id built from that path would not say which app it
+# belongs to.
+test_discover_finds_the_swift_package_resolved() {
+  mkrepo
+  mkdir -p "$TMP/repo/app/ios/Runner.xcworkspace/xcshareddata/swiftpm"
+  printf 'name: a\n' > "$TMP/repo/app/pubspec.yaml"
+  printf '{"pins":[]}\n' > "$TMP/repo/app/ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+  discover
+  assert "$(jq -r '.candidates[]|select(.ecosystem=="swift")|.id' "$TMP/cand.json")" "app-ios-spm"
+}
+
+# Xcode keeps the same resolution twice, once for the project and once for the workspace. They
+# are one candidate with two markers, not two candidates.
+test_discover_collapses_the_two_xcode_package_resolved_copies() {
+  mkrepo
+  mkdir -p "$TMP/repo/app/ios/Runner.xcworkspace/xcshareddata/swiftpm" \
+           "$TMP/repo/app/ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm"
+  printf 'name: a\n' > "$TMP/repo/app/pubspec.yaml"
+  printf '{"pins":[]}\n' > "$TMP/repo/app/ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+  printf '{"pins":[]}\n' > "$TMP/repo/app/ios/Runner.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="swift")]|length' "$TMP/cand.json")" "1" || return 1
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="swift")][0].markers|length' "$TMP/cand.json")" "2"
+}
+
 test_discover_deduplicates_ids() {
   mkrepo
   mkdir -p "$TMP/repo/k8s"

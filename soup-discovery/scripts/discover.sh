@@ -141,6 +141,37 @@ while IFS= read -r f; do
 done <<<"$(grep -E '(^|/)pom\.xml$' <<<"$FILES" || true)"
 
 # ---------------------------------------------------------------------------
+# iOS — CocoaPods and Swift Package Manager
+# ---------------------------------------------------------------------------
+# Both files are resolved sets, so neither needs a build and neither can be a gap for want of
+# one. Before this, the iOS half of a mobile product was in no inventory and was not reported
+# as missing either: the Android build is a candidate and can be recorded as a gap, while iOS
+# was absent from the candidate list, so a document could say complete with a whole platform
+# never looked at. On one real product that was 39 pods.
+#
+# Keyed on the app root rather than the file's directory, the same as the Android candidate:
+# Package.resolved sits several levels down inside Runner.xcworkspace, and an id built from
+# that path would say nothing about which app it belongs to.
+ios_root() {  # <file> -> the directory holding ios/, or the file's own directory
+  local r="${1%%/ios/*}"
+  [[ "$r" == "$1" ]] && r=$(dirname "$1")
+  [[ -z "$r" || "$r" == "." ]] && r="app"
+  printf '%s' "$r"
+}
+
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  add "$(tr '/' '-' <<<"$(ios_root "$f")")-ios-pods" "cocoapods" "file:$f" "$f" "true" \
+      "Podfile.lock is the resolved CocoaPods set of the iOS build"
+done <<<"$(grep -E '(^|/)Podfile\.lock$' <<<"$FILES" || true)"
+
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  add "$(tr '/' '-' <<<"$(ios_root "$f")")-ios-spm" "swift" "file:$f" "$f" "true" \
+      "Package.resolved is the resolved Swift Package Manager set of the iOS build"
+done <<<"$(grep -E '(^|/)Package\.resolved$' <<<"$FILES" || true)"
+
+# ---------------------------------------------------------------------------
 # Node / Dart — the lockfile is already the resolved set
 # ---------------------------------------------------------------------------
 # Workspace members must be resolved against the workspace root, not on their own. In a
