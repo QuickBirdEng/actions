@@ -10,16 +10,24 @@ inputs:
   artifact:
     description: 'Path of the artifact'
     required: true
+  space-name:
+    description: 'Digital Ocean Space name'
+    required: false
+    default: 'quickbird-artifacts'
+  space-region:
+    description: 'Digital Ocean Space region'
+    required: false
+    default: 'fra1'
 
 runs:
   using: "composite"
   steps:
     - name: 'Upload as artifact'
-      uses: BetaHuhn/do-spaces-action@latest
-      with:
-        access_key: ${{ inputs.access-key }}
-        secret_key: ${{ inputs.secret-key }}
-        space_name: quickbird-artifacts
-        space_region: fra1
-        source: ${{ inputs.artifact }}
-        out_dir: ${{ github.event.repository.name }}
+      shell: bash
+      run: |
+        s3cmd put "${{ inputs.artifact }}" \
+          "s3://${{ inputs.space-name }}/${{ github.event.repository.name }}/" \
+          --access_key="${{ inputs.access-key }}" \
+          --secret_key="${{ inputs.secret-key }}" \
+          --host="${{ inputs.space-region }}.digitaloceanspaces.com" \
+          --host-bucket="%(bucket)s.${{ inputs.space-region }}.digitaloceanspaces.com"
