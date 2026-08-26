@@ -152,11 +152,11 @@ runs:
           echo "symbols-dir=$symbols_dir" >> $GITHUB_OUTPUT
 
           if [[ "${{ inputs.fail-if-empty }}" == "true" ]]; then
-            echo "::error::No debug symbols were stored for this build - check the 'Store debug symbols for Sentry' step of the build jobs"
+            echo "::error::No debug symbols found for this build. Either the build jobs stored none (check their 'Store debug symbols for Sentry' step), or a previous run of this job already uploaded them to Sentry and deleted them."
             exit 1
           fi
 
-          echo "::warning::No debug symbols were stored for this build"
+          echo "::warning::No debug symbols found for this build - nothing to upload"
           exit 0
         fi
 
