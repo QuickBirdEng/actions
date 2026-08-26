@@ -42,16 +42,6 @@ inputs:
     description: 'Region of the DO Space'
     required: false
     default: 'fra1'
-outputs:
-  stored:
-    description: 'Whether an archive was uploaded'
-    value: ${{ steps.collect.outputs.stored }}
-  key-prefix:
-    description: 'The prefix in the Space the archive was uploaded to'
-    value: ${{ steps.collect.outputs.key-prefix }}
-  archive:
-    description: 'The name of the archive that was uploaded, relative to the workspace'
-    value: ${{ steps.collect.outputs.archive }}
 runs:
   using: "composite"
   steps:
@@ -136,10 +126,6 @@ runs:
           echo "platform=$platform"
           echo "release=${{ inputs.release }}"
           echo "build_number=$build_number"
-          echo "run_id=$GITHUB_RUN_ID"
-          echo "run_attempt=$GITHUB_RUN_ATTEMPT"
-          echo "sha=$GITHUB_SHA"
-          echo "ref=$GITHUB_REF"
         } > "$staging/metadata.env"
 
         # The upload action resolves its source relative to the workspace, so keep

@@ -32,15 +32,9 @@ inputs:
     required: false
     default: 'true'
 outputs:
-  found:
-    description: 'Whether any symbols were restored'
-    value: ${{ steps.extract.outputs.found }}
   symbols-dir:
     description: 'Directory the symbols were extracted into (one folder per platform)'
     value: ${{ steps.extract.outputs.symbols-dir }}
-  platforms:
-    description: 'Space separated list of the platforms that were restored'
-    value: ${{ steps.extract.outputs.platforms }}
   release:
     description: 'The Sentry release name that was stored with the symbols (empty if none)'
     value: ${{ steps.extract.outputs.release }}
@@ -154,8 +148,6 @@ runs:
         done
 
         if [[ -z "$platforms" ]]; then
-          echo "found=false" >> $GITHUB_OUTPUT
-          echo "platforms=" >> $GITHUB_OUTPUT
           echo "release=" >> $GITHUB_OUTPUT
           echo "symbols-dir=$symbols_dir" >> $GITHUB_OUTPUT
 
@@ -168,8 +160,6 @@ runs:
           exit 0
         fi
 
-        echo "found=true" >> $GITHUB_OUTPUT
-        echo "platforms=$platforms" >> $GITHUB_OUTPUT
         echo "release=$release" >> $GITHUB_OUTPUT
         echo "symbols-dir=$symbols_dir" >> $GITHUB_OUTPUT
 
