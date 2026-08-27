@@ -247,6 +247,61 @@ test_discover_collapses_the_two_xcode_package_resolved_copies() {
   assert "$(jq -r '[.candidates[]|select(.ecosystem=="swift")][0].markers|length' "$TMP/cand.json")" "2"
 }
 
+# Regression: the id was the directory plus the line number of the FROM, so adding a line
+# anywhere above it renamed a candidate that had not itself changed. The scope declaration then
+# named an id that no longer existed, the run failed, and because it fails after the release
+# the fix needs a second release. Reported from a real project.
+test_discover_dockerfile_id_survives_a_line_shift() {
+  mkrepo
+  mkdir -p "$TMP/repo/web/dockerfiles"
+  printf 'FROM node:22 AS builder\nRUN true\nFROM nginx:stable-alpine\n' > "$TMP/repo/web/dockerfiles/Dockerfile.web"
+  discover
+  local before; before=$(jq -r '[.candidates[]|select(.ecosystem=="container")|.id]|sort|join(",")' "$TMP/cand.json")
+  printf '# a new comment\n# and another\nFROM node:22 AS builder\nRUN true\nFROM nginx:stable-alpine\n' > "$TMP/repo/web/dockerfiles/Dockerfile.web"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")|.id]|sort|join(",")' "$TMP/cand.json")" "$before"
+}
+
+# Two Dockerfiles in one directory both have a builder and both have a final stage. Keyed on
+# the directory they collapse onto one candidate and one of the two shipped images is dropped
+# without a word. Seen on a real project, where it hid a whole base image.
+test_discover_two_dockerfiles_in_one_directory_stay_apart() {
+  mkrepo
+  mkdir -p "$TMP/repo/web/dockerfiles"
+  printf 'FROM node:22 AS builder\nFROM node:22\n' > "$TMP/repo/web/dockerfiles/Dockerfile.node"
+  printf 'FROM node:22 AS builder\nFROM nginx:stable-alpine\n' > "$TMP/repo/web/dockerfiles/Dockerfile.nginx"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")]|length' "$TMP/cand.json")" "4" || return 1
+  assert "$(jq -r '[.candidates[]|select(.scan_source=="registry:nginx:stable-alpine")|.id][0]' "$TMP/cand.json")" \
+    "web-dockerfiles-Dockerfile.nginx-final"
+}
+
+# Bumping a pinned image is the change this process asks for most often. With the tag in the
+# id, every bump renamed the candidate and broke the scope declaration along with it.
+test_discover_deployed_id_survives_a_tag_bump() {
+  mkrepo
+  mkdir -p "$TMP/repo/k8s"
+  printf 'spec:\n  containers:\n    - image: redis:7-alpine\n' > "$TMP/repo/k8s/app.yaml"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.id=="deployed-redis")]|length' "$TMP/cand.json")" "1" || return 1
+  printf 'spec:\n  containers:\n    - image: redis:8-alpine\n' > "$TMP/repo/k8s/app.yaml"
+  discover
+  assert "$(jq -r '.candidates[]|select(.id=="deployed-redis")|.scan_source' "$TMP/cand.json")" "registry:redis:8-alpine"
+}
+
+# The price of dropping the tag: one product running two versions of the same image would put
+# both on one id, and the merge would keep one and lose the other. That has to stop the run,
+# because a scope declaration cannot express a decision about an artefact it cannot name.
+test_discover_two_tags_of_one_image_stop_the_run() {
+  mkrepo
+  mkdir -p "$TMP/repo/k8s"
+  printf 'spec:\n  containers:\n    - image: redis:7-alpine\n' > "$TMP/repo/k8s/prod.yaml"
+  printf 'spec:\n  containers:\n    - image: redis:8-alpine\n' > "$TMP/repo/k8s/staging.yaml"
+  DISCOVER_OUTPUT="$TMP/cand.json" bash "$S/discover.sh" "$TMP/repo" >/dev/null 2>&1
+  assert "$?" "1" || return 1
+  assert "$(jq -r '[.candidates[]|select(has("conflict"))]|length' "$TMP/cand.json")" "1"
+}
+
 test_discover_deduplicates_ids() {
   mkrepo
   mkdir -p "$TMP/repo/k8s"
@@ -364,7 +419,7 @@ test_discover_resolves_helm_values_for_third_party_image() {
     > "$TMP/repo/deployment/charts/c/templates/epa.yaml"
   discover
   assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].id' "$TMP/cand.json")" \
-         "deployed-epa4all-rest-service-v1.2.4" || return 1
+         "deployed-epa4all-rest-service" || return 1
   assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].resolvable' "$TMP/cand.json")" "true"
 }
 
@@ -376,7 +431,7 @@ test_discover_helm_prefers_first_values_ref_over_default_chain() {
     > "$TMP/repo/deployment/charts/c/templates/epa.yaml"
   discover
   assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")][0].id' "$TMP/cand.json")" \
-         "deployed-epa4all-rest-service-v1.2.4"
+         "deployed-epa4all-rest-service"
 }
 
 # An empty tag falling back to the release version is our own image: still unresolvable,
@@ -387,7 +442,7 @@ test_discover_helm_names_repository_when_tag_is_release_versioned() {
     > "$TMP/repo/deployment/charts/c/templates/rest.yaml"
   discover
   c=$(jq -r '[.candidates[]|select(.ecosystem=="container")][0]' "$TMP/cand.json")
-  assert "$(jq -r .id <<<"$c")" "deployed-app-rest-appversion" || return 1
+  assert "$(jq -r .id <<<"$c")" "deployed-app-rest" || return 1
   assert "$(jq -r .resolvable <<<"$c")" "false" || return 1
   # the note must name the repository, otherwise the candidate is no more useful than before
   jq -re '.note | test("qbsdocker/app-rest")' <<<"$c" >/dev/null
