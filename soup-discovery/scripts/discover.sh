@@ -42,6 +42,17 @@ add() {
     | if $i == null then
         . + [{id:$id, ecosystem:$eco, scan_source:$src, markers:[$marker],
               ships:($ships=="true"), resolvable:($resolvable=="true"), note:$note}]
+      elif .[$i].scan_source != $src and ($src | startswith("registry:")) then
+        # Two image references under one id. Merging keeps the first and drops the second
+        # without a word, which is how a shipped image disappears from an inventory that
+        # still calls itself complete. Recorded as a conflict; the run stops on it below.
+        #
+        # Only for images, because for them the reference is the thing. For a file the path
+        # is only where it is kept, and one artefact is legitimately in two places: Xcode
+        # keeps the same Package.resolved under the project and under the workspace, and
+        # collapsing those two into one candidate is the intended behaviour.
+        .[$i].conflict = ((.[$i].conflict // [.[$i].scan_source]) + [$src] | unique)
+        | .[$i].markers |= (. + [$marker] | unique)
       else
         .[$i].markers |= (. + [$marker] | unique)
       end
@@ -278,8 +289,18 @@ while IFS= read -r f; do
   froms=$(grep -nE '^[[:space:]]*FROM[[:space:]]' "$f" 2>/dev/null || true)
   [[ -z "$froms" ]] && continue
   last_line=$(tail -1 <<<"$froms" | cut -d: -f1)
+  # The id names the file and the stage, not the line. A line number changes whenever
+  # anything above it is added or removed, and the scope declaration then no longer
+  # matches a candidate that did not itself change: the run fails after a release and
+  # needs a second one. The file has to be part of it, because two Dockerfiles in one
+  # directory both have a `builder` and both have a final stage, and a directory-keyed
+  # id would collapse two different shipped images onto one candidate.
+  file_slug=$(tr '/' '-' <<<"$f")
+  stage_idx=0
   while IFS= read -r fl; do
     ln=$(cut -d: -f1 <<<"$fl")
+    stage_idx=$((stage_idx + 1))
+    stage_alias=$(sed -nE 's/^[0-9]+:.*[[:space:]]AS[[:space:]]+([A-Za-z0-9._-]+).*$/\1/Ip' <<<"$fl")
     # Strip the line number, the FROM keyword, any build flags, and the AS alias.
     # --platform=linux/amd64 is common in multi-arch builds and was silently ending up
     # inside the image reference ("registry:--platform=linux/amd64 nginx:mainline-alpine"),
@@ -296,7 +317,12 @@ while IFS= read -r f; do
       note="NOT digest-pinned — the scanned contents cannot be tied to a specific image build"
     fi
     $ships || note="build stage only, does not ship; $note"
-    add "$(dirname "$f" | tr '/' '-')-image-$ln" "container" "registry:$img" "$f:$ln" "$ships" "$note"
+    if [[ "$ln" == "$last_line" ]]; then
+      stage="${stage_alias:-final}"
+    else
+      stage="${stage_alias:-stage-$stage_idx}"
+    fi
+    add "$file_slug-$stage" "container" "registry:$img" "$f:$ln" "$ships" "$note"
   done <<<"$froms"
 done <<<"$(grep -E '(^|/)Dockerfile[^/]*$' <<<"$FILES" || true)"
 
@@ -402,8 +428,9 @@ while IFS= read -r ref; do
 
   # id from the image's last path segment, so it is readable:
   # nvcr.io/nvidia/k8s-device-plugin:v0.17.1 -> deployed-k8s-device-plugin-v0.17.1
-  # @appVersion / @unresolved are our own markers, not part of the reference — spell them
-  # out in the id so the candidate reads as what it is.
+  # @appVersion / @unresolved are our own markers, not part of the reference. They are spelled
+  # out here so a slug built from them reads as words; the tag is then dropped from the id
+  # anyway, and what marks the candidate as templated is `resolvable` and the note.
   slug_src=$(sed -E 's|@appVersion|appversion|g; s|@unresolved|templated|g' <<<"$img")
 
   # A ref that is still templated has no version to name it by, and slugging the raw
@@ -426,7 +453,11 @@ while IFS= read -r ref; do
     slug_src="${slug_src//./-}"
   fi
 
-  slug=$(sed -E 's|.*/||; s|[:@]|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|^-||; s|-$||' <<<"$slug_src")
+  # The tag is deliberately not part of the id. Bumping a pinned image is the most
+  # common change there is and the one this process asks for, and an id carrying the
+  # tag turns every bump into a scope declaration that no longer matches. The id names
+  # the image; the version it runs at is in the scan source and in the document.
+  slug=$(sed -E 's|.*/||; s|@sha256:.*$||; s|:.*$||; s|[@]|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|^-||; s|-$||' <<<"$slug_src")
   # A fully templated ref ({{ .Values.image }}) strips to nothing. Falling back to the
   # manifest filename keeps the candidate addressable by a scope rule instead of
   # collapsing every such ref onto one unusable id.
@@ -451,3 +482,13 @@ jq -n --argjson c "$CANDIDATES" '{
 jq -r '"discovered \(.candidate_count) candidates across \(.ecosystems | length) ecosystems: \(.ecosystems | join(", "))"' "$OUTPUT" >&2
 jq -r 'if (.warnings | length) > 0 then "\(.warnings | length) reproducibility warnings — see .warnings" else "no reproducibility warnings" end' "$OUTPUT" >&2
 echo "wrote $OUTPUT" >&2
+
+# An id that names two different things is not a scope question, it is a defect in the id
+# scheme, and the scope declaration cannot express a decision about it either way. Stopping
+# here is the only honest answer: continuing would publish a document that omits one of them
+# and still reports itself complete.
+if [[ "$(jq '[.candidates[] | select(has("conflict"))] | length' "$OUTPUT")" != "0" ]]; then
+  echo "::error::two different artefacts share one candidate id — the id scheme cannot tell them apart" >&2
+  jq -r '.candidates[] | select(has("conflict")) | "::error::  \(.id): \(.conflict | join(" vs "))"' "$OUTPUT" >&2
+  exit 1
+fi
