@@ -97,6 +97,42 @@ def version_key(v):
             for part in re.split(r"[._+\-]", str(v)) if part]
 
 
+def artifacts_of(p):
+    """The artefacts a component was found in, without the property prefix."""
+    raw = p.get("quickbird:component:artifact", "") or ""
+    return [x.strip().replace("quickbird:artifact:", "")
+            for x in raw.split(",") if x.strip()]
+
+
+def one_row_per_library(entries):
+    """Collapse the copies of one library into a single row, merging their artefacts.
+
+    Since a Dockerfile candidate is scanned as the image it produces, the same library is
+    found once per image that contains it and once in the lockfile that declares it. The
+    currency note is stamped by purl, so every copy carries it and the table listed the same
+    library three times — three rows for one decision, and a headline count to match.
+    """
+    out, seen = [], {}
+    for c, p in entries:
+        key = c.get("purl") or (c.get("name"), c.get("version"))
+        if key in seen:
+            for a in artifacts_of(p):
+                if a not in seen[key][2]:
+                    seen[key][2].append(a)
+            continue
+        seen[key] = [c, p, artifacts_of(p)]
+        out.append(seen[key])
+    return [(c, p, arts) for c, p, arts in out]
+
+
+def lib_cell(c, arts, style, small_style):
+    """Library name with the artefacts it sits in underneath."""
+    txt = esc(c.get("name"))
+    if arts:
+        txt += (f'<br/><font size="6.5" color="#5b6472">in {esc(", ".join(sorted(arts)))}</font>')
+    return Paragraph(txt, style)
+
+
 def table(data, widths, shade=None):
     """shade: list of row indices -> colour"""
     style = [
@@ -286,13 +322,13 @@ def build(args):
         st = p.get("quickbird:currency:status")
         if st:
             cur.append((c, p, st))
-    beyond = [(c, p) for c, p, st in cur if st in ("behind", "stale-and-behind")]
-    within = [(c, p) for c, p, st in cur if st == "update-available"]
-    stale = [(c, p) for c, p, st in cur if st == "stale"]
-    deprecated = [(c, p) for c, p, st in cur if st == "deprecated"]
+    beyond = one_row_per_library([(c, p) for c, p, st in cur if st in ("behind", "stale-and-behind")])
+    within = one_row_per_library([(c, p) for c, p, st in cur if st == "update-available"])
+    stale = one_row_per_library([(c, p) for c, p, st in cur if st == "stale"])
+    deprecated = one_row_per_library([(c, p) for c, p, st in cur if st == "deprecated"])
     # Still listed in section 4 — the staleness is a fact and stays visible — but answered by
     # the process, so it is not a number anyone has to act on.
-    stale_exempt = [(c, p) for c, p in stale if p.get("quickbird:currency:stale-exempt")]
+    stale_exempt = [e for e in stale if e[1].get("quickbird:currency:stale-exempt")]
 
     by_comp = {}
     for v in vulns:
@@ -369,10 +405,10 @@ def build(args):
     # ---- 2 updates available -----------------------------------------------------
     el.append(Paragraph("2&nbsp;&nbsp;Updates available", h2))
     upd_groups = {}
-    for c, p in beyond:
-        upd_groups.setdefault(group_of(c), {"beyond": [], "within": []})["beyond"].append((c, p))
-    for c, p in within:
-        upd_groups.setdefault(group_of(c), {"beyond": [], "within": []})["within"].append((c, p))
+    for c, p, a in beyond:
+        upd_groups.setdefault(group_of(c), {"beyond": [], "within": []})["beyond"].append((c, p, a))
+    for c, p, a in within:
+        upd_groups.setdefault(group_of(c), {"beyond": [], "within": []})["within"].append((c, p, a))
     if not upd_groups:
         el.append(Paragraph("none", small))
     sec = 0
@@ -386,24 +422,25 @@ def build(args):
             f"{len(g['within'])} within", h3))
         rows = [["Library", "Installed", "Latest", "Detail", "Status"]]
         shade = {}
-        for c, p in sorted(g["beyond"], key=lambda cp: (cp[0].get("name") or "").lower()):
+        for c, p, arts in sorted(g["beyond"], key=lambda cp: (cp[0].get("name") or "").lower()):
             shade[len(rows)] = SEV2
             rows.append([
-                Paragraph(esc(c.get("name")), cell),
+                lib_cell(c, arts, cell, small),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(f"<b>{esc(p.get('quickbird:currency:latest', '?'))}</b>", cell),
                 Paragraph(esc(p.get("quickbird:currency:detail", "beyond limit")), small),
                 Paragraph("No decision recorded.", cell),
             ])
-        for c, p in sorted(g["within"], key=lambda cp: (cp[0].get("name") or "").lower()):
+        for c, p, arts in sorted(g["within"], key=lambda cp: (cp[0].get("name") or "").lower()):
             rows.append([
-                Paragraph(esc(c.get("name")), cell),
+                lib_cell(c, arts, cell, small),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(esc(p.get("quickbird:currency:latest", "?")), cell),
                 Paragraph("within limits", small),
                 Paragraph("no decision required", small),
             ])
-        el.append(table(rows, [44 * mm, 22 * mm, 22 * mm, 44 * mm, 38 * mm], shade))
+        # Library carries the artefact list underneath the name now. Total unchanged at 170mm.
+        el.append(table(rows, [56 * mm, 18 * mm, 18 * mm, 38 * mm, 40 * mm], shade))
 
     # ---- 3 libraries with CVEs -----------------------------------------------------
     el.append(Paragraph("3&nbsp;&nbsp;Libraries with CVEs", h2))
@@ -516,10 +553,10 @@ def build(args):
     if not deprecated:
         el.append(Paragraph("Declared deprecated / unmaintained: none detected.", small))
     stale_groups = {}
-    for c, p in deprecated:
-        stale_groups.setdefault(group_of(c), {"dep": [], "stale": []})["dep"].append((c, p))
-    for c, p in stale:
-        stale_groups.setdefault(group_of(c), {"dep": [], "stale": []})["stale"].append((c, p))
+    for c, p, a in deprecated:
+        stale_groups.setdefault(group_of(c), {"dep": [], "stale": []})["dep"].append((c, p, a))
+    for c, p, a in stale:
+        stale_groups.setdefault(group_of(c), {"dep": [], "stale": []})["stale"].append((c, p, a))
     if not stale_groups:
         el.append(Paragraph("No library on its latest version has exceeded the staleness "
                             "window.", small))
@@ -533,22 +570,22 @@ def build(args):
                             h3))
         rows = [["Library", "Installed = latest", "Detail", "Registry status", "Status"]]
         shade = {}
-        for c, p in sorted(g["dep"], key=lambda cp: (cp[0].get("name") or "").lower()):
+        for c, p, arts in sorted(g["dep"], key=lambda cp: (cp[0].get("name") or "").lower()):
             shade[len(rows)] = SEV2
             rows.append([
-                Paragraph(esc(c.get("name")), cell),
+                lib_cell(c, arts, cell, small),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
                 Paragraph('<font color="#b91c1c"><b>deprecated</b></font>', cell),
                 Paragraph("No decision recorded.", cell),
             ])
-        for c, p in sorted(g["stale"], key=lambda cp: (cp[0].get("name") or "").lower()):
+        for c, p, arts in sorted(g["stale"], key=lambda cp: (cp[0].get("name") or "").lower()):
             exempt = p.get("quickbird:currency:stale-exempt")
             if not exempt:
                 shade[len(rows)] = SEV1
             who = p.get("quickbird:currency:publisher")
             rows.append([
-                Paragraph(esc(c.get("name")), cell),
+                lib_cell(c, arts, cell, small),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
                 Paragraph(f"verified publisher {esc(who)}" if who else "active flag not set",
@@ -558,7 +595,7 @@ def build(args):
         # Status carries a full sentence once a publisher exemption is in force, and
         # Registry status carries "verified publisher <domain>". Both were sized for two
         # words. Total unchanged at 170mm.
-        el.append(table(rows, [38 * mm, 22 * mm, 38 * mm, 30 * mm, 42 * mm], shade))
+        el.append(table(rows, [52 * mm, 23 * mm, 31 * mm, 26 * mm, 38 * mm], shade))
 
     # ---- 5 remediation actions ----------------------------------------------------
     el.append(Paragraph("5&nbsp;&nbsp;Remediation actions", h2))

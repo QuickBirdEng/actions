@@ -3421,6 +3421,34 @@ test_render_vdr_report() {
 
 # String order puts 8.0.5 above 8.0.16, and Fixed-in printed whichever sorted last — a
 # version below the one carrying the fix.
+# A Dockerfile candidate is scanned as the image it produces, so a library is found once per
+# image that contains it and once in the lockfile that declares it. The currency note is stamped
+# by purl, so every copy carried it: three rows for one decision, and a headline count to match.
+test_render_one_row_per_library_across_artefacts() {
+  need_reportlab || return 77
+  S="$S" python3 - <<'PYEOF'
+import importlib.util, os
+spec = importlib.util.spec_from_file_location("r", os.environ["S"] + "/render-vdr-pdf.py")
+m = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(m)
+except SystemExit:
+    pass
+def comp(art):
+    return ({"name": "lib", "version": "1.0.0", "purl": "pkg:npm/lib@1.0.0"},
+            {"quickbird:component:artifact": art})
+entries = [comp("quickbird:artifact:web"),
+           comp("quickbird:artifact:web-dockerfiles-Dockerfile.node-final"),
+           comp("quickbird:artifact:web")]
+out = m.one_row_per_library(entries)
+assert len(out) == 1, out
+assert sorted(out[0][2]) == ["web", "web-dockerfiles-Dockerfile.node-final"], out[0][2]
+# a different version is a different library and keeps its own row
+other = ({"name": "lib", "version": "2.0.0", "purl": "pkg:npm/lib@2.0.0"}, {})
+assert len(m.one_row_per_library(entries + [other])) == 2
+PYEOF
+}
+
 test_render_fix_version_order_is_numeric() {
   need_reportlab || return 77
   S="$S" python3 - <<'PYEOF'
