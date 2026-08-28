@@ -1344,6 +1344,41 @@ test_currency_is_report_only() {
   assert "$(jq -r '.severity' "$TMP/co.json")" "report-only"
 }
 
+# pub.dev carries a package called `flutter`, abandoned in 2016 at 0.0.20. A pubspec.lock's SDK
+# entry carries that same name, and asking the registry by name reported the SDK as discontinued.
+test_currency_sdk_dependency_is_not_asked_of_the_registry() {
+  mkcur '[{"bom-ref":"a","type":"library","name":"flutter","version":"3.44.0","purl":"pkg:pub/flutter@3.44.0",
+           "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}]'
+  mkdir -p "$TMP/csoups5"
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups5" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.unknown' "$TMP/co.json")" "1" || return 1
+  assert "$(jq -r '.unknown[0].why' "$TMP/co.json")" "not published to pub.dev (SDK or path dependency)"
+}
+
+test_currency_git_ref_is_not_judged_against_the_registry() {
+  mkcur '[{"bom-ref":"a","type":"library","name":"w","version":"10.0.0",
+           "purl":"pkg:pub/w@10.0.0?vcs_url=git%40github.com%3AQuickBirdEng%2Fw.git%407ede81c",
+           "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}]'
+  mkdir -p "$TMP/csoups5"
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups5" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.unknown[0].why' "$TMP/co.json")" "pinned to a git ref; no registry is authoritative for it"
+}
+
+# The counterpart: a genuine pub.dev component must still be looked up. Offline that surfaces as a
+# failed request, which is what distinguishes it from the two skips above.
+test_currency_hosted_pub_package_is_still_looked_up() {
+  mkcur '[{"bom-ref":"a","type":"library","name":"flutter_svg","version":"2.3.0",
+           "purl":"pkg:pub/flutter_svg@2.3.0?hosted_url=pub.dev",
+           "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}]'
+  mkdir -p "$TMP/csoups5"
+  https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+    python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups5" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
+  case "$(jq -r '.unknown[0].why' "$TMP/co.json")" in
+    *"registry lookup failed"*) : ;;
+    *) return 1 ;;
+  esac
+}
+
 # The staleness window is a different question from the currency window and has a
 # different answer: there is nothing to upgrade to.
 test_currency_stale_and_current_needs_no_upgrade() {
