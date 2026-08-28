@@ -44,4 +44,5 @@ runs:
         file: ${{ steps.compress.outputs.artifact-path }}
         asset_name: ${{ github.ref_name }}-${{ inputs.report-artifact-name }}.tar.gz
         tag: ${{ github.ref }}
+        overwrite: true
 
