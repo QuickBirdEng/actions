@@ -86,10 +86,20 @@ def latest_version(purl, meta=None):
     `meta`, when given a dict, is filled with what the same registry document carries for
     free: supplier, license, and the registry deprecation flag. One request answers four
     questions — the report columns must not cost a second round trip."""
-    m = re.match(r"pkg:([a-z]+)/(.+?)(?:@([^?]+))?(?:\?.*)?$", purl or "")
+    m = re.match(r"pkg:([a-z]+)/(.+?)(?:@([^?]+))?(?:\?(.*))?$", purl or "")
     if not m:
         return None, None, "no parsable purl"
     eco, name = m.group(1), m.group(2)
+    quals = dict(kv.split("=", 1) for kv in (m.group(4) or "").split("&") if "=" in kv)
+
+    # A name is not an identity. pub.dev carries a package called `flutter`, abandoned in 2016 at
+    # 0.0.20, and a pubspec.lock's SDK entry carries that same name — asking the registry by name
+    # reported the SDK as discontinued. The qualifiers say where the component actually came from,
+    # so they decide whether a registry is entitled to answer for it at all.
+    if quals.get("vcs_url"):
+        return None, None, "pinned to a git ref; no registry is authoritative for it"
+    if eco == "pub" and not quals.get("hosted_url"):
+        return None, None, "not published to pub.dev (SDK or path dependency)"
     try:
         if eco == "npm":
             d = fetch(REGISTRY["npm"].format(name=name))
