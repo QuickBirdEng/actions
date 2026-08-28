@@ -29,9 +29,23 @@ include:
   - id: values-image-cache
     reason: Third-party image pinned in the deployment values and shipped as part of the stack.
 
-  # The final stage of a Dockerfile we build — this is what covers the components of our own image.
+  # The final stage of a Dockerfile we build. Discovery finds this candidate from the FROM line, so
+  # without `built_image` below the scan target is the *base image*, and everything the Dockerfile
+  # does afterwards is invisible: an `apk add` in the final stage is missing from the inventory, and
+  # a package the final stage deletes is still reported against it.
+  #
+  # `built_image` points the scan at the image this Dockerfile produces instead. `${version}` is the
+  # release version of the run. Declare it wherever the built image is pushed somewhere the run can
+  # pull it from; the action takes registry-username / registry-password for a private one.
+  #
+  # Where the reference differs per tier — a staging release pushing <version>-staging and a
+  # production one pushing <version> is the common case — key it by tier instead of writing one
+  # string. A tier the map does not name is reported as a gap, not scanned from its base image.
   - id: dockerfiles-image-final
-    reason: Final stage of the service Dockerfile — the base of the image we ship.
+    reason: Final stage of the service Dockerfile — the image we ship.
+    built_image:
+      staging: ourregistry/our-service:${version}-staging
+      candidate: ourregistry/our-service:${version}
 
 exclude:
   # Same image as an included candidate, in a different artefact. Legitimate, and the reason is what
@@ -44,8 +58,10 @@ exclude:
   # Dockerfile candidate that builds it.
   - id: deployed-service--version-
     reason: >-
-      Our own image at the release version. The tag is substituted at deploy time, so it cannot be
-      resolved here; its components are covered by dockerfiles-image-final, which builds it.
+      Our own image at the release version, referenced from the deployment manifest where the tag is
+      substituted at deploy time and cannot be resolved here. The same image is scanned as
+      dockerfiles-image-final, which declares a built_image — without that declaration this exclusion
+      would leave our own image uncovered, because the Dockerfile candidate scans only its base.
 
   # Infrastructure, not shipped software. State which it is — "infrastructure" alone is not a decision.
   - id: terraform-root

@@ -111,6 +111,7 @@ File| Holds| Reviewer
 ---|---|---  
 .soup-policy.yml| The parameters of WI-006-09-02, Parameters defined per project. Only what differs from the defaults.| QM, for the service-level and scope parameters  
 .soup-scope.yml| `include:` and `exclude:`, each entry an `id` and a `reason`. The run fails while a discovered candidate appears in neither.| Development lead  
+.soup-scope.yml, `built_image` on an include entry| The image a Dockerfile candidate actually produces, `${version}` substituted from the run. Without it the candidate is scanned from its FROM line, which is the *base* image: anything the Dockerfile adds afterwards is missing from the inventory and anything it deletes is still reported. Declared rather than derived — the reference lives in a compose file and a release workflow, and the naming between them is per-product. May be a single reference or a map of tier (`staging`, `candidate`, `branch`) to reference, for a product that pushes `<version>-staging` from one release workflow and `<version>` from another. A declaration that cannot be applied stops the run; a version the run does not know, or a tier the map does not name, makes the candidate a reported gap, never a silent fallback to the base image.| SOUP approver  
 .soup-decisions.yml| Risk acceptances, revised remediation dates and `vendor_requests` with their follow-up dates.| SOUP approver  
   
 ## Configuration keys
