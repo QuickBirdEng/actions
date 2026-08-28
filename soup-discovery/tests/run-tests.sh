@@ -1608,6 +1608,38 @@ test_units_no_published_fix_is_not_an_upgrade() {
   assert "$(jq -r '.units[0].findings_without_published_fix' "$TMP/ru.json")" "1"
 }
 
+# Regression: the action name dropped the npm scope, so @nestjs/core, @sigstore/core and
+# @strapi/core all produced actions titled "upgrade core" — and since the unit key is built
+# from that name, two of them inside one artifact merged into a single action. Seen on
+# curacoach v1.0.0-qa10, which listed three separate "upgrade core" rows.
+test_units_scoped_packages_do_not_collide() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
+          components:[{"bom-ref":"c1",type:"library",name:"@nestjs/core",version:"11.1.14",
+                       purl:"pkg:npm/%40nestjs/core@11.1.14",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:web"}]},
+                      {"bom-ref":"c2",type:"library",name:"@sigstore/core",version:"2.0.0",
+                       purl:"pkg:npm/%40sigstore/core@2.0.0",
+                       properties:[{name:"quickbird:component:artifact",value:"quickbird:artifact:web"}]}],
+          vulnerabilities:[{id:"CVE-A",affects:[{ref:"c1"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]},
+                           {id:"CVE-B",affects:[{ref:"c2"}],properties:[{name:"quickbird:vuln:fix",value:"available"}]}]}' \
+    > "$TMP/sc-bom.json"
+  jq -n '{findings:[{id:"CVE-A",track:"planned",kev:false,remediation_due:"2026-11-03T00:00:00+00:00"},
+                    {id:"CVE-B",track:"planned",kev:false,remediation_due:"2026-11-03T00:00:00+00:00"}]}' \
+    > "$TMP/sc-f.json"
+  python3 "$S/group-remediation.py" "$TMP/sc-f.json" "$TMP/sc-bom.json" --out "$TMP/sc.json" 2>/dev/null || return 1
+  assert "$(jq -r '.units | length' "$TMP/sc.json")" "2" || return 1
+  jq -re '[.units[].action] | sort == ["upgrade @nestjs/core in web","upgrade @sigstore/core in web"]' \
+    "$TMP/sc.json" >/dev/null
+}
+
+# The version separator is the last @, not the first: an unencoded scoped purl used to lose
+# everything after "pkg:npm/" and the action was titled "upgrade npm".
+test_units_unencoded_scope_keeps_its_name() {
+  mkunits "quickbird:artifact:web" "pkg:npm/@nestjs/core@11.1.14" available planned || return 1
+  assert "$(jq -r '.units[0].action' "$TMP/ru.json")" "upgrade @nestjs/core in web"
+}
+
 # Grouping must never move a deadline outward: the unit takes the earliest of its members.
 test_units_take_the_worst_track_and_earliest_deadline() {
   jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
@@ -1848,6 +1880,58 @@ test_net_currency_against_real_registries() {
   mkdir -p "$TMP/csoups3"; printf '{"package":"okhttp","version":"4.x.x"}' > "$TMP/csoups3/o.json"
   python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups3" --out "$TMP/co.json" >/dev/null 2>&1 || return 1
   assert "$(jq -r '.summary.beyond_policy' "$TMP/co.json")" "1"
+}
+
+# The staleness exemption rests on one external contract: pub.dev serving a verified
+# publisher at /api/packages/<name>/publisher. If that endpoint or its field name changes,
+# every exemption quietly stops applying — the safe direction, but worth knowing about
+# rather than discovering through a report that grew five findings.
+test_net_pub_publisher_endpoint_still_answers() {
+  need_net || return 77
+  python3 - "$S/check-currency.py" <<'PUBPY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("cc", sys.argv[1])
+cc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cc)
+assert cc.pub_publisher("collection") == "dart.dev", cc.pub_publisher("collection")
+assert cc.pub_publisher("url_launcher") == "flutter.dev", cc.pub_publisher("url_launcher")
+# a package with no verified publisher must come back None, not raise
+cc.pub_publisher("this_package_does_not_exist_qb_test")
+PUBPY
+}
+
+# The deployment history was read live whatever --now said, so a report dated T could rest on
+# a deployment made after T, and the same evidence gave different answers on different days.
+# That is what made net_backstop_cadence_counts_production_releases_only go red on its own:
+# alvie deployed on 2026-08-12 and a run frozen at 2026-08-02 counted it.
+test_backstop_release_lookup_is_bounded_by_now() {
+  python3 - "$S/backstop-report.py" <<'BSPY'
+import importlib.util, sys
+from datetime import datetime, timezone
+spec = importlib.util.spec_from_file_location("bs", sys.argv[1])
+bs = importlib.util.module_from_spec(spec); spec.loader.exec_module(bs)
+
+ROWS = [{"at": "2026-08-12T12:37:39Z", "env": "Production", "ref": "v1.0.9"},
+        {"at": "2026-04-21T08:55:57Z", "env": "Production", "ref": "v1.0.7"}]
+
+def fake_gh(args, timeout=60):
+    return [{"name": "Production"}] if "environments" in args[0] else list(ROWS)
+
+bs._gh_json = fake_gh
+cutoff = datetime(2026, 8, 2, 18, 0, tzinfo=timezone.utc)
+
+dates, basis, _ = bs.production_deploys("x/y", not_after=cutoff)
+assert dates == ["2026-04-21T08:55:57Z"], dates
+assert "excluded" in basis, basis
+
+# unbounded keeps the newer one, so the filter is the only thing that changed
+dates, _, _ = bs.production_deploys("x/y")
+assert dates[0] == "2026-08-12T12:37:39Z", dates
+
+# a bound that removes everything reports "no records", never a false "broken"
+dates, basis, _ = bs.production_deploys("x/y", not_after=datetime(2020, 1, 1, tzinfo=timezone.utc))
+assert dates == [], dates
+assert "excluded" in basis, basis
+BSPY
 }
 
 # ---------------------------------------------------------------- backstop
@@ -2808,6 +2892,94 @@ assert over, "5 patches behind a limit of 1 must be over"
 PYEOF
 }
 
+# A verified publisher answers staleness for a whole class of components. package:collection
+# and url_launcher are pinned by the Dart SDK constraint and can never look current against a
+# 12-month window, so without this every Flutter product records the same reason at every
+# release. Keyed on the pub.dev verified publisher, never on a free-text author.
+# <purl> <installed> <latest> <published-iso> <publisher|-> <name>
+run_currency_pub() {
+  jq -n --arg p "$1" --arg v "$2" --arg n "$6" \
+    '{bomFormat:"CycloneDX",specVersion:"1.6",components:[
+      {"bom-ref":"a",type:"library",name:$n,version:$v,purl:$p,
+       properties:[{name:"quickbird:dependency:scope",value:"direct"}]}]}' > "$TMP/pubc-bom.json"
+  CC_LATEST="$3" CC_PUBLISHED="$4" CC_PUBLISHER="$5" \
+  python3 - "$S/check-currency.py" "$TMP/pubc-bom.json" "$TMP/cp.json" "$TMP/pubc-out.json" <<'CURPY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("cc", sys.argv[1])
+cc = importlib.util.module_from_spec(spec); spec.loader.exec_module(cc)
+bom, pol, out = sys.argv[2], sys.argv[3], sys.argv[4]
+who = os.environ.get("CC_PUBLISHER", "-")
+latest, published = os.environ["CC_LATEST"], os.environ["CC_PUBLISHED"]
+
+def fake_fetch(url, timeout=20, accept=None):
+    if url.endswith("/publisher"):
+        if who == "-":
+            raise KeyError("no verified publisher")
+        return {"publisherId": who}
+    if "pub.dev" in url:
+        return {"latest": {"version": latest, "published": published}}
+    # npm: `author` is free text, which is the point of the negative test
+    return {"dist-tags": {"latest": latest}, "time": {latest: published},
+            "author": ("" if who == "-" else who)}
+
+cc.fetch = fake_fetch
+sys.argv = ["check-currency.py", bom, pol, "--out", out, "--annotate-bom", bom,
+            "--now", "2026-08-28T00:00:00Z", "--jobs", "1"]
+raise SystemExit(cc.main())
+CURPY
+}
+
+bomprop() { jq -r --arg n "$1" '.components[0].properties[]|select(.name==$n)|.value' "$TMP/pubc-bom.json"; }
+
+test_currency_verified_publisher_exempts_staleness() {
+  run_currency_pub "pkg:pub/collection@1.19.1?hosted_url=pub.dev" 1.19.1 1.19.1 "2024-10-22T00:00:00Z" dart.dev collection \
+    >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.stale_exempt_by_publisher' "$TMP/pubc-out.json")" "1" || return 1
+  assert "$(jq -r '.summary.stale' "$TMP/pubc-out.json")" "0" || return 1
+  assert "$(jq -r '.justified[0].exempt_publisher' "$TMP/pubc-out.json")" "dart.dev" || return 1
+  # the staleness itself stays in the bundle, so the report still lists the row
+  assert "$(bomprop quickbird:currency:status)" "stale" || return 1
+  contains "$(bomprop quickbird:currency:stale-exempt)" "dart.dev"
+}
+
+# The exemption covers staleness and nothing else: a platform package that is two majors
+# behind still owes the upgrade.
+test_currency_publisher_exemption_does_not_cover_being_behind() {
+  run_currency_pub "pkg:pub/url_launcher@6.3.2?hosted_url=pub.dev" 6.3.2 8.0.0 "2025-07-11T00:00:00Z" flutter.dev url_launcher \
+    >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.beyond_policy' "$TMP/pubc-out.json")" "1" || return 1
+  assert "$(jq -r '.summary.stale_exempt_by_publisher' "$TMP/pubc-out.json")" "0" || return 1
+  assert "$(jq -r '.beyond_policy[0].finding' "$TMP/pubc-out.json")" "upstream-stale-and-we-are-behind"
+}
+
+# google.dev is deliberately not on the default list: it publishes a grab-bag rather than the
+# SDK, and visibility_detector (last release 2023) is exactly the finding a product should
+# still have to answer.
+test_currency_unlisted_publisher_still_needs_a_decision() {
+  run_currency_pub "pkg:pub/visibility_detector@0.4.0?hosted_url=pub.dev" 0.4.0 0.4.0 "2023-03-09T00:00:00Z" google.dev visibility_detector \
+    >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.stale' "$TMP/pubc-out.json")" "1" || return 1
+  assert "$(jq -r '.summary.stale_exempt_by_publisher' "$TMP/pubc-out.json")" "0" || return 1
+  assert "$(bomprop quickbird:currency:stale-exempt)" ""
+}
+
+# npm has no verified publisher — `author` is free text set by whoever publishes — so an npm
+# package can never earn the exemption, however its author field reads.
+test_currency_npm_author_cannot_earn_an_exemption() {
+  run_currency_pub "pkg:npm/tslib@2.8.1" 2.8.1 2.8.1 "2024-11-01T00:00:00Z" dart.dev tslib \
+    >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.stale' "$TMP/pubc-out.json")" "1" || return 1
+  assert "$(jq -r '.summary.stale_exempt_by_publisher' "$TMP/pubc-out.json")" "0"
+}
+
+# A publisher lookup that fails must not silence a finding.
+test_currency_unreachable_publisher_lookup_does_not_exempt() {
+  run_currency_pub "pkg:pub/collection@1.19.1?hosted_url=pub.dev" 1.19.1 1.19.1 "2024-10-22T00:00:00Z" - collection \
+    >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.summary.stale' "$TMP/pubc-out.json")" "1" || return 1
+  assert "$(jq -r '.summary.stale_exempt_by_publisher' "$TMP/pubc-out.json")" "0"
+}
+
 # Regression: unit kev membership compared a string to True and was always empty.
 test_units_list_their_kev_members() {
   cat > "$TMP/kf.json" <<'EOF'
@@ -2946,6 +3118,108 @@ EOF
   assert "$?" "1"
 }
 
+# A fixed version that exists only as a prerelease is not a fix a released product can
+# apply. Reported as "available" it produced the action "upgrade multer to 3.0.0-alpha.2" —
+# on an expedited track, with a deadline nobody could meet by doing the thing it named.
+# Seen on curacoach v1.0.0-qa10 for multer and @babel/core.
+fake_osv() {
+  # <advisory-json> — serves querybatch and the per-advisory fetch from a stub curl.
+  mkdir -p "$TMP/osvbin"
+  printf '%s' "$1" > "$TMP/osv-adv.json"
+  cat > "$TMP/osvbin/curl" <<'FAKE'
+#!/usr/bin/env bash
+out=""; url=""; prev=""
+for a in "$@"; do
+  [[ "$prev" == "-o" ]] && out="$a"
+  case "$a" in http*) url="$a" ;; esac
+  prev="$a"
+done
+case "$url" in
+  *querybatch*) body='{"results":[{"vulns":[{"id":"OSV-PRE"}]}]}' ;;
+  */vulns/OSV-PRE) body=$(cat "$FAKE_ADV") ;;
+  *) body='{}' ;;
+esac
+if [[ -n "$out" ]]; then printf '%s' "$body" > "$out"; else printf '%s' "$body"; fi
+FAKE
+  chmod +x "$TMP/osvbin/curl"
+}
+
+run_scan() { # <purl> -> $TMP/sv-pre.json
+  jq -n --arg p "$1" '{bomFormat:"CycloneDX",specVersion:"1.6",
+    components:[{"bom-ref":"a",type:"library",name:"lib",version:"1.0.0",purl:$p}]}' \
+    > "$TMP/sv-pre-bom.json"
+  FAKE_ADV="$TMP/osv-adv.json" PATH="$TMP/osvbin:$PATH" \
+    bash "$S/scan-vulns.sh" "$TMP/sv-pre-bom.json" "$TMP/sv-pre.json" >/dev/null 2>&1
+}
+
+fixprop() { jq -r --arg n "$1" '.vulnerabilities[0].properties[]|select(.name==$n)|.value' "$TMP/sv-pre.json"; }
+
+test_scan_vulns_prerelease_only_fix_is_not_available() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-2359"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"multer","ecosystem":"npm"},
+      "ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"3.0.0-alpha.2"}]}]}]}'
+  run_scan "pkg:npm/multer@2.0.2" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "prerelease-only" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" "3.0.0-alpha.2" || return 1
+  contains "$(fixprop quickbird:vuln:fix-note)" "cannot adopt it"
+}
+
+# A stable fix anywhere in the advisory is still the answer — the prerelease branch must not
+# withdraw an upgrade that exists.
+test_scan_vulns_stable_fix_wins_over_prerelease() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0001"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"lodash","ecosystem":"npm","purl":"pkg:npm/lodash"},
+      "ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"5.0.0-rc.1"},{"fixed":"4.18.0"}]}]}]}'
+  run_scan "pkg:npm/lodash@4.17.23" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" "4.18.0"
+}
+
+# A hyphen is not a prerelease marker. Maven ships 31.1-jre and Debian 2.36-9 as ordinary
+# releases; treating those as prereleases would withdraw a real upgrade.
+test_scan_vulns_hyphenated_release_is_not_a_prerelease() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0002"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"com.google.guava:guava","ecosystem":"Maven"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"31.1-jre"}]}]}]}'
+  run_scan "pkg:maven/com.google.guava/guava@30.0-jre" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" "31.1-jre"
+}
+
+# An OS package revision is not a prerelease either.
+test_scan_vulns_os_package_revision_is_not_a_prerelease() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0003"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"glibc","ecosystem":"Debian:12"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"2.36-9"}]}]}]}'
+  run_scan "pkg:deb/debian/glibc@2.36-8?distro=debian-12" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available"
+}
+
+# affected[].package.purl is optional in the OSV schema, and in jq ("" | split("@")) is []
+# rather than [""], so the index returned null and startswith(null) aborted the whole
+# program — one advisory without a purl failed the entire scan, not just its own match.
+test_scan_vulns_advisory_without_a_purl_does_not_abort_the_scan() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0004"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"lib","ecosystem":"npm"},
+      "ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"2.0.0"}]}]}]}'
+  run_scan "pkg:npm/lib@1.0.0" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available"
+}
+
+# The unit for a prerelease-only fix is a tracking item, not an upgrade, and it is keyed per
+# package: two packages waiting on two unrelated stable releases are two pieces of work.
+test_units_prerelease_only_is_not_an_upgrade() {
+  mkunits "quickbird:artifact:web" "pkg:npm/multer@2.0.2" prerelease-only expedited || return 1
+  assert "$(jq -r '.units[0].kind' "$TMP/ru.json")" "no-stable-upgrade-path" || return 1
+  assert "$(jq -r '.units[0].findings_without_stable_fix' "$TMP/ru.json")" "1" || return 1
+  jq -re '.units[0].action | test("no stable upgrade for multer in web")' "$TMP/ru.json" >/dev/null
+}
+
 # ------------------------------------------------- the two report renderers
 need_reportlab() { python3 -c 'import reportlab' 2>/dev/null || { echo "reportlab not installed"; return 77; }; }
 
@@ -2984,6 +3258,38 @@ render_fixture() {
 EOF
 }
 
+# A component with a stable fix for one CVE and only a prerelease for another must show the
+# stable one. Pooling every fix-version in the group and taking the last printed whichever
+# sorted highest, which is how an alpha reaches the column as the answer.
+test_render_mixed_fix_states_shows_the_stable_version() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  cat > "$TMP/mx-bundle.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","type":"application","name":"prod","version":"v1.0.0"}},
+ "components":[
+  {"bom-ref":"a","type":"library","name":"mixed","version":"1.0.0","purl":"pkg:npm/mixed@1.0.0",
+   "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-A","affects":[{"ref":"a"}],
+   "properties":[{"name":"quickbird:finding:track","value":"planned"},
+                 {"name":"quickbird:finding:cvss","value":"5.0"},
+                 {"name":"quickbird:vuln:fix","value":"available"},
+                 {"name":"quickbird:vuln:fix-versions","value":"2.0.0"}]},
+  {"id":"CVE-B","affects":[{"ref":"a"}],
+   "properties":[{"name":"quickbird:finding:track","value":"planned"},
+                 {"name":"quickbird:finding:cvss","value":"5.0"},
+                 {"name":"quickbird:vuln:fix","value":"prerelease-only"},
+                 {"name":"quickbird:vuln:fix-versions","value":"3.0.0-alpha.1"}]}]}
+EOF
+  python3 "$S/render-vdr-pdf.py" "$TMP/mx-bundle.json" "$TMP/mx.pdf" \
+    --policy "$TMP/cp.json" --date 2026-08-28 >/dev/null 2>&1 || return 1
+  local txt; txt=$(pdftotext -layout "$TMP/mx.pdf" - 2>/dev/null)
+  contains "$txt" "2.0.0" || return 1
+  grep -q "3.0.0-alpha.1" <<<"$txt" && { echo "the prerelease was printed as the fix"; return 1; }
+  return 0
+}
+
 test_render_sbom_report() {
   need_reportlab || return 77
   render_fixture
@@ -2997,6 +3303,25 @@ test_render_vdr_report() {
   python3 "$S/render-vdr-pdf.py" "$TMP/rf-bundle.json" "$TMP/rf-vdr.pdf" \
     --policy "$TMP/cp.json" --date 2026-08-07 >/dev/null 2>&1 || return 1
   [[ -s "$TMP/rf-vdr.pdf" ]]
+}
+
+# String order puts 8.0.5 above 8.0.16, and Fixed-in printed whichever sorted last — a
+# version below the one carrying the fix. vite in the curacoach qa10 report is the real case.
+test_render_fix_version_order_is_numeric() {
+  need_reportlab || return 77
+  S="$S" python3 - <<'PYEOF'
+import importlib.util, os
+spec = importlib.util.spec_from_file_location("r", os.environ["S"] + "/render-vdr-pdf.py")
+m = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(m)
+except SystemExit:
+    pass
+k = m.version_key
+assert sorted(["6.4.2", "7.3.5", "8.0.16", "8.0.5"], key=k)[-1] == "8.0.16"
+assert sorted(["2.9.0", "2.10.0"], key=k)[-1] == "2.10.0"
+assert sorted(["31.0.1-jre", "31.1-jre"], key=k)[-1] == "31.1-jre"
+PYEOF
 }
 
 # ---------------------------------------------------------------- network

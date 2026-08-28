@@ -133,6 +133,8 @@ dependency_currency.max_behind
 .major / .minor / .patch | 0 / 1 / unlimited | `unlimited` patch is refused in TR-03161 scope.  
 dependency_currency.stale_after| 12m| —  
 dependency_currency.  
+stale_exempt_publishers| dart.dev, flutter.dev| Publishers whose staleness is answered by the process rather than per product: an SDK-pinned package releases on the platform cadence and can never look current. Keyed on the registry-*verified* publisher, which today only pub.dev exposes — an npm `author` string is free text and never earns it. Answers staleness only; being behind the update limit still owes an upgrade. Adding a publisher is a widening and needs `dependency_currency.reason`.  
+dependency_currency.  
 obsolescence_may_be_accepted| false | `true` is refused in TR-03161 scope.  
 production_release.tag_pattern| ^v?\d+\\.\d+\\.\d+$ | Selects the document level only.  
 onboarded  
@@ -178,6 +180,9 @@ quickbird:soup:direct-without-record
 (+ :direct-without-record-name) | A component the manifests mark as a direct choice, with no SOUP record, chosen, shipped, never approved. Count in the metadata, one named entry per component.  
 quickbird:currency:latest  
 :status / :detail | The latest available version next to the shipped one, per component: current, behind, stale, stale-and-behind, or unknown with the reason.  
+quickbird:currency:publisher  
+:stale-exempt | The registry-verified publisher (pub only), and the process-default reason where one answers this component's staleness. The row stays in section 4 of the report either way — the staleness is a fact — but an exempt row is unshaded and carries the reason instead of "No decision recorded."  
+quickbird:vuln:fix | `available`, `prerelease-only`, `none-published` or `unknown`. `prerelease-only` means upstream has a fix but only as an alpha/rc, which a released product cannot adopt: the work is to track the stable release, not to bump. Separate from `none-published`, where no fix exists at all and the answer is a compensating control or a VEX statement.  
   
 The scanner version is pinned, currently syft 1.51.0, and never `latest`: the component list must not change because a scanner updated itself between two runs of the same commit.
 

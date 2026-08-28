@@ -135,6 +135,28 @@ dependency_currency:
   # answer — there is nothing to upgrade to. 12 months matches the analysis period the
   # SOUP records already use in grq-3 ("Is maintained and support is available").
   stale_after: 12m
+  # Staleness answered by the process instead of per product.
+  #
+  # A package published by the platform vendor releases on the platform cadence, not on its
+  # own: package:collection and url_launcher are pinned by the Dart SDK constraint and can
+  # never look current against a 12-month window. Without this every Flutter product carries
+  # the same handful of rubber-stamp decisions at every release, which is the outcome
+  # WI-006-09 exists to remove.
+  #
+  # Keyed on the *verified* publisher. pub.dev proves domain ownership before it shows one,
+  # so this is a fact read from the registry. npm has no equivalent — its `author` field is
+  # free text set by whoever publishes — so no npm package is exempt here and one that is
+  # stale still needs a reason in its SOUP record.
+  #
+  # Deliberately narrow. google.dev is not on this list: it publishes a grab-bag rather than
+  # the SDK, and visibility_detector (last release 2023) is exactly the finding a product
+  # should still have to answer.
+  #
+  # Exempts staleness only. A package from a listed publisher that is behind the update
+  # limit is still behind and still owes an upgrade.
+  stale_exempt_publishers:
+    - dart.dev
+    - flutter.dev
   # Written explicitly, not left implicit: validate-policy.sh's TR-03161 check already
   # treats an absent key the same as false, so this changes nothing about what is allowed.
   # It exists so policy.effective.json shows the value in force instead of being silent

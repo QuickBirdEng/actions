@@ -27,6 +27,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from collections import deque
@@ -84,6 +85,16 @@ def props(obj):
 
 def esc(s):
     return (str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def version_key(v):
+    """Order versions numerically. Plain string order puts 8.0.5 above 8.0.16.
+
+    vite's advisories in one report publish both, and the Fixed-in column named 8.0.5 — a
+    version below the one that actually carries the fix.
+    """
+    return [(0, int(part)) if part.isdigit() else (1, part)
+            for part in re.split(r"[._+\-]", str(v)) if part]
 
 
 def table(data, widths, shade=None):
@@ -210,6 +221,8 @@ def build(args):
 
     # ---- applied rules ---------------------------------------------------------
     mb = (policy.get("dependency_currency") or {}).get("max_behind") or {}
+    exempt_pubs = [str(x) for x in
+                   ((policy.get("dependency_currency") or {}).get("stale_exempt_publishers") or [])]
     tr = policy.get("tracks") or {}
 
     def clocks(t):
@@ -225,6 +238,10 @@ def build(args):
         ("Staleness window",
          f"no upstream release for > {policy.get('dependency_currency', {}).get('stale_after', '12m')} "
          f"→ replace, fork, or accept with reason",
+         "dependency_currency" in project_keys),
+        ("Staleness exemption",
+         (", ".join(exempt_pubs) + " — staleness only, an update is still owed"
+          if exempt_pubs else "none: every stale component needs its own reason"),
          "dependency_currency" in project_keys),
         ("Vulnerability classification",
          f"KEV → {clocks('kev')} · CVSS ≥ 9.0 → {clocks('immediate')} · "
@@ -273,6 +290,9 @@ def build(args):
     within = [(c, p) for c, p, st in cur if st == "update-available"]
     stale = [(c, p) for c, p, st in cur if st == "stale"]
     deprecated = [(c, p) for c, p, st in cur if st == "deprecated"]
+    # Still listed in section 4 — the staleness is a fact and stays visible — but answered by
+    # the process, so it is not a number anyone has to act on.
+    stale_exempt = [(c, p) for c, p in stale if p.get("quickbird:currency:stale-exempt")]
 
     by_comp = {}
     for v in vulns:
@@ -314,7 +334,7 @@ def build(args):
     tiles = [
         (str(len(beyond)), "libraries beyond the update limit", BAD),
         (f"{n_crit} / {n_high}", "open Critical / High CVEs", BAD),
-        (str(len(stale) + len(deprecated)), "stale or deprecated", WARN),
+        (str(len(stale) + len(deprecated) - len(stale_exempt)), "stale or deprecated", WARN),
         (f"{n_kev} / {n_overdue}", "KEV / deadlines overdue",
          GOOD if (n_kev + n_overdue) == 0 else BAD),
         (f"{n_findings} \u2192 {n_units if n_units is not None else 'n/a'}",
@@ -337,7 +357,9 @@ def build(args):
         f"Fix availability: "
         f"<b>{fixes.count('available')} with a published fix</b> · "
         f"{fixes.count('none-published')} without · "
-        f"{len(fixes) - fixes.count('available') - fixes.count('none-published')} undetermined.",
+        f"{fixes.count('prerelease-only')} only as a prerelease · "
+        f"{len(fixes) - fixes.count('available') - fixes.count('none-published') - fixes.count('prerelease-only')}"
+        f" undetermined.",
         small))
     el.append(Paragraph(
         "Row shading: <font color='#b91c1c'>rule violated, no accepted decision</font> · "
@@ -441,12 +463,26 @@ def build(args):
             ids = ", ".join(link(v.get("id"), (v.get("source") or {}).get("url")) for v in vs[:3])
             if len(vs) > 3:
                 ids += f' <font color="#5b6472">and {len(vs) - 3} further</font>'
-            fx = sorted({f for v in vs
-                         for f in (props(v).get("quickbird:vuln:fix-versions", "") or "").split(", ")
-                         if f})
+            def versions_in(state):
+                return sorted({f for v in vs
+                               if props(v).get("quickbird:vuln:fix") == state
+                               for f in (props(v).get("quickbird:vuln:fix-versions", "")
+                                         or "").split(", ")
+                               if f}, key=version_key)
+
+            # Split by state rather than pooling every fix-version in the group: a component
+            # with a stable fix for one CVE and only a prerelease for another would otherwise
+            # show whichever sorted last, which is how an alpha ends up printed as the answer.
+            fx_avail, fx_pre = versions_in("available"), versions_in("prerelease-only")
             fstates = {props(v).get("quickbird:vuln:fix", "?") for v in vs}
-            if fx:
-                fixed = f"<b>{esc(fx[-1])}</b>"
+            if fx_avail:
+                fixed = f"<b>{esc(fx_avail[-1])}</b>"
+            elif fx_pre:
+                # Bold and unqualified, the version read as something to bump to. It is not:
+                # a released product cannot adopt an alpha, so the column has to say which
+                # kind of version this is.
+                fixed = (f'<font color="#b45309"><b>{esc(fx_pre[-1])}</b><br/>'
+                         f'<font size="6.5">prerelease only</font></font>')
             elif fstates == {"none-published"}:
                 fixed = '<font color="#b45309"><b>no fix published</b></font>'
             else:
@@ -507,15 +543,22 @@ def build(args):
                 Paragraph("No decision recorded.", cell),
             ])
         for c, p in sorted(g["stale"], key=lambda cp: (cp[0].get("name") or "").lower()):
-            shade[len(rows)] = SEV1
+            exempt = p.get("quickbird:currency:stale-exempt")
+            if not exempt:
+                shade[len(rows)] = SEV1
+            who = p.get("quickbird:currency:publisher")
             rows.append([
                 Paragraph(esc(c.get("name")), cell),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
-                Paragraph("active flag not set", small),
-                Paragraph("No decision recorded.", cell),
+                Paragraph(f"verified publisher {esc(who)}" if who else "active flag not set",
+                          small),
+                Paragraph(esc(exempt) if exempt else "No decision recorded.", cell),
             ])
-        el.append(table(rows, [44 * mm, 26 * mm, 44 * mm, 26 * mm, 30 * mm], shade))
+        # Status carries a full sentence once a publisher exemption is in force, and
+        # Registry status carries "verified publisher <domain>". Both were sized for two
+        # words. Total unchanged at 170mm.
+        el.append(table(rows, [38 * mm, 22 * mm, 38 * mm, 30 * mm, 42 * mm], shade))
 
     # ---- 5 remediation actions ----------------------------------------------------
     el.append(Paragraph("5&nbsp;&nbsp;Remediation actions", h2))

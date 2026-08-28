@@ -54,6 +54,7 @@ import json
 import re
 import subprocess
 import sys
+from urllib.parse import unquote
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -140,10 +141,30 @@ def purl_type(purl):
 
 
 def purl_name(purl):
-    """Readable package name: the last path segment before the version."""
-    body = (purl or "").split("?")[0].split("@")[0]
-    seg = [s for s in body.replace("pkg:", "", 1).split("/") if s]
-    return seg[-1] if len(seg) > 1 else (seg[0] if seg else "?")
+    """Readable package name, namespace included.
+
+    The last path segment on its own is not a name. `pkg:npm/%40nestjs/core` and
+    `pkg:npm/%40sigstore/core` both reduce to "core", which produced three unrelated
+    actions all titled "upgrade core" in one report — and because the unit key below is
+    built from this name, two scoped packages sharing a last segment inside the same
+    artifact would collapse into a single action carrying one of the two names.
+
+    Splitting on the *first* `@` was the second half of the same defect: an unencoded
+    scoped purl (`pkg:npm/@nestjs/core@11.1.14`) lost everything after `pkg:npm/` and the
+    function answered "npm". The version separator is the last `@`, and only when what
+    follows it is not another path segment.
+    """
+    s = (purl or "").split("?")[0].split("#")[0]
+    if s.startswith("pkg:"):
+        s = s[4:]
+    at = s.rfind("@")
+    if at > 0 and "/" not in s[at:]:
+        s = s[:at]
+    seg = [unquote(x) for x in s.split("/") if x]
+    if len(seg) < 2:
+        return seg[0] if seg else "?"
+    # seg[0] is the purl type; everything after it is namespace + name.
+    return "/".join(seg[1:])
 
 
 def main():
@@ -222,6 +243,17 @@ def main():
                 action = (f"no upgrade path in {artifact.replace('quickbird:artifact:', '')} — "
                           f"the advisory publishes no fixed version, so this needs a "
                           f"compensating control or a VEX statement, not a bump")
+            elif fx == "prerelease-only":
+                # Keyed per package, unlike no-upgrade-path above, because what is being
+                # waited on differs per package: multer's stable 3.0.0 and babel's 8.0.0 are
+                # unrelated releases on unrelated schedules, and one action covering both
+                # could only ever be half closed.
+                key = ("no-stable-upgrade-path", artifact, purl_name(c["purl"]))
+                action = (f"no stable upgrade for {purl_name(c['purl'])} in "
+                          f"{artifact.replace('quickbird:artifact:', '')} — the only fixed "
+                          f"version published is a prerelease, which a released product "
+                          f"cannot adopt; track the stable release, add a compensating "
+                          f"control, or record a VEX statement")
             elif ptype in OS_PKG_TYPES:
                 key = ("base-image-bump", artifact)
                 action = (f"bump the base image of "
@@ -234,7 +266,7 @@ def main():
             u = units.setdefault(key, {
                 "kind": key[0], "artifact": artifact, "action": action,
                 "findings": [], "components": set(), "fix_status": set(),
-                "no_fix": set(),
+                "no_fix": set(), "no_stable_fix": set(),
             })
             u["findings"].append(fid)
             u["components"].add(f"{c['name']}@{c['version']}")
@@ -242,6 +274,8 @@ def main():
             member_of[fid].add(key)
             if fx == "none-published":
                 u["no_fix"].add(fid)
+            if fx == "prerelease-only":
+                u["no_stable_fix"].add(fid)
 
     by_track = {f["id"]: f for f in doc.get("findings", [])}
     out_units = []
@@ -283,6 +317,10 @@ def main():
             # Even a bump may not clear these: the advisory publishes no fixed version. Carried
             # on the unit so it is visible without splitting the action in two.
             "findings_without_published_fix": len(u["no_fix"]),
+            # A fix exists upstream but only as a prerelease. Separate from the line above
+            # because the answer differs: this one is waiting on a release date, not on a
+            # compensating control.
+            "findings_without_stable_fix": len(u["no_stable_fix"]),
             "mitigation_due": earliest("mitigation_due"),
             "remediation_due": earliest("remediation_due"),
             "fix_status": sorted(u["fix_status"]),
