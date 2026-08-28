@@ -807,8 +807,8 @@ test_classify_kev_gets_its_own_track_regardless_of_cvss() {
 }
 
 # The point of separating the two: "actively exploited" is an observation, "CVSS 10.0" is a
-# score, and they no longer share a clock. Measured on kontina-backend, 0 of 23 Critical
-# findings were in KEV — the 72h clock there was justified by a risk none of them carried.
+# score, and they no longer share a clock. A Critical that is not in KEV would otherwise inherit
+# the 72h clock, justified by a risk it does not carry.
 test_classify_kev_and_critical_have_different_clocks() {
   mkpolicy
   mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" true null      # KEV, also 10.0
@@ -966,9 +966,8 @@ test_grq4_contradiction_is_stamped_into_the_bundle() {
 
 # ---------------------------------------------------------------- onboarding baseline
 # Starting every clock at first discovery is right for a monitored product and wrong on the day
-# monitoring begins: the accumulated backlog is all dated the same day. On kontina-backend that
-# was 23 Critical findings due in 14 days, none of which anyone could have acted on before there
-# was a scan.
+# monitoring begins: the accumulated backlog is all dated the same day, so a backlog of Criticals
+# falls due together, none of which anyone could have acted on before there was a scan.
 mkbase() {  # <onboarded> <baseline_start|""> <kev>
   mkpolicy
   jq --arg o "$1" --arg b "$2" \
@@ -1732,8 +1731,8 @@ mkvendor() {
     --now "$1" --out "$TMP/ve.json" >/dev/null 2>&1
 }
 
-# Both of kontina-backend's units are third-party images. Counting a deadline against work
-# nobody has started must be visible as exactly that.
+# A unit that is a third-party image is not work this side can start. Counting a deadline against
+# it must be visible as exactly that.
 test_vendor_no_request_on_record_is_named() {
   mkvendor 2026-06-01T00:00:00+00:00 || return 1
   assert "$(jq -r '.units[0].state' "$TMP/vu.json")" "no-vendor-request" || return 1
