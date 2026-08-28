@@ -80,6 +80,26 @@ def fetch(url, timeout=20, accept=None):
         return json.loads(r.read().decode("utf-8"))
 
 
+def pub_publisher(name):
+    """pub.dev verified publisher domain for a package, or None.
+
+    A second request, which nothing else here needs — the package document does not carry
+    the publisher. Worth the round trip because it is the only *verified* publisher identity
+    any of these registries exposes: pub.dev proves domain ownership before it will show
+    one. npm has no equivalent, its `author` is free text set by whoever publishes, which is
+    why the staleness exemption keys on this field and not on `supplier`.
+
+    A failed lookup returns None and the package simply is not exempt, so the failure
+    direction is to keep reporting a finding rather than to silence one.
+    """
+    try:
+        d = fetch(f"https://pub.dev/api/packages/{name}/publisher")
+        return (d or {}).get("publisherId") or None
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError,
+            json.JSONDecodeError, TimeoutError):
+        return None
+
+
 def latest_version(purl, meta=None):
     """(version, published_iso, error). Returns None rather than guessing.
 
@@ -145,9 +165,16 @@ def latest_version(purl, meta=None):
         if eco == "pub":
             full = fetch(REGISTRY["pub"].format(name=name))
             d = full["latest"]
-            if meta is not None and full.get("isDiscontinued"):
-                meta["deprecated"] = "discontinued" + (
-                    f" (replaced by {full.get('replacedBy')})" if full.get("replacedBy") else "")
+            if meta is not None:
+                if full.get("isDiscontinued"):
+                    meta["deprecated"] = "discontinued" + (
+                        f" (replaced by {full.get('replacedBy')})" if full.get("replacedBy") else "")
+                who = pub_publisher(name)
+                if who:
+                    meta["publisher"] = who
+                    # pub components carried no supplier at all until now; the verified
+                    # publisher is the best answer the registry has to that question.
+                    meta.setdefault("supplier", who)
             return d["version"], d.get("published"), None
         if eco == "golang":
             d = fetch(REGISTRY["golang"].format(name=name))
@@ -238,6 +265,10 @@ def annotate_bom(path, notes):
             extra.append({"name": "quickbird:currency:detail", "value": n["detail"]})
         if n.get("deprecated"):
             extra.append({"name": "quickbird:currency:deprecated", "value": n["deprecated"][:200]})
+        if n.get("publisher"):
+            extra.append({"name": "quickbird:currency:publisher", "value": str(n["publisher"])})
+        if n.get("stale_exempt"):
+            extra.append({"name": "quickbird:currency:stale-exempt", "value": n["stale_exempt"]})
         # supplier and license go into the CycloneDX standard fields — that is where every
         # other consumer expects them; nothing is overwritten that the scanner already knew
         if n.get("supplier") and not c.get("supplier"):
@@ -310,6 +341,12 @@ def main():
     # not by a run — the default is unlimited, so no default-configured product could show it.
     max_patch = limit("patch", "unlimited")
     stale_days = parse_window(cur_policy.get("stale_after", "12m"))
+    # Publishers whose staleness is answered by the process rather than per product. See
+    # policy-defaults.yml for what belongs in here and why it is keyed on the verified
+    # publisher rather than on a supplier string.
+    exempt_publishers = {str(x).strip().lower()
+                         for x in (cur_policy.get("stale_exempt_publishers") or [])
+                         if str(x).strip()}
     if args.now:
         now = datetime.fromisoformat(str(args.now).replace("Z", "+00:00"))
         if now.tzinfo is None:
@@ -407,6 +444,15 @@ def main():
                       else "update-available" if b != (0, 0, 0) else "current")
             note = {"status": status, "latest": latest}
             note.update({k: v for k, v in meta.items()})
+            pub_id = (meta.get("publisher") or "").lower()
+            # `not meta.get("deprecated")` because a discontinued package is a finding whatever
+            # its publisher: the exemption answers "upstream is quiet", not "upstream is gone".
+            exempt = bool(is_stale and not over and not meta.get("deprecated")
+                          and pub_id and pub_id in exempt_publishers)
+            if exempt:
+                note["stale_exempt"] = (
+                    f"Accepted by process default: {meta['publisher']} releases on the "
+                    f"platform cadence and is pinned by the SDK constraint.")
             if meta.get("deprecated"):
                 note["status"] = "deprecated"
                 note["detail"] = f"declared deprecated by the registry: {meta['deprecated'][:120]}"
@@ -444,6 +490,13 @@ def main():
                 entry["finding"] = "behind"
                 entry["action"] = f"upgrade to {latest}"
 
+            # A publisher exemption answers staleness and nothing else. A platform vendor
+            # ships versions behind the update limit like anyone else, and that finding
+            # keeps its upgrade — which is why `not over` is part of the test above.
+            if exempt:
+                entry["justified"] = True
+                entry["exempt_publisher"] = meta["publisher"]
+                entry["reason"] = note["stale_exempt"]
             if name in reasons:
                 entry["justified"] = True
                 entry["reason"] = reasons[name]
@@ -487,6 +540,7 @@ def main():
             "stale_with_no_upgrade": len([r for r in flagged
                                           if r["finding"] == "upstream-stale-and-we-are-current"]),
             "justified": len(justified),
+            "stale_exempt_by_publisher": len([r for r in justified if r.get("exempt_publisher")]),
             "stale_images": len(stale_images),
             "unknown": len(unknown),
         },

@@ -81,11 +81,18 @@ def _gh_json(args, timeout=60):
         return None
 
 
-def production_deploys(repo):
+def production_deploys(repo, not_after=None):
     """Production deployment timestamps with a tag ref, newest first.
 
     Returns (dates, basis, environments_seen). `dates` is None only if the records could not be
     read — which is not the same as a product that never deployed and must not read as one.
+
+    `not_after` bounds the lookup to the report clock. Without it the deployment history was
+    read live whatever `--now` said, so a report dated T could claim a cadence that only
+    holds because of a deployment made after T — and the same evidence directory produced
+    different answers on different days, which is the property a frozen clock exists to
+    remove. In a live run `not_after` is the moment the run started, so nothing is excluded
+    that the run could have known about.
 
     Filtered server-side by environment. Paginating the whole deployment history does not work at
     this scale: one product has ~25,000 records across its environments and the unfiltered walk timed
@@ -120,6 +127,15 @@ def production_deploys(repo):
             if got:
                 prod_rows.extend(got)
         suffix = ""
+
+    if not_after is not None:
+        kept = [x for x in prod_rows
+                if (t := parse_ts(x.get("at"))) is not None and t <= not_after]
+        excluded = len(prod_rows) - len(kept)
+        prod_rows = kept
+        if excluded:
+            suffix += (f" ({excluded} record(s) after {not_after.date().isoformat()} excluded — "
+                       f"a report cannot rest on a deployment made after the date it states)")
 
     if not prod_rows:
         return ([], f"no deployment records at all{suffix}"
@@ -351,7 +367,7 @@ def main():
                             "detail": "the run record carries no repo, so releases cannot be read"})
         else:
             iv = parse_interval_days(interval)
-            dates, basis, envs = production_deploys(repo)
+            dates, basis, envs = production_deploys(repo, not_after=now)
             if dates is None:
                 cadence.append({"product": product, "declared": interval, "status": "unknown",
                                 "detail": f"could not read the deployment records for {repo}. "

@@ -51,7 +51,7 @@ UNKNOWN=$(jq -r --argjson known "$KNOWN_TOP" 'keys - $known | join(", ")' <<<"$P
 for spec in \
   'tracks:.tracks // {} | [.[] | keys[]] | unique:["mitigation","remediation","reason"]' \
   'epss:.epss // {} | keys:["elevated","high","reason"]' \
-  'dependency_currency:.dependency_currency // {} | keys:["max_behind","stale_after","obsolescence_may_be_accepted","reason"]' \
+  'dependency_currency:.dependency_currency // {} | keys:["max_behind","stale_after","stale_exempt_publishers","obsolescence_may_be_accepted","reason"]' \
   'dependency_currency.max_behind:.dependency_currency.max_behind // {} | keys:["major","minor","patch"]' \
   'alerts:.alerts // {} | keys:["threshold","slack_channel"]' \
   'breach:.breach // {} | keys:["decision_within","risk_acceptance_approvers"]' \
@@ -215,6 +215,24 @@ for lvl in major minor patch; do
       || err "$POLICY: dependency_currency.max_behind.$lvl is $pv against a default of $dv. Add 'reason:' or tighten it."
   fi
 done
+
+# --- currency: an added staleness exemption is a widening ---------------------
+# Adding a publisher here stops a class of findings from asking for a decision, so it goes
+# the same way as any other relaxation: allowed, but only with a reason on record.
+if jq -e '.dependency_currency | has("stale_exempt_publishers")' <<<"$P" >/dev/null 2>&1; then
+  if ! jq -e '.dependency_currency.stale_exempt_publishers | type == "array"' <<<"$P" >/dev/null 2>&1; then
+    err "$POLICY: dependency_currency.stale_exempt_publishers must be a list of publisher identities"
+  else
+    ADDED=$(jq -r --argjson d "$(jq -c '.dependency_currency.stale_exempt_publishers // []' <<<"$D")" \
+      '[.dependency_currency.stale_exempt_publishers[]] - $d | join(", ")' <<<"$P")
+    if [[ -n "$ADDED" ]]; then
+      reason=$(jq -r '.dependency_currency.reason // ""' <<<"$P")
+      [[ -n "$reason" ]] \
+        && warn "$POLICY: staleness exemption extended to $ADDED — \"$reason\"" \
+        || err "$POLICY: dependency_currency.stale_exempt_publishers adds $ADDED beyond the process default. An exemption means those components never ask for a decision. Add 'reason:' under dependency_currency, or remove them."
+    fi
+  fi
+fi
 
 # --- alerts ------------------------------------------------------------------
 CH=$(jq -r '.alerts.slack_channel // ""' <<<"$P")

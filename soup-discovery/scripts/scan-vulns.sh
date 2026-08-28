@@ -182,20 +182,54 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
         ($seg[-1]) ]
     | unique ;
 
+  # A fixed version that exists only as a prerelease is not a fix anyone here can apply: an
+  # alpha or an rc cannot ship in a released medical device. It is also not "no fix
+  # published" — upstream has one, it is simply not stable yet — and the two call for
+  # different work. None-published needs a compensating control or a VEX statement for
+  # good; a prerelease needs the stable release tracked. Reported as "available" (the
+  # behaviour before this) it produced an action, "upgrade multer to 3.0.0-alpha.2", that
+  # nobody could carry out and nobody could close.
+  #
+  # Deliberately narrow. The suffix convention only holds in ecosystems that use semver
+  # prereleases, and a hyphen on its own is not one: Maven publishes 31.1-jre and Debian
+  # 2.36-9 as ordinary releases. An unrecognised token leaves the status at "available",
+  # so the failure direction is to keep offering an upgrade rather than to withdraw one.
+  def semver_prerelease_ecosystem($e):
+    ($e | ascii_downcase
+     | IN("npm","go","pub","crates.io","packagist","hex","nuget","rubygems","maven"));
+  def is_prerelease($v):
+    ($v | tostring | ascii_downcase | split("+")[0]
+     | test("-(alpha|beta|rc|pre|preview|dev|canary|next|snapshot|nightly|milestone|m[0-9]|cr[0-9])"));
+
   def fix_for($adv; $purl):
     (purl_keys($purl)) as $keys
     | ($purl | ascii_downcase | split("?")[0] | split("@")[0]) as $mine
     | ( [ $adv.fixes[]?
           | . as $fx
-          | ($fx.purl | split("@")[0]) as $fp
+          # `// ""` twice, not once: OSV marks affected[].package.purl optional, and in jq
+          # ("" | split("@")) is [] rather than [""], so the index yields null and
+          # `startswith(null)` aborts the whole program — one advisory without a purl would
+          # take down the entire scan, not just its own match.
+          | ((($fx.purl // "") | split("@") | .[0]) // "") as $fp
           | select( ($fp != "" and ($mine | startswith($fp)))
                     or ($fx.name != "" and ($fx.name | IN($keys[]))) ) ] ) as $m
+    | ( [ $m[] | . as $fx | $fx.fixed[]
+          | select( (semver_prerelease_ecosystem($fx.ecosystem) and is_prerelease(.)) | not ) ]
+        | unique ) as $stable
+    | ( [ $m[] | . as $fx | $fx.fixed[]
+          | select( semver_prerelease_ecosystem($fx.ecosystem) and is_prerelease(.) ) ]
+        | unique ) as $pre
     | if ($m | length) == 0 then
         # Could not tie the advisory to this component. Reporting "no fix" here would be a
         # claim we have not established.
         {status:"unknown", fixed:[], why:"the advisory does not name this package in a shape that could be matched"}
-      elif ([$m[].fixed[]] | length) > 0 then
-        {status:"available", fixed:([$m[].fixed[]] | unique), why:null}
+      elif ($stable | length) > 0 then
+        {status:"available", fixed:$stable, why:null}
+      elif ($pre | length) > 0 then
+        {status:"prerelease-only", fixed:$pre,
+         why:("the only fixed version the advisory publishes is a prerelease (" + ($pre | join(", "))
+              + ") — a released product cannot adopt it, so the work here is to track the stable "
+              + "release, add a compensating control, or record a VEX statement, not to bump")}
       elif ([$m[] | select(.has_range)] | length) > 0 then
         {status:"none-published", fixed:[],
          why:"the advisory gives an affected range but publishes no fixed version — mitigation here is a compensating control or a VEX statement, not an upgrade"}
@@ -230,6 +264,15 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
                                   [ {name:"quickbird:vuln:fix", value:"available"},
                                     {name:"quickbird:vuln:fix-versions",
                                      value: ([ $fx[] | select(.status=="available") | .fixed[] ] | unique | join(", "))} ]
+                                # After "available", so a component with a stable fix on one
+                                # affected package and only a prerelease on another still
+                                # reports the upgrade it can actually perform.
+                                elif any($fx[]; .status == "prerelease-only") then
+                                  [ {name:"quickbird:vuln:fix", value:"prerelease-only"},
+                                    {name:"quickbird:vuln:fix-versions",
+                                     value: ([ $fx[] | select(.status=="prerelease-only") | .fixed[] ] | unique | join(", "))},
+                                    {name:"quickbird:vuln:fix-note",
+                                     value: ([ $fx[] | select(.status=="prerelease-only") | .why ] | first // "")} ]
                                 elif (($fx | length) > 0 and all($fx[]; .status == "none-published")) then
                                   [ {name:"quickbird:vuln:fix", value:"none-published"},
                                     {name:"quickbird:vuln:fix-note", value: ($fx[0].why // "")} ]
