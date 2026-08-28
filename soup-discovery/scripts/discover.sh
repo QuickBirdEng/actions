@@ -119,7 +119,7 @@ while IFS= read -r f; do
     app_root="${f%%/android/*}"
     [[ "$app_root" == "$f" ]] && app_root=$(dirname "$dir")
     [[ -z "$app_root" || "$app_root" == "." ]] && app_root="app"
-    # Gradle dependency locking wins over the built artifact. Measured: syft reads ZERO
+    # Gradle dependency locking wins over the built artifact. syft reads ZERO
     # components out of an AAB — dex bytecode carries no package metadata — so scanning the
     # bundle would close the gap by claiming an empty inventory, which is worse than the gap.
     # The lockfile is the resolved android closure. Enabling it is a build-config decision,
@@ -167,7 +167,7 @@ done <<<"$(grep -E '(^|/)pom\.xml$' <<<"$FILES" || true)"
 # one. Before this, the iOS half of a mobile product was in no inventory and was not reported
 # as missing either: the Android build is a candidate and can be recorded as a gap, while iOS
 # was absent from the candidate list, so a document could say complete with a whole platform
-# never looked at. On one real product that was 39 pods.
+# never looked at.
 #
 # Keyed on the app root rather than the file's directory, the same as the Android candidate:
 # Package.resolved sits several levels down inside Runner.xcworkspace, and an id built from
@@ -436,7 +436,7 @@ while IFS= read -r ref; do
     # is the difference between a scope rule that can say what covers this and one that
     # can only say "some templated thing in this file".
     resolvable=false
-    note="OUR OWN IMAGE, RELEASE-VERSIONED — repository resolved from the chart values as ${img%%:*}, but the tag is the chart appVersion / --set version, so the concrete version comes from the deploy record. Its contents are covered by the Dockerfile candidate that builds it."
+    note="OUR OWN IMAGE, RELEASE-VERSIONED — repository resolved from the chart values as ${img%%:*}, but the tag is the chart appVersion / --set version, so the concrete version comes from the deploy record. The Dockerfile candidate that builds it covers its contents only where that candidate declares built_image; without one it scans the base image from its FROM line."
   elif [[ "$img" == *'@unresolved'* || "$img" == *'{{'* || "$img" == *'<'*'>'* || "$img" == *'${'* || "$img" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
     resolvable=false
     note="TEMPLATED REFERENCE — the concrete version is substituted at deploy time and is not knowable from the repo. Its components cannot be enumerated here; resolving it needs the deploy record."

@@ -165,6 +165,123 @@ test_scope_same_specificity_is_a_conflict() {
   [[ "$(jq -r '.counts.conflict' "$TMP/p4.json")" == "1" ]] || { echo "conflict not detected"; return 1; }
 }
 
+# A Dockerfile candidate is discovered from its FROM line, so without built_image the scan
+# target is the base image and everything the Dockerfile does afterwards is invisible: a package
+# the final stage deletes is still reported, and one it installs is missing.
+mk_image_candidates() {
+  mk_candidates '[{"id":"img-final","ecosystem":"container","scan_source":"registry:node:22-alpine",
+                   "markers":["Dockerfile:31"],"ships":true,"resolvable":true,"note":"NOT digest-pinned"},
+                  {"id":"web","ecosystem":"npm","scan_source":"file:web/yarn.lock",
+                   "markers":["web/yarn.lock"],"ships":true,"resolvable":true,"note":""}]' > "$TMP/bi-c.json"
+}
+
+test_scope_built_image_redirects_the_scan_target() {
+  mk_image_candidates
+  cat > "$TMP/bi1.yml" <<'EOF'
+include:
+  - id: img-final
+    reason: Final stage of the service Dockerfile — the image we ship.
+    built_image: reg/app:${version}
+  - id: web
+    reason: The lockfile.
+exclude: []
+EOF
+  SCOPE_OUTPUT="$TMP/bi1.json" SOUP_VERSION=v1.2.3 \
+    bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi1.yml" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.scan[]|select(.id=="img-final")|.scan_source' "$TMP/bi1.json")" \
+         "registry:reg/app:v1.2.3" || return 1
+  # the FROM image is kept on the record rather than discarded — it is what was shipped from
+  assert "$(jq -r '.scan[]|select(.id=="img-final")|.base_image' "$TMP/bi1.json")" \
+         "registry:node:22-alpine" || return 1
+  assert "$(jq -r '.redirected|length' "$TMP/bi1.json")" "1"
+}
+
+# The whole point is that a candidate without the declaration behaves exactly as before.
+test_scope_without_built_image_keeps_the_from_line() {
+  mk_image_candidates
+  printf 'include:\n  - id: img-final\n    reason: r\n  - id: web\n    reason: r\nexclude: []\n' > "$TMP/bi2.yml"
+  SCOPE_OUTPUT="$TMP/bi2.json" SOUP_VERSION=v1 \
+    bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi2.yml" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.scan[]|select(.id=="img-final")|.scan_source' "$TMP/bi2.json")" "registry:node:22-alpine" || return 1
+  assert "$(jq -r '.redirected|length' "$TMP/bi2.json")" "0"
+}
+
+# No version, no concrete image. Falling back to the base image would silently restore the
+# exact wrong answer this exists to remove, so the candidate becomes a reported gap instead.
+test_scope_built_image_without_a_version_is_a_gap_not_a_fallback() {
+  mk_image_candidates
+  printf 'include:\n  - id: img-final\n    reason: r\n    built_image: reg/app:${version}\n  - id: web\n    reason: r\nexclude: []\n' > "$TMP/bi3.yml"
+  SCOPE_OUTPUT="$TMP/bi3.json" SOUP_VERSION="" \
+    bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi3.yml" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.scan[]|select(.id=="img-final")|.resolvable' "$TMP/bi3.json")" "false" || return 1
+  contains "$(jq -r '.scan[]|select(.id=="img-final")|.note' "$TMP/bi3.json")" "rather than scanning the base image"
+}
+
+# One reference does not fit every tier: a product may push <version>-staging from its staging
+# release workflow and <version> from its production one, so a single string can only ever be
+# right for one of the two.
+test_scope_built_image_selects_the_entry_for_the_tier() {
+  mk_image_candidates
+  cat > "$TMP/bi6.yml" <<'EOF'
+include:
+  - id: img-final
+    reason: Final stage of the service Dockerfile — the image we ship.
+    built_image:
+      staging: reg/app:${version}-staging
+      candidate: reg/app:${version}
+  - id: web
+    reason: The lockfile.
+exclude: []
+EOF
+  SCOPE_OUTPUT="$TMP/bi6a.json" SOUP_VERSION=v1.2.3 SOUP_TIER=staging     bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi6.yml" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.scan[]|select(.id=="img-final")|.scan_source' "$TMP/bi6a.json")" \
+         "registry:reg/app:v1.2.3-staging" || return 1
+  SCOPE_OUTPUT="$TMP/bi6b.json" SOUP_VERSION=v1.0.0 SOUP_TIER=candidate \
+    bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi6.yml" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.scan[]|select(.id=="img-final")|.scan_source' "$TMP/bi6b.json")" \
+         "registry:reg/app:v1.0.0"
+}
+
+# A tier the map does not name is a gap for the same reason an unknown version is: the only
+# alternative is scanning the base image and saying nothing about it.
+test_scope_built_image_tier_not_named_is_a_gap() {
+  mk_image_candidates
+  cat > "$TMP/bi7.yml" <<'EOF'
+include:
+  - id: img-final
+    reason: r
+    built_image:
+      candidate: reg/app:${version}
+  - id: web
+    reason: r
+exclude: []
+EOF
+  SCOPE_OUTPUT="$TMP/bi7.json" SOUP_VERSION=v1 SOUP_TIER=branch \
+    bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi7.yml" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.scan[]|select(.id=="img-final")|.resolvable' "$TMP/bi7.json")" "false" || return 1
+  contains "$(jq -r '.scan[]|select(.id=="img-final")|.note' "$TMP/bi7.json")" "no image for the branch tier"
+}
+
+# A declaration that cannot be applied stops the run. Ignoring it would leave the candidate on
+# its base image while the scope file states otherwise — a claim in the document nobody checked.
+test_scope_built_image_on_a_non_container_is_refused() {
+  mk_image_candidates
+  printf 'include:\n  - id: img-final\n    reason: r\n  - id: web\n    reason: r\n    built_image: reg/app:1\nexclude: []\n' > "$TMP/bi4.yml"
+  out=$(SCOPE_OUTPUT="$TMP/bi4.json" SOUP_VERSION=v1 \
+        bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi4.yml" 2>&1)
+  assert "$?" "1" || return 1
+  contains "$out" "only meaningful for a container candidate"
+}
+
+test_scope_built_image_with_an_unknown_placeholder_is_refused() {
+  mk_image_candidates
+  printf 'include:\n  - id: img-final\n    reason: r\n    built_image: reg/app-${service}:${version}\n  - id: web\n    reason: r\nexclude: []\n' > "$TMP/bi5.yml"
+  out=$(SCOPE_OUTPUT="$TMP/bi5.json" SOUP_VERSION=v1 \
+        bash "$S/resolve-scope.sh" "$TMP/bi-c.json" "$TMP/bi5.yml" 2>&1)
+  assert "$?" "1" || return 1
+  contains "$out" "unsubstituted placeholder"
+}
+
 # ---------------------------------------------------------------- discovery
 mkrepo() { rm -rf "$TMP/repo"; mkdir -p "$TMP/repo"; ( cd "$TMP/repo" && git init -q . ); }
 discover() { ( cd "$TMP/repo" && git add -A >/dev/null 2>&1; DISCOVER_OUTPUT="$TMP/cand.json" bash "$S/discover.sh" . >/dev/null 2>&1 ); }
@@ -264,7 +381,7 @@ test_discover_dockerfile_id_survives_a_line_shift() {
 
 # Two Dockerfiles in one directory both have a builder and both have a final stage. Keyed on
 # the directory they collapse onto one candidate and one of the two shipped images is dropped
-# without a word. Seen on a real project, where it hid a whole base image.
+# without a word.
 test_discover_two_dockerfiles_in_one_directory_stay_apart() {
   mkrepo
   mkdir -p "$TMP/repo/web/dockerfiles"
@@ -703,9 +820,9 @@ test_enrichment_epss_model_and_date_are_on_the_finding() {
 # ---------------------------------------------------------------- gradle lockfile filtering
 GLF() { bash "$S/filter-gradle-lockfile.sh" "$@"; }
 
-# lockAllConfigurations() tags every configuration onto one line. Measured on a real
-# lockfile: 56 of 143 components were tagged only with test/build-tooling configurations and
-# never ship, yet got real classified findings and remediation burden.
+# lockAllConfigurations() tags every configuration onto one line, so a component tagged only
+# with test or build-tooling configurations reads as shipped and collects classified findings
+# and remediation burden it should never have.
 test_gradle_lockfile_drops_test_only_entries() {
   cat > "$TMP/glf-in.lockfile" <<'EOF'
 # This is a Gradle generated file for dependency locking.
@@ -807,8 +924,8 @@ test_classify_kev_gets_its_own_track_regardless_of_cvss() {
 }
 
 # The point of separating the two: "actively exploited" is an observation, "CVSS 10.0" is a
-# score, and they no longer share a clock. Measured on kontina-backend, 0 of 23 Critical
-# findings were in KEV — the 72h clock there was justified by a risk none of them carried.
+# score, and they no longer share a clock. A Critical that is not in KEV would otherwise inherit
+# the 72h clock, justified by a risk it does not carry.
 test_classify_kev_and_critical_have_different_clocks() {
   mkpolicy
   mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H" true null      # KEV, also 10.0
@@ -1610,8 +1727,7 @@ test_units_no_published_fix_is_not_an_upgrade() {
 
 # Regression: the action name dropped the npm scope, so @nestjs/core, @sigstore/core and
 # @strapi/core all produced actions titled "upgrade core" — and since the unit key is built
-# from that name, two of them inside one artifact merged into a single action. Seen on
-# curacoach v1.0.0-qa10, which listed three separate "upgrade core" rows.
+# from that name, two of them inside one artifact merged into a single action.
 test_units_scoped_packages_do_not_collide() {
   jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
           metadata:{component:{name:"p","bom-ref":"p",type:"application"}},
@@ -2324,8 +2440,8 @@ test_scope_npm_an_undecidable_range_stays_direct() {
 # A pod written `- name (from `...`)` is not an iOS choice. On a Flutter app it is the iOS half
 # of a Dart package that pubspec.lock already records as direct, or the engine itself. Counting
 # it again would demand a second SOUP record for one choice and assess its currency twice, once
-# under pkg:pub and once under pkg:cocoapods. On two real products that is 33 of 34 and 23 of 24
-# entries, so both come out with no direct pods at all.
+# under pkg:pub and once under pkg:cocoapods. Nearly every entry in a Podfile.lock is of that
+# shape, so the usual answer is no direct pods at all.
 test_scope_cocoapods_ignores_locally_sourced_pods() {
   mkdir -p "$TMP/sc-pods/app/ios"
   cat > "$TMP/sc-pods/app/ios/Podfile.lock" <<'EOF'
@@ -3119,9 +3235,8 @@ EOF
 }
 
 # A fixed version that exists only as a prerelease is not a fix a released product can
-# apply. Reported as "available" it produced the action "upgrade multer to 3.0.0-alpha.2" —
-# on an expedited track, with a deadline nobody could meet by doing the thing it named.
-# Seen on curacoach v1.0.0-qa10 for multer and @babel/core.
+# apply. Pooled with the stable fixes it also sorted last, so the Fixed-in column named the
+# prerelease while an adoptable version stood beside it.
 fake_osv() {
   # <advisory-json> — serves querybatch and the per-advisory fetch from a stub curl.
   mkdir -p "$TMP/osvbin"
@@ -3306,7 +3421,7 @@ test_render_vdr_report() {
 }
 
 # String order puts 8.0.5 above 8.0.16, and Fixed-in printed whichever sorted last — a
-# version below the one carrying the fix. vite in the curacoach qa10 report is the real case.
+# version below the one carrying the fix.
 test_render_fix_version_order_is_numeric() {
   need_reportlab || return 77
   S="$S" python3 - <<'PYEOF'

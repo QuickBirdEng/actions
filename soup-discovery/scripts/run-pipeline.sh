@@ -63,14 +63,16 @@ DISCOVER_OUTPUT="$CAND" bash "$HERE/discover.sh" "$REPO" || die "discovery faile
 
 # --- 2. scope ---------------------------------------------------------------
 SCOPE_FILE="${SOUP_SCOPE_FILE:-$REPO/.soup-scope.yml}"
-SCOPE_OUTPUT="$PLAN" bash "$HERE/resolve-scope.sh" "$CAND" "$SCOPE_FILE" \
+# SOUP_VERSION feeds ${version} in a built_image declaration — the tag is the only part of a
+# shipped image reference this pipeline can know, and it already has it.
+SCOPE_OUTPUT="$PLAN" SOUP_VERSION="$VERSION" SOUP_TIER="${SBOM_TIER:-}" bash "$HERE/resolve-scope.sh" "$CAND" "$SCOPE_FILE" \
   || die "scope resolution failed — every candidate needs a recorded decision before a BOM can be trusted"
 
 # --- 3. scan each in-scope target ------------------------------------------
 BOMS=()
 GAPS=()
 
-while IFS=$'\t' read -r id source resolvable ecosystem markers; do
+while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
   [[ -z "$id" ]] && continue
   raw="$OUT_DIR/bom/$id.raw.json"
   final="$OUT_DIR/bom/$id.cdx.json"
@@ -78,7 +80,10 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers; do
   arg="${source#*:}"
 
   if [[ "$resolvable" != "true" ]]; then
-    log "  gap  $id — reference is templated, concrete version not knowable from the repo"
+    # The candidate's own note: a templated deploy reference and a built_image on a run
+    # that knows no version are both unscannable for different reasons, and a gap naming
+    # the wrong one sends whoever reads it to the wrong file.
+    log "  gap  $id — ${note:-reference is templated, concrete version not knowable from the repo}"
     GAPS+=("$id"); continue
   fi
 
@@ -205,7 +210,7 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers; do
     || log "::warning::$id: dependency graph could not be derived"
   rm -f "$raw" "$native"
   BOMS+=("$final")
-done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)\t\(.ecosystem)\t\(.markers | join(","))"' "$PLAN")
+done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)\t\(.ecosystem)\t\(.markers | join(","))\t\(.note // "" | gsub("\t"; " "))"' "$PLAN")
 
 [[ ${#BOMS[@]} -gt 0 ]] || die "no target produced a BOM"
 
