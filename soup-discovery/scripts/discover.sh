@@ -43,16 +43,25 @@ add() {
         . + [{id:$id, ecosystem:$eco, scan_source:$src, markers:[$marker],
               ships:($ships=="true"), resolvable:($resolvable=="true"), note:$note}]
       elif .[$i].scan_source != $src and ($src | startswith("registry:")) then
-        # Two image references under one id. Merging keeps the first and drops the second
-        # without a word, which is how a shipped image disappears from an inventory that
-        # still calls itself complete. Recorded as a conflict; the run stops on it below.
-        #
-        # Only for images, because for them the reference is the thing. For a file the path
-        # is only where it is kept, and one artefact is legitimately in two places: Xcode
-        # keeps the same Package.resolved under the project and under the workspace, and
-        # collapsing those two into one candidate is the intended behaviour.
-        .[$i].conflict = ((.[$i].conflict // [.[$i].scan_source]) + [$src] | unique)
-        | .[$i].markers |= (. + [$marker] | unique)
+        if ($id | startswith("compose-")) then
+          # A local docker-compose stack is never the authority on what ships, so two of them
+          # disagreeing about a tag is drift between dev conveniences, not the case the
+          # conflict below exists for. Worth a warning, not a stopped run. Keeps the first
+          # tag seen; the note carries the disagreement forward instead of hiding it.
+          .[$i].note = "COMPOSE FILES DISAGREE — " + .[$i].note + " (also seen: " + $src + ")"
+          | .[$i].markers |= (. + [$marker] | unique)
+        else
+          # Two image references under one id. Merging keeps the first and drops the second
+          # without a word, which is how a shipped image disappears from an inventory that
+          # still calls itself complete. Recorded as a conflict; the run stops on it below.
+          #
+          # Only for images, because for them the reference is the thing. For a file the path
+          # is only where it is kept, and one artefact is legitimately in two places: Xcode
+          # keeps the same Package.resolved under the project and under the workspace, and
+          # collapsing those two into one candidate is the intended behaviour.
+          .[$i].conflict = ((.[$i].conflict // [.[$i].scan_source]) + [$src] | unique)
+          | .[$i].markers |= (. + [$marker] | unique)
+        end
       else
         .[$i].markers |= (. + [$marker] | unique)
       end
@@ -378,6 +387,18 @@ resolve_helm_ref() {
   printf '%s' "$out$rest"
 }
 
+# A docker-compose file is a local developer convenience, never the deployment mechanism, in
+# every product this pipeline has seen — the chart or the raw k8s manifest is. Naming its
+# candidates "compose-" rather than "deployed-" keeps that convention from being an accident of
+# which file a grep happened to find first: a compose image can never collide with, and so never
+# silently outvote, the real deployed reference for the same image (see add() above).
+is_compose_ref() {
+  case "$(basename "$1")" in
+    docker-compose*.yml|docker-compose*.yaml|compose.yml|compose.yaml) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 while IFS= read -r ref; do
   [[ -z "$ref" ]] && continue
   # Normalise the leading ./ that grep -r emits. Without this, markers from this block
@@ -464,7 +485,9 @@ while IFS= read -r ref; do
   if [[ -z "$slug" || "$slug" =~ ^[-._]*$ ]]; then
     slug="templated-$(basename "$file" | sed -E 's/\.(ya?ml)$//')"
   fi
-  add "deployed-$slug" "container" "registry:$img" "$file" "true" "$note" "$resolvable"
+  prefix="deployed"
+  is_compose_ref "$file" && prefix="compose"
+  add "$prefix-$slug" "container" "registry:$img" "$file" "true" "$note" "$resolvable"
 done <<<"$(grep -rnE '^[[:space:]]*(- )?image:[[:space:]]*\S+' --include='*.yaml' --include='*.yml' . 2>/dev/null \
            | grep -vE 'imagePullPolicy|imagePullSecrets' || true)"
 
@@ -474,7 +497,7 @@ jq -n --argjson c "$CANDIDATES" '{
   candidate_count: ($c | length),
   ecosystems: ($c | map(.ecosystem) | unique),
   unresolvable: ($c | map(select(.resolvable == false)) | map({id, markers, note})),
-  warnings: ($c | map(select(.note | test("NOT digest-pinned|NO LOCKFILE|NO pubspec|unpinned|TEMPLATED")))
+  warnings: ($c | map(select(.note | test("NOT digest-pinned|NO LOCKFILE|NO pubspec|unpinned|TEMPLATED|COMPOSE FILES DISAGREE")))
               | map({id, ecosystem, markers, note})),
   candidates: ($c | sort_by(.ecosystem, .id))
 }' > "$OUTPUT"

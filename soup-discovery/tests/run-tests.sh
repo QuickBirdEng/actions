@@ -302,6 +302,35 @@ test_discover_two_tags_of_one_image_stop_the_run() {
   assert "$(jq -r '[.candidates[]|select(has("conflict"))]|length' "$TMP/cand.json")" "1"
 }
 
+# Regression: dropping the tag from the id (the fix above) also merged a local docker-compose
+# reference onto the same id as the real deployed one, and the two disagreeing on a tag looked
+# exactly like the two-tags-of-one-image case and stopped the run. No product in this pipeline
+# deploys via docker-compose, so a compose reference gets its own id and can never outvote or
+# collide with the real deployed one for the same image.
+test_discover_compose_ref_never_conflicts_with_deployed_ref() {
+  mkrepo
+  mkdir -p "$TMP/repo/k8s"
+  printf 'spec:\n  containers:\n    - image: redis:7-alpine\n' > "$TMP/repo/k8s/app.yaml"
+  printf 'services:\n  redis:\n    image: redis:8-alpine\n' > "$TMP/repo/docker-compose.local.yml"
+  discover
+  assert "$(jq -r '[.candidates[]|select(has("conflict"))]|length' "$TMP/cand.json")" "0" || return 1
+  assert "$(jq -r '[.candidates[]|select(.id=="deployed-redis")]|length' "$TMP/cand.json")" "1" || return 1
+  assert "$(jq -r '[.candidates[]|select(.id=="compose-redis")]|length' "$TMP/cand.json")" "1"
+}
+
+# Two compose files are both local dev conveniences, neither is authoritative about what ships,
+# so them disagreeing about a tag is drift worth a warning, not the dangerous case above.
+test_discover_two_compose_files_disagreeing_do_not_stop_the_run() {
+  mkrepo
+  printf 'services:\n  db:\n    image: postgres:16.0-alpine\n' > "$TMP/repo/docker-compose.epa.yml"
+  printf 'services:\n  db:\n    image: postgres:16-alpine\n' > "$TMP/repo/docker-compose.voucher.yml"
+  DISCOVER_OUTPUT="$TMP/cand.json" bash "$S/discover.sh" "$TMP/repo" >/dev/null 2>&1
+  assert "$?" "0" || return 1
+  assert "$(jq -r '[.candidates[]|select(has("conflict"))]|length' "$TMP/cand.json")" "0" || return 1
+  assert "$(jq -r '[.candidates[]|select(.id=="compose-postgres")]|length' "$TMP/cand.json")" "1" || return 1
+  jq -re '.warnings[] | select(.id=="compose-postgres")' "$TMP/cand.json" >/dev/null
+}
+
 test_discover_deduplicates_ids() {
   mkrepo
   mkdir -p "$TMP/repo/k8s"
