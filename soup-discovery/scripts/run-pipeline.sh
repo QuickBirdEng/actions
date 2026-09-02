@@ -78,6 +78,7 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
   final="$OUT_DIR/bom/$id.cdx.json"
   kind="${source%%:*}"
   arg="${source#*:}"
+  supplied_bom=""
 
   if [[ "$resolvable" != "true" ]]; then
     # The candidate's own note: a templated deploy reference and a built_image on a run
@@ -164,7 +165,14 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
       log "  gap  $id — needs a prebuilt artifact ($kind); provide one via SBOM_ARTIFACT_$id"
       var="SBOM_ARTIFACT_${id//[^A-Za-z0-9]/_}"
       if [[ -n "${!var:-}" && -e "${!var}" ]]; then
-        target="file:${!var}"; log "       using ${!var}"
+        # syft finds no components in an AAB — dex bytecode carries no package metadata — so a
+        # CycloneDX document is taken as the BOM rather than scanned.
+        if jq -e '.bomFormat == "CycloneDX"' "${!var}" >/dev/null 2>&1; then
+          supplied_bom="${!var}"; target="bom:${!var}"
+          log "       using the BOM at ${!var}"
+        else
+          target="file:${!var}"; log "       using ${!var}"
+        fi
       else
         GAPS+=("$id"); continue
       fi
@@ -189,7 +197,15 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
   # Raw output is intermediate and must not survive the run: it carries the absolute paths the
   # scan happened to see, which is exactly what normalisation removes. The gap paths need their own
   # cleanup because `continue` skips the one at the end of the loop.
-  if ! "$SYFT_BIN" scan "$target" -o cyclonedx-json="$raw" -o syft-json="$native" -q 2>/dev/null; then
+  if [[ -n "$supplied_bom" ]]; then
+    # Normalisation and verify-bom.sh still run, so a supplied BOM meets the same bar.
+    if ! NLOCAL=$(bash "$HERE/prepare-supplied-bom.sh" "$supplied_bom" "$raw"); then
+      log "  gap  $id — the supplied BOM could not be used"; GAPS+=("$id"); continue
+    fi
+    [[ "$NLOCAL" == "0" ]] || \
+      log "       dropped $NLOCAL local subproject component(s) — the manifest already names them"
+    native=""
+  elif ! "$SYFT_BIN" scan "$target" -o cyclonedx-json="$raw" -o syft-json="$native" -q 2>/dev/null; then
     log "  gap  $id — syft failed"; GAPS+=("$id"); rm -f "$raw" "$native"; continue
   fi
   BOM_SUBJECT="$id" SCAN_TARGET="$target" SYFT_NATIVE="$native" \

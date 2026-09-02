@@ -43,6 +43,9 @@ Script| Purpose
 ---|---  
 run-pipeline.sh| **Entry point for a build run.** Fetches syft pinned if absent, then runs the sequence below. Non-zero if a candidate lacks a scope decision, if a produced document fails the gate, or if consolidation loses a component.  
 discover.sh| Find candidates: dependency manifests per ecosystem, Dockerfile stages, images referenced by Helm charts and Compose files. Resolves `{{ .Values.x }}` against the chart's own `values.yaml`; an unresolvable reference is emitted as `@unresolved` rather than guessed.  
+prepare-supplied-bom.sh| A candidate whose closure cannot be read off its artefact — syft finds none in an AAB — may be given a CycloneDX document through `SBOM_ARTIFACT_<id>` instead. Refuses anything that is not CycloneDX and drops `project_path` subprojects. Normalisation and the BOM gate still run.  
+verify-bom-against-lockfile.sh| Refuses a supplied BOM that does not describe the closure the Gradle lockfile pins. Without `flutter pub get` the same Gradle command resolves a strict subset and reports no error, so the lockfile is the contract.  
+wait-for-release-runs.sh| `workflow_run` fires when *one* named workflow finishes, never when all have, so a fast release workflow starts the scan while a slow one is still pushing. Waits for the runs of this tag that are still going and names any that failed.  
 filter-gradle-lockfile.sh| A `gradle.lockfile` written by `dependencyLocking { lockAllConfigurations() }` tags every configuration onto one line undifferentiated. Filters it to the runtimeClasspath entries, and any line with no discernible tag, before syft ever sees it.  
 resolve-scope.sh| Join candidates against the scope declaration. Exits non-zero on the first unclassified candidate.  
 resolve-tier.sh| Document level from the tag shape, not from `github.ref_type`, which is `tag` for a QA tag too. Fails loudly on an invalid `tag_pattern` rather than falling through to a level.  
