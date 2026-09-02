@@ -29,6 +29,13 @@ inputs:
     description: 'Where to write candidates.json, scan-plan.json and bom/'
     required: false
     default: 'sbom'
+  wait-for-workflows:
+    description: >-
+      Comma-separated release workflow names to wait for, matched on the `name:` inside those
+      files. workflow_run fires when one of them finishes, so without this the scan can start
+      while another is still pushing what it is meant to scan.
+    required: false
+    default: ''
   syft-version:
     description: 'Pinned syft version. Not "latest" on purpose — the component list must not change because a scanner auto-updated between two runs of the same commit.'
     required: false
@@ -200,6 +207,16 @@ runs:
           echo "tag=$TAG"
         } >> "$GITHUB_OUTPUT"
         echo "document tier: $TIER (tag ${TAG:-none}, ref $REF_NAME_CTX)"
+
+    - name: Wait for the release runs of this tag
+      if: ${{ inputs.wait-for-workflows != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.repo-token }}
+      run: |
+        IFS=',' read -ra NAMES <<< "${{ inputs.wait-for-workflows }}"
+        bash "$GITHUB_ACTION_PATH/scripts/wait-for-release-runs.sh" \
+          "$GITHUB_REPOSITORY" "${{ steps.tier.outputs.tag }}" "${NAMES[@]}"
 
     - name: Discover, scope, scan, consolidate
       id: run

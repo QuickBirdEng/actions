@@ -97,6 +97,13 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
 
   if [[ -n "$supplied_path" && -e "$supplied_path" ]] \
      && jq -e '.bomFormat == "CycloneDX"' "$supplied_path" >/dev/null 2>&1; then
+    # Where discovery found a lockfile, that lockfile is the contract: a BOM built in an
+    # unprepared environment resolves a strict subset and reports no error.
+    if [[ "$arg" == *gradle.lockfile ]] \
+       && ! bash "$HERE/verify-bom-against-lockfile.sh" "$supplied_path" "$REPO/$arg" >&2; then
+      log "  gap  $id — the supplied BOM does not match $arg"
+      GAPS+=("$id"); continue
+    fi
     supplied_bom="$supplied_path"
     target="bom:$supplied_path"
   else
