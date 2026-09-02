@@ -105,10 +105,19 @@ jq -n \
                  elif ($scopes | index("dev"))        then "dev"
                  elif ($scopes | index("transitive")) then "transitive"
                  else null end ) as $scope
+             # syft:location:* survives from the first entry only, so on a merge the paths inside
+             # the other artefacts would be lost. Recorded per artefact instead, and only where a
+             # merge happened -- for a single entry the syft properties already say it.
+             | ( [ .[] | (."quickbird:from" | sub("^quickbird:artifact:"; "")) as $a
+                   | (.properties // [])[]
+                   | select((.name | startswith("syft:location:")) and (.name | endswith(":path")))
+                   | { name: "quickbird:component:location", value: ($a + ":" + .value) } ]
+                 | unique ) as $locs
              | .[0] + { properties: (
                  ( (.[0].properties // []) | map(select(.name != "quickbird:dependency:scope")) )
                  + (if $scope == null then []
                     else [ { name: "quickbird:dependency:scope", value: $scope } ] end)
+                 + (if (length) > 1 then $locs else [] end)
                  + [ { name: "quickbird:component:artifact",
                        value: (map(."quickbird:from") | unique | join(", ")) } ] ) }
              | del(."quickbird:from") ) ) as $components
