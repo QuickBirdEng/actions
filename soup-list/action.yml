@@ -9,7 +9,7 @@ runs:
   using: "composite"
   steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
     - name: Install yq
       shell: bash
       run: |
@@ -143,7 +143,7 @@ runs:
         echo "</body></html>" >> "$OUT"
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: dependencies-list
         path: results

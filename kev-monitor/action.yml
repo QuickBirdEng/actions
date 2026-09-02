@@ -160,7 +160,7 @@ runs:
 
     - name: Keep the record
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         # Retained on every run, including all-clear ones. The dated record is what
         # distinguishes "we checked and found nothing" from "nobody looked", and only the
