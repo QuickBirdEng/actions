@@ -88,98 +88,104 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
     GAPS+=("$id"); continue
   fi
 
-  case "$kind" in
-    file|dir|registry)
-      target="$kind:$arg"
-      [[ "$kind" != "registry" ]] && target="$kind:$REPO/$arg"
-      ;;
-    gradle-lockfile)
-      # lockAllConfigurations() tags every configuration onto one line; scanning it
-      # undifferentiated would count test/build-only dependencies as shipped. Filtered to
-      # the runtimeClasspath closure before syft ever sees it. The filtered copy lives under
-      # $OUT_DIR keyed by $id, not a random temp name: the scan target is recorded onto the
-      # BOM, and a random name there would make two runs of the same commit disagree.
-      lockfile="$REPO/$arg"
-      if [[ ! -f "$lockfile" ]]; then
-        log "  gap  $id — $arg not found"; GAPS+=("$id"); continue
-      fi
-      fdir="$OUT_DIR/.gradle-runtime/$id"
-      bash "$HERE/filter-gradle-lockfile.sh" "$lockfile" "$fdir" >&2 || {
-        log "  gap  $id — could not filter gradle.lockfile"; GAPS+=("$id"); continue; }
-      target="file:$fdir/gradle.lockfile"
-      ;;
-    installDist)
-      # The resolved runtime closure. Declared dependencies alone omit transitives and
-      # leave BOM-managed versions empty, which is the defect this pipeline exists for.
-      gdir="$REPO/$arg"
-      if [[ ! -x "$gdir/gradlew" ]]; then
-        log "  gap  $id — no gradlew in $arg, cannot produce the resolved closure"
-        GAPS+=("$id"); continue
-      fi
-      log "  build $id (gradlew installDist)"
-      ( cd "$gdir" && ./gradlew installDist --no-daemon -q ) >&2 || {
-        log "  gap  $id — installDist failed"; GAPS+=("$id"); continue; }
-      libdir=$(find "$gdir/build/install" -maxdepth 2 -type d -name lib 2>/dev/null | head -1)
-      [[ -d "$libdir" ]] || { log "  gap  $id — no install output"; GAPS+=("$id"); continue; }
-      target="dir:$libdir"
-      ;;
-    mvn)
-      # Same reasoning as installDist: the packaged output is the resolved set, while the
-      # pom lists declared dependencies only. One product's three Keycloak provider extensions
-      # went to the gap list purely because target/ had never been built.
-      mdir="$REPO/$arg"
-      if [[ ! -f "$mdir/pom.xml" ]]; then
-        log "  gap  $id — no pom.xml in $arg"; GAPS+=("$id"); continue
-      fi
-      # The repository-pinned wrapper wins: it needs no maven on the runner and builds with
-      # the version the module was written against. `mvn wrapper:wrapper` in the module is
-      # all a project needs to close this gap — cheaper than provisioning every runner.
-      MVN_CMD="mvn"
-      if [[ -x "$mdir/mvnw" ]]; then
-        MVN_CMD="./mvnw"
-      elif ! command -v mvn >/dev/null 2>&1; then
-        log "  gap  $id — neither ./mvnw in the module nor maven on this runner (fix: run 'mvn wrapper:wrapper' in the module, or provision maven)"; GAPS+=("$id"); continue
-      fi
-      # package alone is not enough. Without a shade/assembly plugin, target/ holds only
-      # the artifact jar — scanning it found 2 components for an extension that has 8
-      # runtime dependencies including protobuf-java and five netty jars, exactly the kind
-      # of library that carries CVEs. copy-dependencies materialises the resolved runtime
-      # closure, which is the Maven analogue of Gradle's installDist.
-      #
-      # includeScope=runtime deliberately drops `provided` dependencies: the Keycloak SPI
-      # jars are supplied by the Keycloak runtime, so they ship in the Keycloak image's BOM
-      # rather than in the extension's. Counting them here would double-count them.
-      log "  build $id ($MVN_CMD package + copy-dependencies)"
-      ( cd "$mdir" && $MVN_CMD -q -B package -DskipTests \
-          dependency:copy-dependencies -DincludeScope=runtime \
-          -DoutputDirectory=target/sbom-deps ) >&2 || {
-        log "  gap  $id — mvn build failed"; GAPS+=("$id"); continue; }
-      [[ -d "$mdir/target" ]] || { log "  gap  $id — no target/ after build"; GAPS+=("$id"); continue; }
-      NDEPS=$(find "$mdir/target/sbom-deps" -name '*.jar' 2>/dev/null | wc -l | tr -d ' ')
-      log "       $NDEPS runtime dependency jar(s) materialised"
-      target="dir:$mdir/target"
-      ;;
-    binary|apk)
-      # These need a project-specific build (a linked Go binary, a signed APK). Rather
-      # than guess a build command, record the gap so the consolidated BOM declares it.
-      log "  gap  $id — needs a prebuilt artifact ($kind); provide one via SBOM_ARTIFACT_$id"
-      var="SBOM_ARTIFACT_${id//[^A-Za-z0-9]/_}"
-      if [[ -n "${!var:-}" && -e "${!var}" ]]; then
-        # syft finds no components in an AAB — dex bytecode carries no package metadata — so a
-        # CycloneDX document is taken as the BOM rather than scanned.
-        if jq -e '.bomFormat == "CycloneDX"' "${!var}" >/dev/null 2>&1; then
-          supplied_bom="${!var}"; target="bom:${!var}"
-          log "       using the BOM at ${!var}"
-        else
-          target="file:${!var}"; log "       using ${!var}"
+  # A supplied CycloneDX document wins over whatever discovery found. It describes the same
+  # closure from the build that produced it, which is more than a scan of the artefact can say —
+  # and for a candidate that already has a scannable source, such as a gradle.lockfile, the
+  # artefact branch below would never look for one.
+  supplied="SBOM_ARTIFACT_${id//[^A-Za-z0-9]/_}"
+  supplied_path="${!supplied:-}"
+
+  if [[ -n "$supplied_path" && -e "$supplied_path" ]] \
+     && jq -e '.bomFormat == "CycloneDX"' "$supplied_path" >/dev/null 2>&1; then
+    supplied_bom="$supplied_path"
+    target="bom:$supplied_path"
+  else
+    case "$kind" in
+      file|dir|registry)
+        target="$kind:$arg"
+        [[ "$kind" != "registry" ]] && target="$kind:$REPO/$arg"
+        ;;
+      gradle-lockfile)
+        # lockAllConfigurations() tags every configuration onto one line; scanning it
+        # undifferentiated would count test/build-only dependencies as shipped. Filtered to
+        # the runtimeClasspath closure before syft ever sees it. The filtered copy lives under
+        # $OUT_DIR keyed by $id, not a random temp name: the scan target is recorded onto the
+        # BOM, and a random name there would make two runs of the same commit disagree.
+        lockfile="$REPO/$arg"
+        if [[ ! -f "$lockfile" ]]; then
+          log "  gap  $id — $arg not found"; GAPS+=("$id"); continue
         fi
-      else
-        GAPS+=("$id"); continue
-      fi
-      ;;
-    *)
-      log "  gap  $id — unknown scan source kind: $kind"; GAPS+=("$id"); continue ;;
-  esac
+        fdir="$OUT_DIR/.gradle-runtime/$id"
+        bash "$HERE/filter-gradle-lockfile.sh" "$lockfile" "$fdir" >&2 || {
+          log "  gap  $id — could not filter gradle.lockfile"; GAPS+=("$id"); continue; }
+        target="file:$fdir/gradle.lockfile"
+        ;;
+      installDist)
+        # The resolved runtime closure. Declared dependencies alone omit transitives and
+        # leave BOM-managed versions empty, which is the defect this pipeline exists for.
+        gdir="$REPO/$arg"
+        if [[ ! -x "$gdir/gradlew" ]]; then
+          log "  gap  $id — no gradlew in $arg, cannot produce the resolved closure"
+          GAPS+=("$id"); continue
+        fi
+        log "  build $id (gradlew installDist)"
+        ( cd "$gdir" && ./gradlew installDist --no-daemon -q ) >&2 || {
+          log "  gap  $id — installDist failed"; GAPS+=("$id"); continue; }
+        libdir=$(find "$gdir/build/install" -maxdepth 2 -type d -name lib 2>/dev/null | head -1)
+        [[ -d "$libdir" ]] || { log "  gap  $id — no install output"; GAPS+=("$id"); continue; }
+        target="dir:$libdir"
+        ;;
+      mvn)
+        # Same reasoning as installDist: the packaged output is the resolved set, while the
+        # pom lists declared dependencies only. One product's three Keycloak provider extensions
+        # went to the gap list purely because target/ had never been built.
+        mdir="$REPO/$arg"
+        if [[ ! -f "$mdir/pom.xml" ]]; then
+          log "  gap  $id — no pom.xml in $arg"; GAPS+=("$id"); continue
+        fi
+        # The repository-pinned wrapper wins: it needs no maven on the runner and builds with
+        # the version the module was written against. `mvn wrapper:wrapper` in the module is
+        # all a project needs to close this gap — cheaper than provisioning every runner.
+        MVN_CMD="mvn"
+        if [[ -x "$mdir/mvnw" ]]; then
+          MVN_CMD="./mvnw"
+        elif ! command -v mvn >/dev/null 2>&1; then
+          log "  gap  $id — neither ./mvnw in the module nor maven on this runner (fix: run 'mvn wrapper:wrapper' in the module, or provision maven)"; GAPS+=("$id"); continue
+        fi
+        # package alone is not enough. Without a shade/assembly plugin, target/ holds only
+        # the artifact jar — scanning it found 2 components for an extension that has 8
+        # runtime dependencies including protobuf-java and five netty jars, exactly the kind
+        # of library that carries CVEs. copy-dependencies materialises the resolved runtime
+        # closure, which is the Maven analogue of Gradle's installDist.
+        #
+        # includeScope=runtime deliberately drops `provided` dependencies: the Keycloak SPI
+        # jars are supplied by the Keycloak runtime, so they ship in the Keycloak image's BOM
+        # rather than in the extension's. Counting them here would double-count them.
+        log "  build $id ($MVN_CMD package + copy-dependencies)"
+        ( cd "$mdir" && $MVN_CMD -q -B package -DskipTests \
+            dependency:copy-dependencies -DincludeScope=runtime \
+            -DoutputDirectory=target/sbom-deps ) >&2 || {
+          log "  gap  $id — mvn build failed"; GAPS+=("$id"); continue; }
+        [[ -d "$mdir/target" ]] || { log "  gap  $id — no target/ after build"; GAPS+=("$id"); continue; }
+        NDEPS=$(find "$mdir/target/sbom-deps" -name '*.jar' 2>/dev/null | wc -l | tr -d ' ')
+        log "       $NDEPS runtime dependency jar(s) materialised"
+        target="dir:$mdir/target"
+        ;;
+      binary|apk)
+        # These need a project-specific build (a linked Go binary, a signed APK). Rather
+        # than guess a build command, record the gap so the consolidated BOM declares it.
+        # A CycloneDX document was already taken above; what is left is a raw artefact to scan.
+        log "  gap  $id — needs a prebuilt artifact ($kind); provide one via SBOM_ARTIFACT_$id"
+        if [[ -n "$supplied_path" && -e "$supplied_path" ]]; then
+          target="file:$supplied_path"; log "       using $supplied_path"
+        else
+          GAPS+=("$id"); continue
+        fi
+        ;;
+      *)
+        log "  gap  $id — unknown scan source kind: $kind"; GAPS+=("$id"); continue ;;
+    esac
+  fi
 
   log "  scan $id  <- $target"
   # Two output formats from one scan. syft's CycloneDX output records only the image name and
