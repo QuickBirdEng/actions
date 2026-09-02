@@ -359,7 +359,7 @@ runs:
 
     - name: Upload SBOM
       if: ${{ inputs.upload-artifact == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: sbom
         path: ${{ inputs.output-dir }}

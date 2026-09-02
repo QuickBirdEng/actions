@@ -78,7 +78,7 @@ jobs:
       complete: ${{ steps.discovery.outputs.complete }}
       gaps: ${{ steps.discovery.outputs.gaps }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.ref || github.ref }}
 

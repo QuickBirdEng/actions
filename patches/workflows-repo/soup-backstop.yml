@@ -39,7 +39,7 @@ jobs:
   backstop:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Fetch the evidence history
         env:

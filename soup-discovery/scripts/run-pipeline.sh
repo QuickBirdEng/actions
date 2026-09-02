@@ -72,7 +72,7 @@ SCOPE_OUTPUT="$PLAN" SOUP_VERSION="$VERSION" SOUP_TIER="${SBOM_TIER:-}" bash "$H
 BOMS=()
 GAPS=()
 
-while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
+while IFS=$'\t' read -r id source resolvable ecosystem markers note built_here; do
   [[ -z "$id" ]] && continue
   raw="$OUT_DIR/bom/$id.raw.json"
   final="$OUT_DIR/bom/$id.cdx.json"
@@ -221,7 +221,7 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
   elif ! "$SYFT_BIN" scan "$target" -o cyclonedx-json="$raw" -o syft-json="$native" -q 2>/dev/null; then
     log "  gap  $id — syft failed"; GAPS+=("$id"); rm -f "$raw" "$native"; continue
   fi
-  BOM_SUBJECT="$id" SCAN_TARGET="$target" SYFT_NATIVE="$native" \
+  BOM_SUBJECT="$id" SCAN_TARGET="$target" SYFT_NATIVE="$native" BUILT_HERE="$built_here" \
     bash "$HERE/normalize-bom.sh" "$raw" "$final" >/dev/null \
     || { log "  gap  $id — normalisation failed"; GAPS+=("$id"); rm -f "$raw" "$native"; continue; }
   bash "$HERE/verify-bom.sh" "$final" >/dev/null 2>&1 \
@@ -239,7 +239,7 @@ while IFS=$'\t' read -r id source resolvable ecosystem markers note; do
     || log "::warning::$id: dependency graph could not be derived"
   rm -f "$raw" "$native"
   BOMS+=("$final")
-done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)\t\(.ecosystem)\t\(.markers | join(","))\t\(.note // "" | gsub("\t"; " "))"' "$PLAN")
+done < <(jq -r '.scan[] | "\(.id)\t\(.scan_source)\t\(.resolvable)\t\(.ecosystem)\t\(.markers | join(","))\t\(.note // "" | gsub("\t"; " "))\t\(.built_image_declared // false)"' "$PLAN")
 
 [[ ${#BOMS[@]} -gt 0 ]] || die "no target produced a BOM"
 

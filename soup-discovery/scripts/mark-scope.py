@@ -232,6 +232,43 @@ def direct_set_go(markers, repo):
     return direct, None
 
 
+def exempt_set(eco, markers, repo):
+    """name -> why the component carries no SOUP-record obligation.
+
+    A record answers "who chose this third-party software". Code that lives in this
+    repository was not chosen from outside, and a package the toolchain delivers is covered
+    by the record for the toolchain itself. The SDK root keeps its obligation: in pubspec.lock
+    an sdk entry names its SDK in `description`, and for flutter that equals the package name.
+    """
+    exempt = {}
+    if eco == "pub":
+        for m in markers:
+            lock = Path(repo) / Path(m).parent / "pubspec.lock"
+            if not lock.is_file():
+                continue
+            for name, entry in (load_yaml(lock).get("packages") or {}).items():
+                src = str((entry or {}).get("source", ""))
+                if src == "path":
+                    exempt[name] = "first-party"
+                elif src == "sdk" and str((entry or {}).get("description", "")) != name:
+                    exempt[name] = "sdk"
+    elif eco == "npm":
+        for m in markers:
+            pj = Path(repo) / m
+            if pj.name != "package.json" or not pj.is_file():
+                continue
+            try:
+                doc = json.loads(pj.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            for field in ("dependencies", "devDependencies"):
+                for name, spec in (doc.get(field) or {}).items():
+                    if isinstance(spec, str) and spec.startswith(
+                            ("workspace:", "file:", "link:", "portal:")):
+                        exempt[name] = "first-party"
+    return exempt
+
+
 def in_declared(name, version, declared):
     """`declared` is either a set of names (every ecosystem but npm) or a name -> ranges
     mapping. With ranges, a component counts as declared unless every range it was declared
@@ -254,6 +291,7 @@ def main():
 
     markers = [m for m in args.markers.split(",") if m]
     eco = args.ecosystem
+    exempt = exempt_set(eco, markers, args.repo)
 
     direct, dev, transitive = None, None, None
     all_transitive = False
@@ -286,7 +324,7 @@ def main():
     with open(args.bom, encoding="utf-8") as fh:
         bom = json.load(fh)
 
-    n_dir = n_dev = n_tra = 0
+    n_dir = n_dev = n_tra = n_exempt = 0
     for c in bom.get("components", []) or []:
         name = c.get("name") or ""
         if all_direct:
@@ -306,8 +344,12 @@ def main():
             continue
         c["properties"] = sorted(
             (c.get("properties") or [])
-            + [{"name": "quickbird:dependency:scope", "value": scope}],
+            + [{"name": "quickbird:dependency:scope", "value": scope}]
+            + ([{"name": "quickbird:soup:exempt", "value": exempt[name]}]
+               if name in exempt else []),
             key=lambda x: (x["name"], x.get("value") or ""))
+        if name in exempt:
+            n_exempt += 1
         if scope == "direct":
             n_dir += 1
         elif scope == "dev":
@@ -318,7 +360,8 @@ def main():
     with open(args.bom, "w", encoding="utf-8") as fh:
         json.dump(bom, fh, indent=2)
         fh.write("\n")
-    print(f"scope: {n_dir} direct, {n_dev} dev, {n_tra} transitive ({eco})", file=sys.stderr)
+    print(f"scope: {n_dir} direct, {n_dev} dev, {n_tra} transitive ({eco})"
+          + (f", {n_exempt} exempt from a SOUP record" if n_exempt else ""), file=sys.stderr)
     return 0
 
 
