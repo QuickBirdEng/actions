@@ -1423,6 +1423,107 @@ test_escalate_shared_finding_breaches_both_units() {
   assert "$(jq -r '.escalations[0].shared_findings | length' "$TMP/eb-e.json")" "1"
 }
 
+# ------------------------------------------------- supplied BOM
+PSB() { bash "$S/prepare-supplied-bom.sh" "$@"; }
+
+# A description is only worth taking if it is one.
+test_supplied_bom_refuses_a_non_bom() {
+  printf '{"hello":"world"}' > "$TMP/nb.json"
+  PSB "$TMP/nb.json" "$TMP/nb.out.json" >/dev/null 2>&1 && return 1
+  [[ ! -s "$TMP/nb.out.json" ]] || [[ ! -f "$TMP/nb.out.json" ]]
+}
+
+# project_path marks the build's own subprojects, which the manifest already names.
+test_supplied_bom_drops_local_subprojects() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",components:[
+      {name:"real",version:"1.0.0",purl:"pkg:maven/g/real@1.0.0"},
+      {name:"sub",version:"unspecified",purl:"pkg:maven/android/sub@unspecified?project_path=%3Asub"}]}' \
+    > "$TMP/sb.json"
+  assert "$(PSB "$TMP/sb.json" "$TMP/sb.out.json")" "1" || return 1
+  assert "$(jq -r '.components | length' "$TMP/sb.out.json")" "1" || return 1
+  assert "$(jq -r '.components[0].name' "$TMP/sb.out.json")" "real"
+}
+
+test_supplied_bom_keeps_everything_else() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"x"}},
+          components:[{name:"a",version:"1",purl:"pkg:maven/g/a@1",licenses:[{license:{id:"Apache-2.0"}}]}]}' \
+    > "$TMP/sk.json"
+  PSB "$TMP/sk.json" "$TMP/sk.out.json" >/dev/null || return 1
+  assert "$(jq -r '.components[0].licenses[0].license.id' "$TMP/sk.out.json")" "Apache-2.0" || return 1
+  assert "$(jq -r '.metadata.component.name' "$TMP/sk.out.json")" "x"
+}
+
+VBL() { bash "$S/verify-bom-against-lockfile.sh" "$@"; }
+
+mklock() { printf 'g:a:1.0=productionReleaseRuntimeClasspath\ng:b:2.0=productionReleaseRuntimeClasspath\nempty=debugRuntimeClasspath\n' > "$1"; }
+mkbom()  { jq -n --argjson c "$2" '{bomFormat:"CycloneDX",specVersion:"1.6",components:$c}' > "$1"; }
+
+test_bom_lockfile_match_passes() {
+  mklock "$TMP/vl.lock"
+  mkbom "$TMP/vl.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"},
+                         {"name":"b","version":"2.0","purl":"pkg:maven/g/b@2.0"}]'
+  VBL "$TMP/vl.json" "$TMP/vl.lock" >/dev/null 2>&1
+}
+
+# An unprepared environment resolves a strict subset with no error.
+test_bom_missing_locked_coordinates_fails() {
+  mklock "$TMP/vl2.lock"
+  mkbom "$TMP/vl2.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"}]'
+  VBL "$TMP/vl2.json" "$TMP/vl2.lock" > "$TMP/vl2.out" 2>&1 && return 1
+  contains "$(cat "$TMP/vl2.out")" "g:b:2.0"
+}
+
+test_bom_extra_coordinates_fail() {
+  mklock "$TMP/vl3.lock"
+  mkbom "$TMP/vl3.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"},
+                          {"name":"b","version":"2.0","purl":"pkg:maven/g/b@2.0"},
+                          {"name":"c","version":"3.0","purl":"pkg:maven/g/c@3.0"}]'
+  VBL "$TMP/vl3.json" "$TMP/vl3.lock" > "$TMP/vl3.out" 2>&1 && return 1
+  contains "$(cat "$TMP/vl3.out")" "g:c:3.0"
+}
+
+# Subprojects are not in the lockfile by construction and must not read as extra.
+test_bom_local_subprojects_are_not_extra() {
+  mklock "$TMP/vl4.lock"
+  mkbom "$TMP/vl4.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"},
+                          {"name":"b","version":"2.0","purl":"pkg:maven/g/b@2.0"},
+                          {"name":"sub","version":"unspecified","purl":"pkg:maven/android/sub@unspecified?project_path=%3Asub"}]'
+  VBL "$TMP/vl4.json" "$TMP/vl4.lock" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------- release-run ordering
+WFR() { bash "$S/wait-for-release-runs.sh" "$@"; }
+mkruns() { printf '%b' "$2" > "$1"; }
+
+# workflow_run fires when one named workflow finishes, never when all have.
+test_wait_returns_when_every_named_run_is_done() {
+  mkruns "$TMP/w1.tsv" 'A\tcompleted\tsuccess\nB\tcompleted\tsuccess\n'
+  WAIT_RUNS_JSON="$TMP/w1.tsv" WFR x/y v1 A B > "$TMP/w1.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w1.out")" "A: success" || return 1
+  contains "$(cat "$TMP/w1.out")" "B: success"
+}
+
+# A workflow nobody asked about must not hold the scan up.
+test_wait_ignores_unrelated_runs() {
+  mkruns "$TMP/w2.tsv" 'A\tcompleted\tsuccess\nSanity\tin_progress\t\n'
+  WAIT_TIMEOUT=0 WAIT_RUNS_JSON="$TMP/w2.tsv" WFR x/y v1 A > "$TMP/w2.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w2.out")" "still running" && return 1
+  contains "$(cat "$TMP/w2.out")" "A: success"
+}
+
+# Giving up is not failing: a named gap beats no document.
+test_wait_continues_after_the_timeout() {
+  mkruns "$TMP/w3.tsv" 'A\tcompleted\tsuccess\nB\tin_progress\t\n'
+  WAIT_TIMEOUT=0 WAIT_RUNS_JSON="$TMP/w3.tsv" WFR x/y v1 A B > "$TMP/w3.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w3.out")" "continuing without: B"
+}
+
+test_wait_names_a_failed_sibling_without_stopping() {
+  mkruns "$TMP/w4.tsv" 'A\tcompleted\tsuccess\nB\tcompleted\tfailure\n'
+  WAIT_RUNS_JSON="$TMP/w4.tsv" WFR x/y v1 A B > "$TMP/w4.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w4.out")" "B: failure"
+}
+
 # ---------------------------------------------------------------- currency
 test_currency_comparison_logic() { S="$S" python3 "$HERE/currency-logic.py"; }
 
