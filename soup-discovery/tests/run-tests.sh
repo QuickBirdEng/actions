@@ -1455,6 +1455,44 @@ test_supplied_bom_keeps_everything_else() {
   assert "$(jq -r '.metadata.component.name' "$TMP/sk.out.json")" "x"
 }
 
+VBL() { bash "$S/verify-bom-against-lockfile.sh" "$@"; }
+
+mklock() { printf 'g:a:1.0=productionReleaseRuntimeClasspath\ng:b:2.0=productionReleaseRuntimeClasspath\nempty=debugRuntimeClasspath\n' > "$1"; }
+mkbom()  { jq -n --argjson c "$2" '{bomFormat:"CycloneDX",specVersion:"1.6",components:$c}' > "$1"; }
+
+test_bom_lockfile_match_passes() {
+  mklock "$TMP/vl.lock"
+  mkbom "$TMP/vl.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"},
+                         {"name":"b","version":"2.0","purl":"pkg:maven/g/b@2.0"}]'
+  VBL "$TMP/vl.json" "$TMP/vl.lock" >/dev/null 2>&1
+}
+
+# The failure this guards: an unprepared environment resolves a strict subset with no error.
+test_bom_missing_locked_coordinates_fails() {
+  mklock "$TMP/vl2.lock"
+  mkbom "$TMP/vl2.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"}]'
+  VBL "$TMP/vl2.json" "$TMP/vl2.lock" > "$TMP/vl2.out" 2>&1 && return 1
+  contains "$(cat "$TMP/vl2.out")" "g:b:2.0"
+}
+
+test_bom_extra_coordinates_fail() {
+  mklock "$TMP/vl3.lock"
+  mkbom "$TMP/vl3.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"},
+                          {"name":"b","version":"2.0","purl":"pkg:maven/g/b@2.0"},
+                          {"name":"c","version":"3.0","purl":"pkg:maven/g/c@3.0"}]'
+  VBL "$TMP/vl3.json" "$TMP/vl3.lock" > "$TMP/vl3.out" 2>&1 && return 1
+  contains "$(cat "$TMP/vl3.out")" "g:c:3.0"
+}
+
+# The build's own subprojects are not in the lockfile by construction and must not read as extra.
+test_bom_local_subprojects_are_not_extra() {
+  mklock "$TMP/vl4.lock"
+  mkbom "$TMP/vl4.json" '[{"name":"a","version":"1.0","purl":"pkg:maven/g/a@1.0"},
+                          {"name":"b","version":"2.0","purl":"pkg:maven/g/b@2.0"},
+                          {"name":"sub","version":"unspecified","purl":"pkg:maven/android/sub@unspecified?project_path=%3Asub"}]'
+  VBL "$TMP/vl4.json" "$TMP/vl4.lock" >/dev/null 2>&1
+}
+
 # ---------------------------------------------------------------- currency
 test_currency_comparison_logic() { S="$S" python3 "$HERE/currency-logic.py"; }
 
