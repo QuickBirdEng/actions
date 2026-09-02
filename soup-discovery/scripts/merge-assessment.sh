@@ -173,6 +173,11 @@ jq --slurpfile recs "$TMP/records.json" '
         | .c
         | select(([.properties[]? | select(.name == "quickbird:dependency:scope"
                                            and .value == "direct")] | length) > 0)
+        # Nothing outside was chosen: code from this repository, a package the toolchain
+        # delivers, an image this build produces. mark-scope.py and normalize-bom.sh set the
+        # reason. Seven of the eight names on the first GDG run were of this kind, and they
+        # buried the one that was not.
+        | select(([.properties[]? | select(.name == "quickbird:soup:exempt")] | length) == 0)
         | . as $c
         | select(([ $records[] | select(name_matches(.; $c)) ] | length) == 0)
         | {name: .name, version: (.version // "?")} ]

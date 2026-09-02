@@ -35,6 +35,8 @@ SUBJECT="${BOM_SUBJECT:-}"
 # or lockfile scan has no image digest, and a missing one must not fail the run.
 NATIVE="${SYFT_NATIVE:-}"
 TARGET="${SCAN_TARGET:-}"
+# true when the candidate declares built_image: the scan runs on the image this repo produces.
+BUILT_HERE="${BUILT_HERE:-}"
 IMG_REF=""; IMG_ID=""; IMG_CREATED=""
 if [[ -n "$NATIVE" && -f "$NATIVE" ]]; then
   IMG_REF=$(jq -r '(.source.metadata.repoDigests // [])[0] // ""' "$NATIVE" 2>/dev/null)
@@ -72,7 +74,7 @@ fi
 
 jq --argjson keep_ts "$KEEP_TIMESTAMP" --arg subject "$SUBJECT" \
    --arg ref "$IMG_REF" --arg imgid "$IMG_ID" --arg target "$TARGET" \
-   --arg created "$IMG_CREATED" '
+   --arg created "$IMG_CREATED" --arg built_here "$BUILT_HERE" '
   # jar filename -> SHA-256, from the type:file components
   ( [ .components[]?
       | select(.type == "file")
@@ -126,6 +128,9 @@ jq --argjson keep_ts "$KEEP_TIMESTAMP" --arg subject "$SUBJECT" \
                + (if $ref != "" then [{name: "quickbird:scan:image-digest", value: $ref}] else [] end)
                + (if $imgid != "" then [{name: "quickbird:scan:image-id", value: $imgid}] else [] end)
                + (if $created != "" then [{name: "quickbird:scan:image-created", value: $created}] else [] end)
+               # Our own build output. The SOUP decision is the base image in the FROM line, which
+               # this scan already covers; the image the build produces is not a third-party choice.
+               + (if $built_here == "true" then [{name: "quickbird:soup:exempt", value: "built-here"}] else [] end)
                | unique_by(.name))
        else . end)
 ' "$IN" > "$OUT" || { echo "::error::normalisation failed" >&2; exit 1; }

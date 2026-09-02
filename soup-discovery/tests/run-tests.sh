@@ -2466,6 +2466,8 @@ scope_bom() {  # <file> <name[@version]...>   version defaults to 1.0.0
 
 scope_of() { jq -r --arg n "$2" '.components[] | select(.name==$n) | [.properties[]? | select(.name=="quickbird:dependency:scope")][0].value // "undetermined"' "$1"; }
 
+exempt_of() { jq -r --arg n "$2" '.components[] | select(.name==$n) | [.properties[]? | select(.name=="quickbird:soup:exempt")][0].value // "none"' "$1"; }
+
 test_scope_pub_reads_the_lockfile_markers() {
   mkdir -p "$TMP/sc-pub/app"
   cat > "$TMP/sc-pub/app/pubspec.yaml" <<'EOF'
@@ -2834,6 +2836,93 @@ EOF
   # a record with a non-covering family is drift, reported once — not "without record"
   contains "$out" "drifty: approved family 2.x.x, shipped 1.0.0" || return 1
   ! grep -q "no record: drifty" <<<"$out"
+}
+
+# A SOUP record answers who chose this third-party software. Code from this repository and a
+# package the SDK delivers were not chosen from outside. The SDK root keeps its obligation:
+# an sdk entry names its SDK in `description`, and for flutter that equals the package name.
+test_scope_exempts_path_and_sdk_packages() {
+  mkdir -p "$TMP/sc-ex/app"
+  echo "name: app" > "$TMP/sc-ex/app/pubspec.yaml"
+  cat > "$TMP/sc-ex/app/pubspec.lock" <<'EOF'
+packages:
+  feedback:
+    dependency: "direct main"
+    description:
+      path: "packages/feedback"
+      relative: true
+    source: path
+    version: "2.6.0"
+  flutter:
+    dependency: "direct main"
+    description: flutter
+    source: sdk
+    version: "0.0.0"
+  flutter_localizations:
+    dependency: "direct main"
+    description: flutter
+    source: sdk
+    version: "0.0.0"
+  dio:
+    dependency: "direct main"
+    description:
+      name: dio
+    source: hosted
+    version: "5.9.0"
+EOF
+  scope_bom "$TMP/sc-ex/bom.json" feedback@2.6.0 flutter@0.0.0 flutter_localizations@0.0.0 dio@5.9.0
+  python3 "$S/mark-scope.py" "$TMP/sc-ex/bom.json" --ecosystem pub \
+    --repo "$TMP/sc-ex" --markers "app/pubspec.yaml" >/dev/null 2>&1 || return 1
+  assert "$(exempt_of "$TMP/sc-ex/bom.json" feedback)" "first-party" || return 1
+  assert "$(exempt_of "$TMP/sc-ex/bom.json" flutter_localizations)" "sdk" || return 1
+  assert "$(exempt_of "$TMP/sc-ex/bom.json" flutter)" "none" || return 1
+  assert "$(exempt_of "$TMP/sc-ex/bom.json" dio)" "none"
+}
+
+test_scope_exempts_workspace_packages() {
+  mkdir -p "$TMP/sc-ws/web"
+  echo '{"dependencies":{"provider":"workspace:*","axios":"^1.0.0"}}' > "$TMP/sc-ws/web/package.json"
+  scope_bom "$TMP/sc-ws/bom.json" provider@0.0.0-use.local axios@1.0.0
+  python3 "$S/mark-scope.py" "$TMP/sc-ws/bom.json" --ecosystem npm \
+    --repo "$TMP/sc-ws" --markers "web/package.json" >/dev/null 2>&1 || return 1
+  assert "$(exempt_of "$TMP/sc-ws/bom.json" provider)" "first-party" || return 1
+  assert "$(exempt_of "$TMP/sc-ws/bom.json" axios)" "none"
+}
+
+# The image a built_image candidate scans is this build output, not something taken from outside.
+test_normalize_marks_a_built_image_as_ours() {
+  echo '{"bomFormat":"CycloneDX","specVersion":"1.6","metadata":{"component":{"type":"container","name":"x","version":"v1"}},"components":[]}' > "$TMP/nb-bh.json"
+  BOM_SUBJECT="web-Dockerfile-final" SCAN_TARGET="registry:ours/app:v1" BUILT_HERE="true" \
+    bash "$S/normalize-bom.sh" "$TMP/nb-bh.json" "$TMP/nb-bh.out.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.metadata.component.properties[]|select(.name=="quickbird:soup:exempt")][0].value // "none"' "$TMP/nb-bh.out.json")" "built-here" || return 1
+  BOM_SUBJECT="deployed-curl" SCAN_TARGET="registry:curlimages/curl:8.21.0" BUILT_HERE="false" \
+    bash "$S/normalize-bom.sh" "$TMP/nb-bh.json" "$TMP/nb-bh2.out.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.metadata.component.properties[]|select(.name=="quickbird:soup:exempt")][0].value // "none"' "$TMP/nb-bh2.out.json")" "none"
+}
+
+# Exempt means the record obligation does not apply, so the count stays about real choices.
+test_assessment_skips_exempt_direct() {
+  mkdir -p "$TMP/dwx/soups/npm"
+  soup_record axios "1.x.x" "1.0.0" > "$TMP/dwx/soups/npm/axios.json"
+  cat > "$TMP/dwx/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+   {"bom-ref":"a","type":"library","name":"lodash","version":"4.17.21","purl":"pkg:npm/lodash@4.17.21",
+    "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]},
+   {"bom-ref":"b","type":"library","name":"our-provider","version":"0.0.0-use.local","purl":"pkg:npm/our-provider@0.0.0-use.local",
+    "properties":[{"name":"quickbird:dependency:scope","value":"direct"},
+                  {"name":"quickbird:soup:exempt","value":"first-party"}]},
+   {"bom-ref":"c","type":"container","name":"web-Dockerfile-final","version":"v1",
+    "properties":[{"name":"quickbird:dependency:scope","value":"direct"},
+                  {"name":"quickbird:soup:exempt","value":"built-here"}]}],
+ "vulnerabilities":[]}
+EOF
+  out=$(bash "$S/merge-assessment.sh" "$TMP/dwx/bom.json" "$TMP/dwx/soups" "$TMP/dwx/out.json" 2>&1) || return 1
+  assert "$(jq -r '[.metadata.properties[]|select(.name=="quickbird:soup:direct-without-record")][0].value' "$TMP/dwx/out.json")" "1" || return 1
+  contains "$out" "no record: lodash@4.17.21" || return 1
+  ! grep -q "no record: our-provider" <<<"$out" || return 1
+  ! grep -q "no record: web-Dockerfile-final" <<<"$out"
 }
 
 # Currency selects by scope when the document carries it — a direct dependency without a
