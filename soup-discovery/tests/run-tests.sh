@@ -1423,6 +1423,38 @@ test_escalate_shared_finding_breaches_both_units() {
   assert "$(jq -r '.escalations[0].shared_findings | length' "$TMP/eb-e.json")" "1"
 }
 
+# ------------------------------------------------- supplied BOM
+PSB() { bash "$S/prepare-supplied-bom.sh" "$@"; }
+
+# syft finds no components in an AAB — dex bytecode carries no package metadata — so the build
+# that produced the artefact has to describe it. A description is only worth taking if it is one.
+test_supplied_bom_refuses_a_non_bom() {
+  printf '{"hello":"world"}' > "$TMP/nb.json"
+  PSB "$TMP/nb.json" "$TMP/nb.out.json" >/dev/null 2>&1 && return 1
+  [[ ! -s "$TMP/nb.out.json" ]] || [[ ! -f "$TMP/nb.out.json" ]]
+}
+
+# Components carrying project_path are the build's own subprojects, not dependencies it resolved.
+# For a Flutter app they are the plugins' Android wrappers, which pubspec.lock already names.
+test_supplied_bom_drops_local_subprojects() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",components:[
+      {name:"real",version:"1.0.0",purl:"pkg:maven/g/real@1.0.0"},
+      {name:"sub",version:"unspecified",purl:"pkg:maven/android/sub@unspecified?project_path=%3Asub"}]}' \
+    > "$TMP/sb.json"
+  assert "$(PSB "$TMP/sb.json" "$TMP/sb.out.json")" "1" || return 1
+  assert "$(jq -r '.components | length' "$TMP/sb.out.json")" "1" || return 1
+  assert "$(jq -r '.components[0].name' "$TMP/sb.out.json")" "real"
+}
+
+test_supplied_bom_keeps_everything_else() {
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"x"}},
+          components:[{name:"a",version:"1",purl:"pkg:maven/g/a@1",licenses:[{license:{id:"Apache-2.0"}}]}]}' \
+    > "$TMP/sk.json"
+  PSB "$TMP/sk.json" "$TMP/sk.out.json" >/dev/null || return 1
+  assert "$(jq -r '.components[0].licenses[0].license.id' "$TMP/sk.out.json")" "Apache-2.0" || return 1
+  assert "$(jq -r '.metadata.component.name' "$TMP/sk.out.json")" "x"
+}
+
 # ---------------------------------------------------------------- currency
 test_currency_comparison_logic() { S="$S" python3 "$HERE/currency-logic.py"; }
 
