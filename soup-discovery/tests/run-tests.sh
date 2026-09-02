@@ -678,6 +678,46 @@ test_consolidate_rejects_duplicate_bom_ref() {
   assert "$?" "1"
 }
 
+# syft gives the same package-id to a package that resolves identically in two lockfiles, so the
+# two entries merge into one. typescript is direct in web/packages/strapi and dev in web, and
+# taking the first entry published it as dev: the direct-coverage figure lost a real choice.
+test_consolidate_keeps_the_strongest_scope() {
+  scope_input() {  # <file> <subject> <scope> [path]
+    jq -n --arg n "$2" --arg sc "$3" --arg p "${4:-/yarn.lock}" \
+      '{bomFormat:"CycloneDX",specVersion:"1.6",
+        metadata:{component:{"bom-ref":("quickbird:subject:"+$n),name:$n,type:"application"}},
+        components:[{"bom-ref":"pkg:npm/typescript@6.0.3?package-id=8349fca7ffd75ac0",
+                     type:"library",name:"typescript",version:"6.0.3",
+                     purl:"pkg:npm/typescript@6.0.3",
+                     properties:[{name:"quickbird:dependency:scope",value:$sc},
+                                 {name:"syft:location:0:path",value:$p}]}]}' > "$1"
+  }
+  scope_input "$TMP/ss-web.json" web dev
+  scope_input "$TMP/ss-strapi.json" web-packages-strapi direct
+  # both input orders, because taking the first entry was exactly the defect
+  for order in "$TMP/ss-web.json $TMP/ss-strapi.json" "$TMP/ss-strapi.json $TMP/ss-web.json"; do
+    bash "$S/consolidate.sh" p 1.0.0 "$TMP/ss-out.json" $order >/dev/null 2>&1 || return 1
+    assert "$(jq -r '[.components[]|select(.name=="typescript")]|length' "$TMP/ss-out.json")" "1" || return 1
+    assert "$(jq -r '[.components[]|select(.name=="typescript")|.properties[]|select(.name=="quickbird:dependency:scope")][0].value' "$TMP/ss-out.json")" "direct" || return 1
+    # and it still says where it sits
+    assert "$(jq -r '[.components[]|select(.name=="typescript")|.properties[]|select(.name=="quickbird:component:artifact")][0].value' "$TMP/ss-out.json")" "quickbird:artifact:web, quickbird:artifact:web-packages-strapi" || return 1
+  done
+  # the path inside each artefact survives the merge; syft keeps only the first
+  scope_input "$TMP/ss-img.json" strapi-Dockerfile-final transitive /opt/app/node_modules/typescript/package.json
+  bash "$S/consolidate.sh" p 1.0.0 "$TMP/ss-out3.json" \
+    "$TMP/ss-web.json" "$TMP/ss-strapi.json" "$TMP/ss-img.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.components[]|select(.name=="typescript")|.properties[]|select(.name=="quickbird:component:location")|.value]|sort|join(" ")' "$TMP/ss-out3.json")" \
+    "strapi-Dockerfile-final:/opt/app/node_modules/typescript/package.json web-packages-strapi:/yarn.lock web:/yarn.lock" || return 1
+  # nothing to attribute when no merge happened
+  bash "$S/consolidate.sh" p 1.0.0 "$TMP/ss-out4.json" "$TMP/ss-web.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.components[]|select(.name=="typescript")|.properties[]|select(.name=="quickbird:component:location")]|length' "$TMP/ss-out4.json")" "0" || return 1
+  # dev beats transitive for the same reason: it was declared, a transitive was not
+  scope_input "$TMP/ss-a.json" a dev
+  scope_input "$TMP/ss-b.json" b transitive
+  bash "$S/consolidate.sh" p 1.0.0 "$TMP/ss-out2.json" "$TMP/ss-a.json" "$TMP/ss-b.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '[.components[]|select(.name=="typescript")|.properties[]|select(.name=="quickbird:dependency:scope")][0].value' "$TMP/ss-out2.json")" "dev"
+}
+
 # A staging document renders identically to a release one, so the tier has to be in the
 # document. Without it, nothing downstream can tell them apart.
 test_consolidate_stamps_the_tier() {

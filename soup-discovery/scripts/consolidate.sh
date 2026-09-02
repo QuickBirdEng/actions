@@ -96,9 +96,30 @@ jq -n \
         | ("quickbird:artifact:" + (.metadata.component.name // "unknown")) as $art
         | .components[]? | . + {"quickbird:from": $art} ]
       | group_by(."bom-ref" // (.purl // (.name + "@" + (.version // ""))))
-      | map( .[0] + { properties: (( (.[0].properties // [])
-               + [ { name: "quickbird:component:artifact",
-                     value: (map(."quickbird:from") | unique | join(", ")) } ] )) }
+      # One entry per bom-ref means the per-target scope stamps have to be reconciled, not taken
+      # from whichever sorted first: syft gives the same package-id to a package that resolves
+      # identically in two lockfiles, and typescript is direct in packages/strapi but dev in web.
+      # Strongest role wins, because the figure it feeds asks whether anything here chose it.
+      | map( ( [ .[].properties[]? | select(.name == "quickbird:dependency:scope") | .value ] ) as $scopes
+             | ( if   ($scopes | index("direct"))     then "direct"
+                 elif ($scopes | index("dev"))        then "dev"
+                 elif ($scopes | index("transitive")) then "transitive"
+                 else null end ) as $scope
+             # syft:location:* survives from the first entry only, so on a merge the paths inside
+             # the other artefacts would be lost. Recorded per artefact instead, and only where a
+             # merge happened -- for a single entry the syft properties already say it.
+             | ( [ .[] | (."quickbird:from" | sub("^quickbird:artifact:"; "")) as $a
+                   | (.properties // [])[]
+                   | select((.name | startswith("syft:location:")) and (.name | endswith(":path")))
+                   | { name: "quickbird:component:location", value: ($a + ":" + .value) } ]
+                 | unique ) as $locs
+             | .[0] + { properties: (
+                 ( (.[0].properties // []) | map(select(.name != "quickbird:dependency:scope")) )
+                 + (if $scope == null then []
+                    else [ { name: "quickbird:dependency:scope", value: $scope } ] end)
+                 + (if (length) > 1 then $locs else [] end)
+                 + [ { name: "quickbird:component:artifact",
+                       value: (map(."quickbird:from") | unique | join(", ")) } ] ) }
              | del(."quickbird:from") ) ) as $components
 
   | ( [ $boms[] | .dependencies[]? ]
