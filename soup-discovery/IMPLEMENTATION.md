@@ -43,6 +43,7 @@ Script| Purpose
 ---|---  
 run-pipeline.sh| **Entry point for a build run.** Fetches syft pinned if absent, then runs the sequence below. Non-zero if a candidate lacks a scope decision, if a produced document fails the gate, or if consolidation loses a component.  
 discover.sh| Find candidates: dependency manifests per ecosystem, Dockerfile stages, images referenced by Helm charts and Compose files. Resolves `{{ .Values.x }}` against the chart's own `values.yaml`; an unresolvable reference is emitted as `@unresolved` rather than guessed.  
+wait-for-release-runs.sh| `workflow_run` fires when *one* named workflow finishes, never when all have. Where two release workflows produce different parts of the inventory — one pushing the images, another the android BOM — the faster one starts the scan while the slower is still building. Waits for the runs of this tag that are still going, names any that failed, and continues either way: a gap with a reason beats no document.  
 filter-gradle-lockfile.sh| A `gradle.lockfile` written by `dependencyLocking { lockAllConfigurations() }` tags every configuration onto one line undifferentiated. Filters it to the runtimeClasspath entries, and any line with no discernible tag, before syft ever sees it.  
 resolve-scope.sh| Join candidates against the scope declaration. Exits non-zero on the first unclassified candidate.  
 resolve-tier.sh| Document level from the tag shape, not from `github.ref_type`, which is `tag` for a QA tag too. Fails loudly on an invalid `tag_pattern` rather than falling through to a level.  

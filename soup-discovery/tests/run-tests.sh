@@ -1423,6 +1423,42 @@ test_escalate_shared_finding_breaches_both_units() {
   assert "$(jq -r '.escalations[0].shared_findings | length' "$TMP/eb-e.json")" "1"
 }
 
+# ---------------------------------------------------------------- release-run ordering
+WFR() { bash "$S/wait-for-release-runs.sh" "$@"; }
+mkruns() { printf '%b' "$2" > "$1"; }
+
+# workflow_run fires when one named workflow finishes, never when all have. Two release workflows
+# producing different parts of the inventory means the faster one starts the scan while the slower
+# is still building — measured, images in ~5 minutes against a mobile build of 18 to 28.
+test_wait_returns_when_every_named_run_is_done() {
+  mkruns "$TMP/w1.tsv" 'A\tcompleted\tsuccess\nB\tcompleted\tsuccess\n'
+  WAIT_RUNS_JSON="$TMP/w1.tsv" WFR x/y v1 A B > "$TMP/w1.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w1.out")" "A: success" || return 1
+  contains "$(cat "$TMP/w1.out")" "B: success"
+}
+
+# A workflow nobody asked about must not hold the scan up.
+test_wait_ignores_unrelated_runs() {
+  mkruns "$TMP/w2.tsv" 'A\tcompleted\tsuccess\nSanity\tin_progress\t\n'
+  WAIT_TIMEOUT=0 WAIT_RUNS_JSON="$TMP/w2.tsv" WFR x/y v1 A > "$TMP/w2.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w2.out")" "still running" && return 1
+  contains "$(cat "$TMP/w2.out")" "A: success"
+}
+
+# Giving up is not failing: a document with a named gap beats no document, and the gap says which
+# artefact was missing.
+test_wait_continues_after_the_timeout() {
+  mkruns "$TMP/w3.tsv" 'A\tcompleted\tsuccess\nB\tin_progress\t\n'
+  WAIT_TIMEOUT=0 WAIT_RUNS_JSON="$TMP/w3.tsv" WFR x/y v1 A B > "$TMP/w3.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w3.out")" "continuing without: B"
+}
+
+test_wait_names_a_failed_sibling_without_stopping() {
+  mkruns "$TMP/w4.tsv" 'A\tcompleted\tsuccess\nB\tcompleted\tfailure\n'
+  WAIT_RUNS_JSON="$TMP/w4.tsv" WFR x/y v1 A B > "$TMP/w4.out" 2>&1 || return 1
+  contains "$(cat "$TMP/w4.out")" "B: failure"
+}
+
 # ---------------------------------------------------------------- currency
 test_currency_comparison_logic() { S="$S" python3 "$HERE/currency-logic.py"; }
 
