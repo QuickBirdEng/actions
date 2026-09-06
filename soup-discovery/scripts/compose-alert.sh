@@ -83,8 +83,10 @@ if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
     {
       [[ -s "$ALERT" ]] && echo ""
       [[ ! -s "$ALERT" ]] && echo ":package: *$PRODUCT: an out-of-band release is required*" && echo ""
-      echo ":package: *Release required*: $RR finding(s) are fixed in main but not yet live:"
+      echo ":package: *Release required*: $RR finding(s) are fixed in a later build but not yet live:"
       jq -r '.release_required[] | "   • \(.id): \(.why)"' "$LIFECYCLE"
+      AGAINST=$(jq -r '.compared_against // ""' "$LIFECYCLE")
+      [[ -n "$AGAINST" ]] && echo "_Compared against \`$AGAINST\`, which is a snapshot at that tag: anything merged after it is not counted here._"
       echo "_A merged fix does not stop the remediation clock. Only a deploy does._"
     } >> "$ALERT"
   fi

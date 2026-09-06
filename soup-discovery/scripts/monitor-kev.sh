@@ -243,12 +243,26 @@ while IFS=$'\t' read -r name version sbom_url live_since; do
   # first — with two targets, one of them was simply never lifecycle-tracked.
   lc="$OUT_DIR/$name.lifecycle.json"
   LC_ARGS=(--deployed "$cls" --out "$lc")
-  [[ -n "${MONITOR_MAIN_BOM:-}" && -f "${MONITOR_MAIN_BOM}" ]] && LC_ARGS+=(--main "$MONITOR_MAIN_BOM")
+  # What the running version is held against. An explicitly supplied document wins; otherwise the
+  # newest bundle published after this version, which in practice is the last QA release. With
+  # neither, every finding reads as `open` and a fix that is merged and waiting to ship cannot be
+  # told apart from one nobody has touched.
+  STAGED_BOM="${MONITOR_MAIN_BOM:-}"
+  STAGED_TAG=""
+  if [[ -z "$STAGED_BOM" ]]; then
+    if STAGED_TAG=$(bash "$HERE/find-staged-bundle.sh" "$REPO" "$version" "$OUT_DIR/$name.staged.cdx.json"); then
+      STAGED_BOM="$OUT_DIR/$name.staged.cdx.json"
+    else
+      STAGED_TAG=""
+    fi
+  fi
+  [[ -n "$STAGED_BOM" && -f "$STAGED_BOM" ]] && LC_ARGS+=(--main "$STAGED_BOM")
   [[ -f "$LIFECYCLE_STATE_DIR/lifecycle-state-$name.json" ]] \
     && LC_ARGS+=(--state "$LIFECYCLE_STATE_DIR/lifecycle-state-$name.json")
   [[ -f "$POL_EFF" ]] && LC_ARGS+=(--policy "$POL_EFF")
   if python3 "$HERE/track-lifecycle.py" "${LC_ARGS[@]}" >&2; then
-    LIFECYCLES=$(jq -c --arg n "$name" --slurpfile l "$lc" '. + [{target:$n} + $l[0]]' <<<"$LIFECYCLES")
+    LIFECYCLES=$(jq -c --arg n "$name" --arg st "$STAGED_TAG" --slurpfile l "$lc" \
+      '. + [{target:$n, compared_against:(if $st == "" then null else $st end)} + $l[0]]' <<<"$LIFECYCLES")
   fi
 
   esc="$OUT_DIR/$name.escalation.json"
@@ -272,6 +286,9 @@ if [[ "$(jq 'length' <<<"$LIFECYCLES")" != "0" ]]; then
   jq -c '{
     schema: "quickbird.finding-lifecycle/v1",
     targets: [.[].target],
+    # Which build each target was held against, so the alert can date the claim instead of
+    # implying it knows the current state of main.
+    compared_against: ([.[].compared_against | select(. != null)] | unique | join(", ")),
     summary: {
       total: ([.[].summary.total] | add),
       by_state: (map(.summary.by_state | to_entries) | add | group_by(.key)
