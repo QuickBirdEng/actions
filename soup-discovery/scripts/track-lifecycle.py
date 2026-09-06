@@ -2,7 +2,7 @@
 """Three-state finding lifecycle.
 
     open                        the deployed version is vulnerable and no fix is staged
-    fix ready - release pending a fix is in main; the deployed version is still vulnerable
+    fix ready - release pending the fix is in a later build; the deployed version still has it
     deployed                    the running version contains the fix
 
 The distinction that carries the whole ticket: **only a deploy stops the remediation
@@ -13,7 +13,11 @@ gets marked resolved while the thing it affects is still live.
 
 That is also why this needs two inputs. The deployed SBOM alone cannot tell "nobody has
 fixed it" from "it is fixed and waiting to ship"; both look identical from the running
-version. The comparison against main is what separates them.
+version. The comparison against the later build is what separates them.
+
+That comparison is normally the last QA release rather than a scan of main: the bundle already
+exists and already covers the images, which is where most findings sit. It is a snapshot at its
+tag, so anything merged after it is invisible here, and the tag travels with the record.
 
 Usage:
   track-lifecycle.py --deployed <findings.json> [--main <bom-or-findings>]
@@ -55,7 +59,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--deployed", required=True,
                     help="classified findings for the running version")
-    ap.add_argument("--main", help="BOM or classified findings for main — without it, "
+    ap.add_argument("--main", help="BOM or classified findings for a later build — without it, "
                                    "fix-ready cannot be distinguished from open")
     ap.add_argument("--state", help="previous lifecycle output")
     ap.add_argument("--policy", help="effective policy, for the release-required signal")
@@ -91,7 +95,7 @@ def main():
         except (OSError, json.JSONDecodeError):
             print(f"::warning::could not read {args.main}", file=sys.stderr)
     if main_fixed is None:
-        print("::warning::no main comparison given — 'fix ready, release pending' cannot be "
+        print("::warning::no comparison build given — 'fix ready, release pending' cannot be "
               "distinguished from 'open'. Findings that are already fixed in main will be "
               "reported as open.", file=sys.stderr)
 
@@ -106,13 +110,13 @@ def main():
 
         if main_fixed is None:
             state = OPEN
-            basis = "no main comparison available"
+            basis = "no comparison build available"
         elif fid not in main_fixed:
             state = FIX_READY
-            basis = "not present in main — a fix is staged but the running version still has it"
+            basis = "not present in the later build — a fix is staged but the running version still has it"
         else:
             state = OPEN
-            basis = "present in main and in the running version"
+            basis = "present in the later build and in the running version"
 
         rec = dict(f)
         rec["state"] = state

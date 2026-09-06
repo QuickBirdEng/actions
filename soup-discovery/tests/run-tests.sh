@@ -1531,6 +1531,67 @@ test_bom_local_subprojects_are_not_extra() {
   VBL "$TMP/vl4.json" "$TMP/vl4.lock" >/dev/null 2>&1
 }
 
+# ---------------------------------------------------------------- staged bundle
+FSB() { bash "$S/find-staged-bundle.sh" "$@"; }
+
+# <dir> <tag> <tier>  -- a minimal bundle the finder can accept
+stagedbom() { jq -n --arg t "$2" --arg tier "$3" \
+  '{bomFormat:"CycloneDX",specVersion:"1.6",
+    metadata:{component:{name:"p",version:$t},properties:[{name:"quickbird:sbom:tier",value:$tier}]},
+    components:[],vulnerabilities:[]}' > "$1/$2.json"; }
+
+# <dir> <out> <tag:date:tier>...
+stagedreleases() {
+  local d="$1" out="$2"; shift 2
+  local items="[]" spec tag date tier
+  for spec in "$@"; do
+    IFS=: read -r tag date tier <<< "$spec"
+    stagedbom "$d" "$tag" "$tier"
+    items=$(jq -c --arg t "$tag" --arg dt "${date}T00:00:00Z" --arg u "file://$d/$tag.json" \
+      '. + [{tag_name:$t, draft:false, published_at:$dt,
+             assets:[{name:("sbom-"+$t+".cdx.json"), url:$u}]}]' <<<"$items")
+  done
+  echo "$items" > "$out"
+}
+
+# The comparison the whole `fix ready, release pending` state rests on. Without it every finding
+# reads as open -- measured on mindnet, 125 findings fixed in the QA build looked untouched.
+test_staged_picks_the_newest_bundle_after_the_deployed_one() {
+  mkdir -p "$TMP/fsb1"
+  stagedreleases "$TMP/fsb1" "$TMP/fsb1/rel.json" \
+    v1.0.0:2026-07-21:candidate v1.1.0-qa1:2026-08-06:staging v1.1.0-qa2:2026-08-21:staging
+  out=$(STAGED_RELEASES_JSON="$TMP/fsb1/rel.json" FSB o/r v1.0.0 "$TMP/fsb1/got.json" 2>/dev/null) || return 1
+  assert "$out" "v1.1.0-qa2" || return 1
+  jq -e '.bomFormat == "CycloneDX"' "$TMP/fsb1/got.json" >/dev/null
+}
+
+# An older QA bundle predates the deployment: comparing against it would report findings the
+# running version still has as fixed.
+test_staged_ignores_bundles_older_than_the_deployed_one() {
+  mkdir -p "$TMP/fsb2"
+  stagedreleases "$TMP/fsb2" "$TMP/fsb2/rel.json" \
+    v1.0.0-qa1:2026-07-01:staging v1.0.0:2026-07-21:candidate
+  STAGED_RELEASES_JSON="$TMP/fsb2/rel.json" FSB o/r v1.0.0 "$TMP/fsb2/got.json" >/dev/null 2>&1
+  assert "$?" "1"
+}
+
+# A branch bundle carries no version identity, so it cannot be dated against a deployment.
+test_staged_skips_a_branch_bundle_for_the_next_one() {
+  mkdir -p "$TMP/fsb3"
+  stagedreleases "$TMP/fsb3" "$TMP/fsb3/rel.json" \
+    v1.0.0:2026-07-21:candidate v1.1.0-qa1:2026-08-06:staging nightly:2026-08-20:branch
+  out=$(STAGED_RELEASES_JSON="$TMP/fsb3/rel.json" FSB o/r v1.0.0 "$TMP/fsb3/got.json" 2>/dev/null) || return 1
+  assert "$out" "v1.1.0-qa1"
+}
+
+# Nothing to compare against is a warning and a non-zero exit, never a silent all-clear.
+test_staged_refuses_when_the_deployed_tag_has_no_release() {
+  mkdir -p "$TMP/fsb4"
+  stagedreleases "$TMP/fsb4" "$TMP/fsb4/rel.json" v1.1.0-qa1:2026-08-06:staging
+  STAGED_RELEASES_JSON="$TMP/fsb4/rel.json" FSB o/r v9.9.9 "$TMP/fsb4/got.json" >/dev/null 2>&1
+  assert "$?" "1"
+}
+
 # ---------------------------------------------------------------- release-run ordering
 WFR() { bash "$S/wait-for-release-runs.sh" "$@"; }
 mkruns() { printf '%b' "$2" > "$1"; }
