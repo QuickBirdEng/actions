@@ -259,6 +259,19 @@ while IFS= read -r f; do
   fi
 done <<<"$(grep -E '(^|/)pubspec\.yaml$' <<<"$FILES" || true)"
 
+# PHP. composer.lock separates `packages` from `packages-dev`, and syft reads only the former,
+# so the shipped/dev split is already made before scope marking sees it -- unlike npm, where the
+# lockfile holds both and the manifest has to sort them out.
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  dir=$(dirname "$f")
+  if [[ -f "$dir/composer.lock" ]]; then
+    add "$(id_slug "$dir")" "composer" "file:$dir/composer.lock" "$f" "true" "lockfile present — resolved set"
+  else
+    add "$(id_slug "$dir")" "composer" "dir:$dir" "$f" "true" "NO composer.lock — not a resolved set"
+  fi
+done <<<"$(grep -E '(^|/)composer\.json$' <<<"$FILES" | grep -v '/vendor/' || true)"
+
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------
@@ -462,7 +475,11 @@ while IFS= read -r ref; do
   if [[ "$slug_src" == *'{{'* ]]; then
     literal="${slug_src%%\{\{*}"
     literal="${literal%:}"
-    if [[ -n "${literal//[:\/ ]/}" ]]; then
+    # Only what follows the last slash names the image. A bare registry namespace
+    # (`<registry>/{{ image.BACKEND_IMAGE_NAME }}`) names nothing, and treating it as a name
+    # collapsed every such reference onto `deployed-templated` -- on one product the backend and
+    # the frontend then shared an id and discovery refused to go on.
+    if [[ -n "$(sed -E 's|.*/||; s|[:. ]||g' <<<"$literal")" ]]; then
       slug_src="$literal-templated"
     else
       var=$(grep -oE '\{\{[^}]*\}\}' <<<"$slug_src" | head -1 \

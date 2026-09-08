@@ -5,11 +5,25 @@ on:
   push:
     paths:
       - "js-supply-chain-check/**"
+      - "soup-discovery/**"
       - "test-repo/**"
       - "trufflehog-merge-excludes/**"
       - "trufflehog-filter-findings/**"
 
 jobs:
+  test-soup-discovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # cvss scores CVSS v4 vectors, pyyaml reads the policy and the lockfiles. Without them 33
+      # cases fail in a way that reads as a regression and is not.
+      - run: pip install cvss pyyaml
+      - uses: mikefarah/yq@v4.53.2
+      - run: bash soup-discovery/tests/run-tests.sh
+
   test-js-supply-chain:
     runs-on: ubuntu-latest
     steps:
