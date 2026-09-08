@@ -3,12 +3,10 @@
 #
 # track-lifecycle.py needs something to compare the running version against, or every finding
 # reads as `open` and the state this whole lifecycle exists for -- a fix that is merged and
-# waiting to ship -- cannot be told apart from nobody having looked. Measured on mindnet:
-# 125 findings in the deployed v1.0.15 are gone in v1.1.0-qa2, four of them Track 1.
+# waiting to ship -- cannot be told apart from nobody having looked.
 #
-# A QA bundle rather than a scan of main, because it already exists and already covers the
-# images. A scan of main can only read the manifests, and on mindnet those hold 34 of 1756
-# findings -- the rest are OS packages inside the images we build.
+# A QA bundle rather than a scan of main: it already exists, and it covers the images. A scan of
+# main reads the manifests only, and most findings sit in OS packages inside the images we build.
 #
 # Younger than the deployed release, not merely the newest QA tag: an older QA bundle predates
 # the deployment and every finding fixed since would read as still open, or worse, findings the
