@@ -57,6 +57,9 @@ REGISTRY = {
     "npm": "https://registry.npmjs.org/{name}",
     "pypi": "https://pypi.org/pypi/{name}/json",
     "pub": "https://pub.dev/api/packages/{name}",
+    # p2 is the CDN-backed metadata endpoint Packagist asks tools to use. The name keeps its
+    # vendor/package slash, which is already how the purl carries it.
+    "composer": "https://repo.packagist.org/p2/{name}.json",
     # repo1 rather than search.maven.org: the search API took 30-45s and timed out on two
     # of three attempts, which would have made every Maven component permanently "unknown".
     # The repository's own maven-metadata.xml answers immediately and is canonical.
@@ -147,6 +150,32 @@ def latest_version(purl, meta=None):
             if not t:
                 return v, None, "npm returned no publish time for the latest version"
             return v, t, None
+        if eco == "composer":
+            d = fetch(REGISTRY["composer"].format(name=name))
+            rel = ((d.get("packages") or {}).get(name)) or []
+            # Newest first, and a branch pseudo-version is not a release.
+            rel = [r for r in rel
+                   if not str(r.get("version", "")).startswith("dev-")
+                   and "-dev" not in str(r.get("version", ""))]
+            if not rel:
+                return None, None, "packagist lists no tagged release for this package"
+            top = rel[0]
+            v = top.get("version")
+            if meta is not None:
+                lic = top.get("license")
+                if isinstance(lic, list):
+                    lic = ", ".join(str(x) for x in lic) or None
+                if lic:
+                    meta["license"] = str(lic)
+                authors = top.get("authors") or []
+                if authors and isinstance(authors[0], dict) and authors[0].get("name"):
+                    meta["supplier"] = str(authors[0]["name"])
+                # Packagist calls it abandoned: either a bare true, or the package replacing it.
+                ab = top.get("abandoned")
+                if ab:
+                    meta["deprecated"] = ("abandoned, replaced by %s" % ab
+                                          if isinstance(ab, str) else "abandoned")
+            return v, top.get("time"), None
         if eco == "pypi":
             d = fetch(REGISTRY["pypi"].format(name=name))
             v = d["info"]["version"]

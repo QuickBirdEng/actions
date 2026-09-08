@@ -26,6 +26,8 @@ Per ecosystem:
   npm             dependencies -> direct, devDependencies -> dev, but only for the copy
                   whose version satisfies the declared range, across every
                   package.json that resolves against the scanned lockfile
+  composer        direct = `require` in composer.json, minus php and ext-*. composer.lock keeps
+                  packages-dev separate and syft reads only packages, so there is no dev side here
   jvm-maven       direct = <dependencies> declared in the module pom.xml
   android-gradle  direct = coordinates named by implementation/api/... lines in the
                   module build.gradle files (the lockfile itself mixes both)
@@ -136,6 +138,34 @@ def direct_set_npm(markers, repo):
             for name, spec in (doc.get(field) or {}).items():
                 target.setdefault(name, []).append(spec)
     return direct, {k: v for k, v in dev.items() if k not in direct}
+
+
+def direct_set_composer(markers, repo):
+    """`require` in composer.json, minus the platform entries.
+
+    No dev side to separate: composer.lock keeps `packages-dev` in its own section and syft reads
+    only `packages`, so nothing dev-only reaches the document in the first place. And no declared
+    ranges to carry either -- unlike npm, composer resolves one version per name, so a name in
+    `require` names exactly the version the lockfile pinned.
+
+    `php` and the `ext-*` entries are platform requirements, not packages: they have no version of
+    their own in the lockfile and no registry behind them.
+    """
+    direct = set()
+    for m in markers:
+        cj = Path(repo) / m
+        if cj.name != "composer.json":
+            cj = Path(repo) / Path(m).parent / "composer.json"
+        if not cj.is_file():
+            continue
+        try:
+            doc = json.loads(cj.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for name in (doc.get("require") or {}):
+            if "/" in name:
+                direct.add(name)
+    return direct, None
 
 
 def direct_set_cocoapods(markers, repo):
@@ -300,6 +330,8 @@ def main():
         direct, dev, transitive = direct_set_pub(markers, args.repo)
     elif eco == "npm":
         direct, dev = direct_set_npm(markers, args.repo)
+    elif eco == "composer":
+        direct, _ = direct_set_composer(markers, args.repo)
     elif eco == "cocoapods":
         direct, _ = direct_set_cocoapods(markers, args.repo)
     elif eco == "jvm-maven":

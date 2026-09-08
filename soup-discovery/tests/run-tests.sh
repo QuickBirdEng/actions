@@ -419,6 +419,60 @@ test_discover_two_tags_of_one_image_stop_the_run() {
   assert "$(jq -r '[.candidates[]|select(has("conflict"))]|length' "$TMP/cand.json")" "1"
 }
 
+# A registry namespace is not an image name. Both of one product's own images are written
+# `<registry>/{{ image.X_IMAGE_NAME }}`, and treating the literal `<registry>/` as the name put
+# them on one id: discovery refused to continue and the product could not be scanned at all.
+test_discover_templated_image_name_keeps_the_variable() {
+  mkrepo
+  mkdir -p "$TMP/repo/ansible"
+  printf 'tasks:\n  - name: backend\n    image: "qbsdocker/{{ image.BACKEND_IMAGE_NAME }}:{{ image.TAG }}"\n' \
+    > "$TMP/repo/ansible/backend.yml"
+  printf 'tasks:\n  - name: frontend\n    image: "qbsdocker/{{ image.FRONTEND_IMAGE_NAME }}:{{ image.TAG }}"\n' \
+    > "$TMP/repo/ansible/frontend.yml"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="container")]|length' "$TMP/cand.json")" "2" || return 1
+  assert "$(jq -r '[.candidates[]|select(has("conflict"))]|length' "$TMP/cand.json")" "0" || return 1
+  jq -e '[.candidates[]|select(.id=="deployed-image-BACKEND_IMAGE_NAME-templated")]|length == 1' "$TMP/cand.json" >/dev/null || return 1
+  jq -e '[.candidates[]|select(.id=="deployed-image-FRONTEND_IMAGE_NAME-templated")]|length == 1' "$TMP/cand.json" >/dev/null
+}
+
+# The other side of the same branch: where the name *is* spelled out, the literal still wins, so
+# every id that products already declare in .soup-scope.yml stays what it was.
+test_discover_templated_tag_still_names_the_image() {
+  mkrepo
+  mkdir -p "$TMP/repo/k8s"
+  printf 'spec:\n  containers:\n    - image: qbsdocker/curame-rest:{{ .Values.version }}\n' > "$TMP/repo/k8s/a.yaml"
+  printf 'spec:\n  containers:\n    - image: nginx:{{ nginx.image.TAG }}\n' > "$TMP/repo/k8s/b.yaml"
+  printf 'spec:\n  containers:\n    - image: ghcr.io/oviva-ag/epa4all-rest-service:{{ .Values.tag }}\n' > "$TMP/repo/k8s/c.yaml"
+  discover
+  for want in deployed-curame-rest-templated deployed-nginx-templated deployed-epa4all-rest-service-templated; do
+    jq -e --arg w "$want" '[.candidates[]|select(.id==$w)]|length == 1' "$TMP/cand.json" >/dev/null || return 1
+  done
+}
+
+# PHP. composer.lock is the resolved set; the manifest beside it is the marker scope marking reads.
+test_discover_finds_the_composer_lockfile() {
+  mkrepo
+  mkdir -p "$TMP/repo/api"
+  printf '{"require":{"php":"~8.3","monolog/monolog":"^3.0"}}' > "$TMP/repo/api/composer.json"
+  printf '{"packages":[],"packages-dev":[]}' > "$TMP/repo/api/composer.lock"
+  discover
+  assert "$(jq -r '.candidates[]|select(.id=="api")|.ecosystem' "$TMP/cand.json")" "composer" || return 1
+  assert "$(jq -r '.candidates[]|select(.id=="api")|.scan_source' "$TMP/cand.json")" "file:api/composer.lock" || return 1
+  assert "$(jq -r '.candidates[]|select(.id=="api")|.markers[0]' "$TMP/cand.json")" "api/composer.json"
+}
+
+# A composer.json under vendor/ belongs to a dependency, not to us.
+test_discover_ignores_composer_manifests_under_vendor() {
+  mkrepo
+  mkdir -p "$TMP/repo/api/vendor/monolog/monolog"
+  printf '{"require":{}}' > "$TMP/repo/api/composer.json"
+  printf '{"packages":[]}' > "$TMP/repo/api/composer.lock"
+  printf '{"require":{}}' > "$TMP/repo/api/vendor/monolog/monolog/composer.json"
+  discover
+  assert "$(jq -r '[.candidates[]|select(.ecosystem=="composer")]|length' "$TMP/cand.json")" "1"
+}
+
 # Regression: dropping the tag from the id (the fix above) also merged a local docker-compose
 # reference onto the same id as the real deployed one, and the two disagreeing on a tag looked
 # exactly like the two-tags-of-one-image case and stopped the run. No product in this pipeline
@@ -2190,6 +2244,28 @@ test_net_currency_detects_an_abandoned_package() {
     || { echo "age looks like npm's modified field, not the publish time"; return 1; }
 }
 
+test_net_currency_reads_packagist() {
+  need_net || return 77
+  mkcur '[{"bom-ref":"a","type":"library","name":"doctrine/dbal","version":"4.2.3","purl":"pkg:composer/doctrine/dbal@4.2.3",
+           "properties":[{"name":"quickbird:soup:record","value":"r"}]}]'
+  mkdir -p "$TMP/csoups5"; printf '{"package":"doctrine/dbal","version":"4.x.x"}' > "$TMP/csoups5/r.json"
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups5" --out "$TMP/co5.json" >/dev/null 2>&1 || return 1
+  # the vendor/package name goes to the p2 endpoint with its slash intact, so a version comes back
+  assert "$(jq -r '.summary.unknown' "$TMP/co5.json")" "0" || return 1
+  assert "$(jq -r '.summary.checked' "$TMP/co5.json")" "1"
+}
+
+# Packagist marks a package abandoned; that is an obsolescence finding, not a version gap.
+test_net_currency_detects_an_abandoned_composer_package() {
+  need_net || return 77
+  mkcur '[{"bom-ref":"a","type":"library","name":"doctrine/annotations","version":"2.0.2","purl":"pkg:composer/doctrine/annotations@2.0.2",
+           "properties":[{"name":"quickbird:soup:record","value":"r"}]}]'
+  mkdir -p "$TMP/csoups6"; printf '{"package":"doctrine/annotations","version":"2.x.x"}' > "$TMP/csoups6/r.json"
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups6" \
+    --annotate-bom "$TMP/cb.json" --out "$TMP/co6.json" >/dev/null 2>&1 || return 1
+  contains "$(jq -r '[.components[0].properties[]|select(.name=="quickbird:currency:deprecated")|.value][0] // ""' "$TMP/cb.json")" "abandoned"
+}
+
 test_net_currency_against_real_registries() {
   need_net || return 77
   mkcur '[{"bom-ref":"a","type":"library","name":"okhttp","version":"4.12.0","purl":"pkg:maven/com.squareup.okhttp3/okhttp@4.12.0",
@@ -2592,6 +2668,23 @@ EOF
   assert "$(scope_of "$TMP/sc-pub/bom.json" http)" "direct" || return 1
   assert "$(scope_of "$TMP/sc-pub/bom.json" build_runner)" "dev" || return 1
   assert "$(scope_of "$TMP/sc-pub/bom.json" collection)" "transitive"
+}
+
+# composer.lock keeps packages-dev in its own section and syft reads only packages, so there is
+# no dev side to separate here -- only the platform entries, which have no version and no registry.
+test_scope_composer_reads_require_without_the_platform() {
+  mkdir -p "$TMP/sc-cp/api"
+  cat > "$TMP/sc-cp/api/composer.json" <<'EOF'
+{"require":{"php":"~8.3.20","ext-json":"*","monolog/monolog":"^3.0","doctrine/dbal":"~4.2.3"},
+ "require-dev":{"phpunit/phpunit":"^11.0"}}
+EOF
+  scope_bom "$TMP/sc-cp/bom.json" monolog/monolog@3.9.0 doctrine/dbal@4.2.3 psr/log@3.0.2
+  python3 "$S/mark-scope.py" "$TMP/sc-cp/bom.json" --ecosystem composer \
+    --repo "$TMP/sc-cp" --markers "api/composer.json" >/dev/null 2>&1 || return 1
+  assert "$(scope_of "$TMP/sc-cp/bom.json" monolog/monolog)" "direct" || return 1
+  assert "$(scope_of "$TMP/sc-cp/bom.json" doctrine/dbal)" "direct" || return 1
+  # a transitive dependency of a direct one
+  assert "$(scope_of "$TMP/sc-cp/bom.json" psr/log)" "transitive"
 }
 
 test_scope_npm_joins_every_package_json() {
