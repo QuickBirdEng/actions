@@ -1600,6 +1600,70 @@ test_bom_local_subprojects_are_not_extra() {
   VBL "$TMP/vl4.json" "$TMP/vl4.lock" >/dev/null 2>&1
 }
 
+# ---------------------------------------------------------------- alert repetition
+DEC() { bash "$S/decide-alert.sh" "$@"; }
+alerttxt() { printf '%s\n' "$2" > "$1/alert.txt"; }
+alertrec() { jq -n --arg v "$1" '{verdict:$v}' > "$2"; }
+
+# The monitor runs daily off the current state, so an unchanged situation writes the identical
+# message every morning. A channel that repeats itself stops being read.
+test_alert_is_not_repeated_while_nothing_changes() {
+  d="$TMP/al1"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true" || return 1
+  alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=false"
+}
+
+test_alert_goes_out_again_when_the_message_changes() {
+  d="$TMP/al2"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: two deadlines breached"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  alerttxt "$d" ":alarm_clock: three deadlines breached"
+  assert "$(ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true"
+}
+
+# A standing problem has to stay visible, and the repeat has to say it is one.
+test_alert_repeats_weekly_and_says_so() {
+  d="$TMP/al3"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: two deadlines breached"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-05T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=false" || return 1
+  alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-08T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true" || return 1
+  contains "$(cat "$d/alert.txt")" "Repeated because it is still open"
+}
+
+# KEV carries a 24-hour reporting clock. Going quiet about it because it was also true yesterday
+# is the one case where suppression would be wrong.
+test_alert_never_suppresses_an_exploited_vulnerability() {
+  d="$TMP/al4"; mkdir -p "$d"
+  alertrec kev-findings "$d/rec.json"; alerttxt "$d" ":rotating_light: actively exploited"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  alerttxt "$d" ":rotating_light: actively exploited"
+  assert "$(ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true"
+}
+
+# Recording a digest that was never sent would suppress the run that should have sent it.
+test_alert_state_records_only_what_was_posted() {
+  d="$TMP/al5"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: one deadline breached"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  before=$(jq -r '.posted_at' "$d/st.json")
+  alerttxt "$d" ":alarm_clock: one deadline breached"
+  ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  assert "$(jq -r '.posted_at' "$d/st.json")" "$before"
+}
+
+# An empty alert is not a message.
+test_alert_says_nothing_when_there_is_nothing() {
+  d="$TMP/al6"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; : > "$d/alert.txt"
+  assert "$(DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=false" || return 1
+  [[ ! -f "$d/st.json" ]]
+}
+
 # ---------------------------------------------------------------- carried clocks
 CMS() { bash "$S/carry-monitor-state.sh" "$@"; }
 

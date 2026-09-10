@@ -4,7 +4,7 @@
 # classify-findings.py sets first_seen = now when it has nothing to compare against, so without
 # the earlier state every finding is first seen today: the clock start moves with the calendar,
 # a deadline is never reached, and the breach block of the alert can never fire. track-lifecycle.py
-# loses its transitions the same way.
+# loses its transitions the same way, and decide-alert.sh loses the message it compares against.
 #
 # Only the state files, never the whole evidence directory. The rest of it is the previous run's
 # working output, and a stale copy sitting in this run's directory would be read as if it described
@@ -51,10 +51,10 @@ if [[ ! -s "$TMP/prev.zip" ]]; then
   exit 0
 fi
 
-unzip -qo "$TMP/prev.zip" -d "$TMP" 'state-*.json' 'lifecycle-state-*.json' 2>/dev/null
+unzip -qo "$TMP/prev.zip" -d "$TMP" 'state-*.json' 'lifecycle-state-*.json' 'alert-state.json' 2>/dev/null
 
 N=0
-for f in "$TMP"/state-*.json "$TMP"/lifecycle-state-*.json; do
+for f in "$TMP"/state-*.json "$TMP"/lifecycle-state-*.json "$TMP"/alert-state.json; do
   [[ -e "$f" ]] || continue
   # A truncated or half-written state file would silently reset the clocks it is meant to carry.
   jq -e . "$f" >/dev/null 2>&1 || { echo "::warning::$(basename "$f") is not readable JSON, skipped" >&2; continue; }
