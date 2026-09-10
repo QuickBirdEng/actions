@@ -416,7 +416,14 @@ PRODUCT="$PRODUCT" CRA_SCOPE="$CRA_SCOPE" bash "$HERE/compose-alert.sh" "${ALERT
 
 if [[ -s "$ALERT" ]]; then
   log "  alert written to $ALERT"
-  echo "alert=true"
+  # Whether it is worth saying again. The state travels with the run evidence, the same way the
+  # finding clocks do.
+  DECISION=$(bash "$HERE/decide-alert.sh" "$ALERT" "$RECORD" "$STATE_DIR/alert-state.json")
+  if [[ "$DECISION" == "post=true" ]]; then
+    echo "alert=true"
+  else
+    echo "alert=false"
+  fi
 else
   log "  no alert — all clear, record kept as evidence of monitoring"
   echo "alert=false"

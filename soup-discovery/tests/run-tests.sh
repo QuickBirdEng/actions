@@ -1010,6 +1010,21 @@ mkvuln() { # <id> <cvss-vector|null> <kev|null> <epss|null> [vex-state] [justifi
     > "$TMP/cv.json"
 }
 
+# The whole reason carry-monitor-state.sh exists. first_seen falls back to now, so a run with no
+# earlier state restarts every clock: the deadline moves with the calendar and can never arrive.
+test_classify_holds_the_clock_across_runs() {
+  mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" null null
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/ck1.json" --now 2026-03-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/ck2.json" --now 2026-03-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  # without the earlier run, day two believes the finding is new
+  assert "$(jq -r '.findings[0].clock_start[0:10]' "$TMP/ck2.json")" "2026-03-02" || return 1
+  CLS "$TMP/cv.json" "$TMP/cp.json" --state "$TMP/ck1.json" --out "$TMP/ck3.json" \
+    --now 2026-03-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].clock_start[0:10]' "$TMP/ck3.json")" "2026-03-01" || return 1
+  assert "$(jq -r '.findings[0].mitigation_due' "$TMP/ck1.json")" \
+         "$(jq -r '.findings[0].mitigation_due' "$TMP/ck3.json")"
+}
+
 test_classify_kev_gets_its_own_track_regardless_of_cvss() {
   mkpolicy; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N" true null
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
@@ -1583,6 +1598,129 @@ test_bom_local_subprojects_are_not_extra() {
                           {"name":"b","version":"2.0","purl":"pkg:maven/g/b@2.0"},
                           {"name":"sub","version":"unspecified","purl":"pkg:maven/android/sub@unspecified?project_path=%3Asub"}]'
   VBL "$TMP/vl4.json" "$TMP/vl4.lock" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------- alert repetition
+DEC() { bash "$S/decide-alert.sh" "$@"; }
+alerttxt() { printf '%s\n' "$2" > "$1/alert.txt"; }
+alertrec() { jq -n --arg v "$1" '{verdict:$v}' > "$2"; }
+
+# The monitor runs daily off the current state, so an unchanged situation writes the identical
+# message every morning. A channel that repeats itself stops being read.
+test_alert_is_not_repeated_while_nothing_changes() {
+  d="$TMP/al1"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true" || return 1
+  alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=false"
+}
+
+test_alert_goes_out_again_when_the_message_changes() {
+  d="$TMP/al2"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: two deadlines breached"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  alerttxt "$d" ":alarm_clock: three deadlines breached"
+  assert "$(ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true"
+}
+
+# A standing problem has to stay visible, and the repeat has to say it is one.
+test_alert_repeats_weekly_and_says_so() {
+  d="$TMP/al3"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: two deadlines breached"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-05T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=false" || return 1
+  alerttxt "$d" ":alarm_clock: two deadlines breached"
+  assert "$(ALERT_NOW=2026-03-08T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true" || return 1
+  contains "$(cat "$d/alert.txt")" "Repeated because it is still open"
+}
+
+# KEV carries a 24-hour reporting clock. Going quiet about it because it was also true yesterday
+# is the one case where suppression would be wrong.
+test_alert_never_suppresses_an_exploited_vulnerability() {
+  d="$TMP/al4"; mkdir -p "$d"
+  alertrec kev-findings "$d/rec.json"; alerttxt "$d" ":rotating_light: actively exploited"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  alerttxt "$d" ":rotating_light: actively exploited"
+  assert "$(ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=true"
+}
+
+# Recording a digest that was never sent would suppress the run that should have sent it.
+test_alert_state_records_only_what_was_posted() {
+  d="$TMP/al5"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; alerttxt "$d" ":alarm_clock: one deadline breached"
+  ALERT_NOW=2026-03-01T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  before=$(jq -r '.posted_at' "$d/st.json")
+  alerttxt "$d" ":alarm_clock: one deadline breached"
+  ALERT_NOW=2026-03-02T06:00:00Z DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" >/dev/null 2>&1
+  assert "$(jq -r '.posted_at' "$d/st.json")" "$before"
+}
+
+# An empty alert is not a message.
+test_alert_says_nothing_when_there_is_nothing() {
+  d="$TMP/al6"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"; : > "$d/alert.txt"
+  assert "$(DEC "$d/alert.txt" "$d/rec.json" "$d/st.json" 2>/dev/null)" "post=false" || return 1
+  [[ ! -f "$d/st.json" ]]
+}
+
+# ---------------------------------------------------------------- carried clocks
+CMS() { bash "$S/carry-monitor-state.sh" "$@"; }
+
+# <dir> — a previous evidence directory zipped the way the artifact API serves it
+carryzip() {
+  local d="$1"; shift
+  rm -rf "$d"; mkdir -p "$d/src"
+  printf '{"findings":[{"id":"CVE-1","first_seen":"2026-01-01T00:00:00Z"}]}' > "$d/src/state-Production.json"
+  printf '{"findings":[{"id":"CVE-1","state":"open"}]}' > "$d/src/lifecycle-state-Production.json"
+  printf 'not evidence\n' > "$d/src/alert.txt"
+  ( cd "$d/src" && zip -qr ../prev.zip . )
+}
+carryart() { printf '{"artifacts":[{"id":%s,"expired":%s}]}' "$1" "$2" > "$3"; }
+
+# Without the previous state every finding is first seen today, the clock start moves with the
+# calendar and no deadline is ever reached.
+test_carry_brings_the_state_files_forward() {
+  carryzip "$TMP/cm1"; carryart 42 false "$TMP/cm1/art.json"
+  mkdir -p "$TMP/cm1/out"
+  CARRY_ARTIFACTS_JSON="$TMP/cm1/art.json" CARRY_ZIP="$TMP/cm1/prev.zip" \
+    CMS o/r prod "$TMP/cm1/out" >/dev/null 2>&1 || return 1
+  [[ -f "$TMP/cm1/out/state-Production.json" ]] || return 1
+  [[ -f "$TMP/cm1/out/lifecycle-state-Production.json" ]] || return 1
+  # everything else in the previous evidence is that run's working output, not this run's input
+  [[ ! -f "$TMP/cm1/out/alert.txt" ]]
+}
+
+# An expired artifact still appears in the listing and downloads as a 410.
+test_carry_ignores_an_expired_artifact() {
+  carryzip "$TMP/cm2"; carryart 42 true "$TMP/cm2/art.json"
+  mkdir -p "$TMP/cm2/out"
+  out=$(CARRY_ARTIFACTS_JSON="$TMP/cm2/art.json" CARRY_ZIP="$TMP/cm2/prev.zip" \
+    CMS o/r prod "$TMP/cm2/out" 2>&1) || return 1
+  contains "$out" "no earlier run" || return 1
+  [[ -z "$(ls -A "$TMP/cm2/out")" ]]
+}
+
+# A first run has no history. Refusing to monitor over that would be the wrong trade.
+test_carry_survives_having_no_earlier_run() {
+  mkdir -p "$TMP/cm3/out"; printf '{"artifacts":[]}' > "$TMP/cm3/art.json"
+  out=$(CARRY_ARTIFACTS_JSON="$TMP/cm3/art.json" CMS o/r prod "$TMP/cm3/out" 2>&1)
+  assert "$?" "0" || return 1
+  contains "$out" "starts its clock today"
+}
+
+# A truncated state file would silently reset the clocks it is meant to carry.
+test_carry_skips_a_state_file_that_is_not_json() {
+  carryzip "$TMP/cm4"
+  printf 'truncated' > "$TMP/cm4/src/state-Production.json"
+  ( cd "$TMP/cm4/src" && rm -f ../prev.zip && zip -qr ../prev.zip . )
+  carryart 42 false "$TMP/cm4/art.json"; mkdir -p "$TMP/cm4/out"
+  out=$(CARRY_ARTIFACTS_JSON="$TMP/cm4/art.json" CARRY_ZIP="$TMP/cm4/prev.zip" \
+    CMS o/r prod "$TMP/cm4/out" 2>&1) || return 1
+  contains "$out" "not readable JSON" || return 1
+  [[ ! -f "$TMP/cm4/out/state-Production.json" ]] || return 1
+  # the readable one still comes through
+  [[ -f "$TMP/cm4/out/lifecycle-state-Production.json" ]]
 }
 
 # ---------------------------------------------------------------- staged bundle
