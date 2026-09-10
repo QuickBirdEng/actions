@@ -69,6 +69,14 @@ runs:
           || pip3 install --quiet cvss==3.6 2>/dev/null \
           || pip3 install --quiet --break-system-packages cvss==3.6
 
+    - name: Carry the clocks from the last run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../soup-discovery/scripts/carry-monitor-state.sh" \
+          "${{ github.repository }}" "${{ inputs.product }}" "${{ inputs.evidence-dir }}"
+
     - name: Run the KEV check
       id: run
       shell: bash
