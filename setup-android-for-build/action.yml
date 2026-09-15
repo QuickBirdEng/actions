@@ -31,7 +31,9 @@ runs:
       shell: bash
       run: java -version
     - name: Setup Android SDK
-      uses: android-actions/setup-android@v2
+      uses: android-actions/setup-android@v4
+      with:
+        packages: platform-tools
     - name: Setup Maven Secrets
       if: inputs.qbs-maven-username != '' && inputs.qbs-maven-password != ''
       shell: bash
