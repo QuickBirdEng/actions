@@ -33,6 +33,7 @@ default_ignore_patterns=(
   ":!**/pubspec.lock"
   ":!**/*.freezed.dart"
   ":!**/*.g.dart"
+  ":!**/*_test.dart"
   ":!**/gen/*"
   ":!test/*"
   ":!.github/**/*"
