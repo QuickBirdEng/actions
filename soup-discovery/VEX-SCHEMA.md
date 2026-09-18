@@ -49,11 +49,51 @@ house strings:
 | `vulnerable_code_cannot_be_controlled_by_adversary` | Reachable, but not with attacker-controlled input. |
 | `inline_mitigations_already_exist` | An existing control in the product blocks exploitation. |
 
+> **The table above is the CSAF 2.0 vocabulary; `merge-assessment.sh` validates against the
+> CycloneDX 1.6 one.** The two name the same concepts differently, and a statement written
+> with the codes above is rejected as `quickbird:vex:invalid-justification` — it does not
+> suppress anything. Until the two are reconciled, write the code the implementation
+> accepts: `code_not_present`, `code_not_reachable`, `requires_configuration`,
+> `requires_dependency`, `requires_environment`, `protected_by_compiler`,
+> `protected_at_runtime`, `protected_at_perimeter`, `protected_by_mitigating_control`.
+
 **`detail`** — required alongside every `not_affected`, and product-specific. A code on its
 own is not an argument. "Not exploitable" is not a detail.
 
 **`response`** — optional, for `affected`: `can_not_fix`, `will_not_fix`, `update`,
 `rollback`, `workaround_available`.
+
+**`covers`** — optional, a list of component names the statement also speaks for.
+
+A transitive has no record of its own, so before this there was nowhere to put a
+disposition for a finding under one: it stayed "no decision recorded" for good, which is
+the mute button the states were meant to replace. The direct dependency that pulls the
+transitive in is what the SOUP list actually approves, and its owner is the person who can
+answer the reachability question, so its record is where the statement belongs.
+
+```jsonc
+"vex": {
+  "CVE-2026-53571": {
+    "state": "not_affected",
+    "justification": "code_not_present",
+    "covers": ["vite"],
+    "detail": "The strapi runtime stage deletes /opt/node_modules/vite unless STRAPI_DEVELOPMENT_MODE=true, so it is not in the shipped image."
+  }
+}
+```
+
+Two guards, both of which refuse rather than assume:
+
+- The covered component must be **named**. Nothing widens by accident — that was the
+  cross-component defect, where the coverage map was keyed on the CVE alone.
+- It must be **reachable from the covering component** in the BOM `dependencies` graph, so
+  a record only ever speaks for its own subtree.
+
+A claim failing either is dropped and reported as `quickbird:vex:covers-rejected` on the
+vulnerability, never applied. That includes the ecosystems `mark-graph.py` derives no edges
+for — go, python, container contents. With no graph a subtree claim cannot be checked, and
+an unverifiable claim is worth less than a visible gap: findings inside a scanned image
+still need a record on the affected component itself.
 
 **Ownership — drafted by a developer, countersigned by a SOUP approver.** Decided
 2026-08-02. The developer writes the statement, because whether the vulnerable code path is

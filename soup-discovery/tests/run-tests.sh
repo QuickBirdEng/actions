@@ -3681,6 +3681,53 @@ EOF
   contains "$(jq -r '[.vulnerabilities[0].properties[]?.name] | join(",")' "$TMP/vx/out.json")" "quickbird:vex:partial"
 }
 
+# A transitive has no record of its own, so a finding under one had nowhere to hold a
+# disposition and stayed "no decision recorded" permanently. The direct dependency that
+# pulls it in may now name it under `covers`.
+test_vex_covers_applies_within_the_subtree() {
+  mkdir -p "$TMP/vc/soups/npm"
+  cat > "$TMP/vc/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+   {"bom-ref":"a","type":"library","name":"liba","version":"1.0.0","purl":"pkg:npm/liba@1.0.0"},
+   {"bom-ref":"t","type":"library","name":"libt","version":"3.0.0","purl":"pkg:npm/libt@3.0.0"}],
+ "dependencies":[{"ref":"a","dependsOn":["t"]}],
+ "vulnerabilities":[{"id":"CVE-2026-9999","affects":[{"ref":"t"}]}]}
+EOF
+  cat > "$TMP/vc/soups/npm/liba.json" <<'EOF'
+{"package":"liba","version":"1.x.x","metadata":{"input_version":"1.0.0"},
+ "vex":{"CVE-2026-9999":{"state":"not_affected","justification":"code_not_reachable",
+        "covers":["libt"],"detail":"only reached from the build path"}}}
+EOF
+  bash "$S/merge-assessment.sh" "$TMP/vc/bom.json" "$TMP/vc/soups" "$TMP/vc/out.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.vulnerabilities[0].analysis.state' "$TMP/vc/out.json")" "not_affected" || return 1
+  assert "$(jq -r '.vulnerabilities[0].analysis.justification' "$TMP/vc/out.json")" "code_not_reachable"
+}
+
+# The guard on the above: a claim the graph does not support is refused, not trusted. Same
+# defect class as vex_does_not_cross_components, so it gets the same kind of test. Covers
+# both shapes at once — no edges at all is what container and go ecosystems look like.
+test_vex_covers_is_refused_without_graph_edges() {
+  mkdir -p "$TMP/vn/soups/npm"
+  cat > "$TMP/vn/bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+   {"bom-ref":"a","type":"library","name":"liba","version":"1.0.0","purl":"pkg:npm/liba@1.0.0"},
+   {"bom-ref":"t","type":"library","name":"libt","version":"3.0.0","purl":"pkg:npm/libt@3.0.0"}],
+ "vulnerabilities":[{"id":"CVE-2026-9999","affects":[{"ref":"t"}]}]}
+EOF
+  cat > "$TMP/vn/soups/npm/liba.json" <<'EOF'
+{"package":"liba","version":"1.x.x","metadata":{"input_version":"1.0.0"},
+ "vex":{"CVE-2026-9999":{"state":"not_affected","justification":"code_not_reachable",
+        "covers":["libt"],"detail":"only reached from the build path"}}}
+EOF
+  bash "$S/merge-assessment.sh" "$TMP/vn/bom.json" "$TMP/vn/soups" "$TMP/vn/out.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.vulnerabilities[0].analysis' "$TMP/vn/out.json")" "null" || return 1
+  contains "$(jq -r '[.vulnerabilities[0].properties[]?.name] | join(",")' "$TMP/vn/out.json")" "quickbird:vex:covers-rejected"
+}
+
 test_vex_invalid_justification_does_not_suppress() {
   mkdir -p "$TMP/vi/soups/npm"
   cat > "$TMP/vi/bom.json" <<'EOF'
