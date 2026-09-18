@@ -135,7 +135,19 @@ jq --slurpfile recs "$TMP/records.json" '
    "requires_environment","protected_by_compiler","protected_at_runtime",
    "protected_at_perimeter","protected_by_mitigating_control"] as $vocab
 
-  | def vex_entries($r):
+  # Downward reachability with an explicit visited set. Not `recurse`, which does not
+  # terminate on the cycles npm dependency graphs legitimately contain.
+  | def reachable_from($edges):
+    . as $start
+    | { seen: [$start], frontier: [$start] }
+    | until( (.frontier | length) == 0;
+        . as $st
+        | ( [ $st.frontier[] | $edges[.] // [] ] | add // [] | unique ) as $next
+        | ( $next - $st.seen ) as $new
+        | { seen: ($st.seen + $new), frontier: $new } )
+    | .seen;
+
+  def vex_entries($r):
     ($r.vex // {}) | to_entries | map({
       key: .key,
       value: { state: (.value.state // "under_investigation"),
@@ -143,6 +155,7 @@ jq --slurpfile recs "$TMP/records.json" '
                justification_valid: ((.value.justification // null) == null
                                      or ((.value.justification // "") | IN($vocab[]))),
                response: (.value.response // null),
+               covers: (.value.covers // []),
                detail: (.value.detail // null) } });
 
   ($recs[0]) as $records
@@ -183,17 +196,56 @@ jq --slurpfile recs "$TMP/records.json" '
         | {name: .name, version: (.version // "?")} ]
       | unique_by(.name) ) as $unrecorded_direct
   | ( $records | map(select(.vex != null)) | map(vex_entries(.)) | add // [] ) as $all_vex
+  # The dependency graph as mark-graph.py wrote it. Absent for the ecosystems whose edges
+  # are not derivable (go, python, container contents), and that absence is meaningful: with
+  # no edges a subtree claim cannot be checked, so it is refused rather than assumed.
+  | ( [ .dependencies[]? | { key: .ref, value: (.dependsOn // []) } ] | from_entries ) as $edges
+  | ( [ .components[]? | { name: (.name // ""), ref: ."bom-ref" } ]
+      | group_by(.name) | map({ key: .[0].name, value: (map(.ref) | unique) })
+      | from_entries ) as $refs_by_name
   # CVE -> the component refs whose OWN record carries a VEX for it. A statement in the
   # record of package A used to suppress the same CVE on package B: the map was keyed on
   # the CVE alone, and CVEs routinely affect more than one component. The analysis is only
-  # applied when every affected component is covered by its own record.
+  # applied when every affected component is covered by its own record, or named by a
+  # statement under `covers`.
+  #
+  # `covers` exists because a transitive has no record of its own and so had nowhere to
+  # hold a disposition at all: every finding under one stayed "no decision recorded"
+  # permanently, which is the mute button the states were meant to replace. The direct
+  # dependency that pulls it in is what the SOUP list actually approves, and its owner is
+  # the one who can answer the reachability question, so its record is where the statement
+  # belongs.
+  #
+  # Two guards keep this from reopening the cross-component defect above. The covered
+  # component must be named, so nothing widens by accident. And it must be reachable from
+  # the covering component in the graph, so a record only ever speaks for its own subtree.
+  # A claim failing either is dropped and reported, never applied.
   | ( $matched
       | map( (.c."bom-ref") as $ref
-             | ((.r.vex // {}) | keys) | map({cve: ., ref: $ref}) )
-      | add // []
+             | (.r) as $rec
+             | ( $ref | reachable_from($edges) ) as $subtree
+             | (($rec.vex // {}) | to_entries)
+             | map( . as $e
+                    | ($e.value.covers // []) as $claims
+                    | ( [ $claims[] | . as $n
+                          | ($refs_by_name[$n] // [])[]
+                          | select( . as $x | $subtree | index($x) ) ] | unique ) as $ok
+                    | ( [ $claims[] | . as $n
+                          | select( [ ($refs_by_name[$n] // [])[]
+                                      | select( . as $x | $subtree | index($x) ) ] | length == 0 ) ] ) as $bad
+                    | { cve: $e.key,
+                        refs: (([$ref] + $ok) | unique),
+                        rejected: ($bad | map({ covered: ., by: ($rec.package // "") })) } ) )
+      | add // [] ) as $vex_claims
+  | ( $vex_claims
       | group_by(.cve)
-      | map({key: .[0].cve, value: (map(.ref) | unique)})
+      | map({key: .[0].cve, value: (map(.refs) | add | unique)})
       | from_entries ) as $vex_cover
+  | ( $vex_claims
+      | map(select((.rejected | length) > 0))
+      | group_by(.cve)
+      | map({key: .[0].cve, value: (map(.rejected) | add)})
+      | from_entries ) as $vex_rejected
   | ( $all_vex | from_entries ) as $vexmap
 
   | .components = ( $pairs | map(
@@ -247,28 +299,39 @@ jq --slurpfile recs "$TMP/records.json" '
       end ) )
 
   # VEX lands on vulnerabilities[].analysis — but only when every component the
-  # vulnerability affects is covered by its own record, because the analysis is a property
-  # of the vulnerability entry and would otherwise speak for components nobody assessed.
+  # vulnerability affects is covered by its own record or named under `covers` by a record
+  # above it in the graph, because the analysis is a property of the vulnerability entry and
+  # would otherwise speak for components nobody assessed.
   | .vulnerabilities = ( [ (.vulnerabilities // [])[]
       | . as $v
       | ($vexmap[$v.id] // null) as $x
       | ($vex_cover[$v.id] // []) as $covered
+      | ($vex_rejected[$v.id] // []) as $rejected
       | ([ ($v.affects // [])[].ref ] | map(select(. != null))) as $affected
       | (($affected - $covered) | length == 0 and ($affected | length) > 0) as $fully_covered
-      | if $x == null then $v
+      # A claim that named a component the graph does not put under the covering record is
+      # not silently dropped: the reader has to see that a statement was written and did not
+      # take effect, or the record looks like a disposition that never was one.
+      | (if ($rejected | length) > 0 then
+           [ {name:"quickbird:vex:covers-rejected",
+              value: ([ $rejected[] | "\(.by) claims to cover \(.covered)" ] | join("; ")
+                      + " — not reachable from the covering component in the dependency graph, or the graph has no edges for that ecosystem; the claim was ignored")} ]
+         else [] end) as $rejprops
+      | if $x == null then (if ($rejprops | length) > 0 then $v + { properties: ((.properties // []) + $rejprops) } else $v end)
         # == false, not `// true | not`: the jq alternative operator treats false as
         # absent, so `false // true` is true and this branch never fired. Same operator
         # trap that validate-policy.sh documents for cra_scope. (And no apostrophes in
         # comments inside a single-quoted jq program — that is how this fix broke twice.)
         elif $x.justification_valid == false then
-          $v + { properties: ((.properties // []) + [
+          $v + { properties: ((.properties // []) + $rejprops + [
                    {name:"quickbird:vex:invalid-justification",
                     value: ("\($x.justification // "") is not in the CycloneDX justification vocabulary — the statement does not suppress this finding")}]) }
         elif ($fully_covered | not) and $x.state == "not_affected" then
-          $v + { properties: ((.properties // []) + [
+          $v + { properties: ((.properties // []) + $rejprops + [
                    {name:"quickbird:vex:partial",
-                    value: ("a not_affected exists for \($covered | join(", ")) but this vulnerability also affects \(($affected - $covered) | join(", ")) — not suppressed; each affected component needs its own statement")}]) }
-        else $v + { analysis: (
+                    value: ("a not_affected exists for \($covered | join(", ")) but this vulnerability also affects \(($affected - $covered) | join(", ")) — not suppressed; each affected component needs a statement on its own record, or to be named under covers by a record above it")}]) }
+        else $v + (if ($rejprops | length) > 0 then { properties: ((.properties // []) + $rejprops) } else {} end)
+             + { analysis: (
               { state: $x.state }
               + (if $x.justification != null then {justification: $x.justification} else {} end)
               + (if $x.response      != null then {response: [$x.response]}         else {} end)
