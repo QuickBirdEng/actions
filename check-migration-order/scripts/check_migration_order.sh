@@ -9,6 +9,17 @@ set -euo pipefail
 # Prisma's own migration generator always names a folder with this prefix.
 timestamp_regex='^[0-9]{14}'
 
+is_true() {
+  case "${1:-}" in
+    [Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss]|[Yy]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if is_true "${INPUT_FETCH_BASE_REF:-true}"; then
+  git fetch origin "${INPUT_BASE_REF}:${INPUT_BASE_REF}" || true
+fi
+
 # List migration folder names at a ref. Return nothing when the path is absent,
 # instead of running basename with no input.
 list_migrations() {

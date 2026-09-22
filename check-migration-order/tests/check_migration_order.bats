@@ -89,6 +89,36 @@ setup() {
     [[ "$output" == *"::warning::"* ]]
 }
 
+# ── Fetching base-ref ──────────────────────────────────────────────────────────
+
+@test "base-ref not present locally: fetched from origin automatically" {
+    remote="${BATS_TEST_TMPDIR}/remote-$RANDOM.git"
+    git init -q --bare "$remote"
+    git remote add origin "$remote"
+    git push -q origin base:base
+
+    git branch -D base
+    git checkout -qb feature
+    add_migrations "prisma/migrations" "20260901000000_good"
+
+    INPUT_END_REF="feature" run_check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"correctly ordered"* ]]
+}
+
+@test "fetch-base-ref set to false: does not fetch, fails when base-ref is missing" {
+    git branch -D base
+
+    run env \
+        GITHUB_OUTPUT="$(mktemp)" \
+        INPUT_MIGRATIONS_DIR="prisma/migrations" \
+        INPUT_BASE_REF="base" \
+        INPUT_FETCH_BASE_REF="false" \
+        INPUT_END_REF="HEAD" \
+        bash "$SCRIPT"
+    [ "$status" -ne 0 ]
+}
+
 # ── Custom migrations-dir ─────────────────────────────────────────────────────
 
 @test "custom migrations-dir input is honored" {
