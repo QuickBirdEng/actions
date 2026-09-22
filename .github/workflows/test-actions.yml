@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     paths:
+      - "check-migration-order/**"
       - "js-supply-chain-check/**"
       - "soup-discovery/**"
       - "test-repo/**"
@@ -11,6 +12,13 @@ on:
       - "trufflehog-filter-findings/**"
 
 jobs:
+  test-check-migration-order:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bats-core/bats-action@2
+      - run: bats check-migration-order/tests/
+
   test-soup-discovery:
     runs-on: ubuntu-latest
     steps:

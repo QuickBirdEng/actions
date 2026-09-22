@@ -1,0 +1,35 @@
+name: "Check Migration Order"
+description: "Fails when a new migration folder is not timestamped after the latest migration already on base-ref."
+inputs:
+  migrations-dir:
+    description: "Path (relative to the repo root) to the migrations directory."
+    required: true
+  base-ref:
+    description: "Branch or ref whose migrations count as already merged, e.g. main."
+    required: true
+  fetch-base-ref:
+    description: "Whether to fetch base-ref from origin before comparing. Set to false if the caller already has it locally."
+    required: false
+    default: "true"
+  end-ref:
+    description: "Ref containing the PR's migrations."
+    required: false
+    default: "HEAD"
+outputs:
+  new-migrations:
+    description: "Newline-separated migration folders introduced in end-ref relative to base-ref."
+    value: ${{ steps.check.outputs.new-migrations }}
+  max-existing-timestamp:
+    description: "Latest migration timestamp already present on base-ref."
+    value: ${{ steps.check.outputs.max-existing-timestamp }}
+runs:
+  using: "composite"
+  steps:
+    - id: check
+      shell: bash
+      env:
+        INPUT_MIGRATIONS_DIR: ${{ inputs.migrations-dir }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_FETCH_BASE_REF: ${{ inputs.fetch-base-ref }}
+        INPUT_END_REF: ${{ inputs.end-ref }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/check_migration_order.sh"
