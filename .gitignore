@@ -1,4 +1,5 @@
 .idea
+.worktrees/
 
 # Python bytecode from the SOUP tooling
 __pycache__/
