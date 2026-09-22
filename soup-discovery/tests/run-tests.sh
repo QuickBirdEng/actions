@@ -3860,6 +3860,54 @@ test_scan_vulns_stable_fix_wins_over_prerelease() {
   assert "$(fixprop quickbird:vuln:fix-versions)" "4.18.0"
 }
 
+# Regression: the fixed version was collected from every range at once, so an advisory that
+# patches several release lines reported the fix from whichever line came first rather than
+# the one the installed version is on. Reported 10.0.11 for a 9.0.11 install, turning a patch
+# bump into what read like a framework migration.
+test_scan_vulns_fix_comes_from_the_installed_release_line() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0002"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"microsoft.netcore.app.runtime.linux-musl-x64","ecosystem":"NuGet",
+                            "purl":"pkg:nuget/Microsoft.NETCore.App.Runtime.linux-musl-x64"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"8.0.0"},{"fixed":"8.0.30"}]},
+                {"type":"ECOSYSTEM","events":[{"introduced":"9.0.0"},{"fixed":"9.0.19"}]},
+                {"type":"ECOSYSTEM","events":[{"introduced":"10.0.0"},{"fixed":"10.0.11"}]}]}]}'
+  run_scan "pkg:nuget/Microsoft.NETCore.App.Runtime.linux-musl-x64@9.0.11" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" "9.0.19"
+}
+
+# Regression: an advisory whose open-ended range covers the installed version while a second,
+# older range carries the only fix. keycloak-quarkus-server 26.7.4 against GHSA-jgwc-jh89-rpgq
+# reported "fixed in 26.0.6" — a release older than the one installed, which read as though
+# nobody had upgraded. The line the version is on has no fix, so the route is a compensating
+# control, and the status has to say so.
+test_scan_vulns_open_range_without_a_fix_is_not_an_upgrade() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0003"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"}],
+    "affected":[{"package":{"name":"org.keycloak:keycloak-quarkus-server","ecosystem":"Maven",
+                            "purl":"pkg:maven/org.keycloak/keycloak-quarkus-server"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"}]},
+                {"type":"ECOSYSTEM","events":[{"introduced":"25.0.0"},{"fixed":"26.0.6"}]}]}]}'
+  run_scan "pkg:maven/org.keycloak/keycloak-quarkus-server@26.7.4" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "none-published" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" ""
+}
+
+# The guard on both: an ecosystem whose versions this cannot compare keeps the old, flat
+# answer. RPM carries epochs and release suffixes (1:21.0.12.1.1-1.2.el9) that a dotted
+# numeric read would get wrong, so it must not be placed at all.
+test_scan_vulns_incomparable_ecosystem_keeps_the_flat_answer() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0004"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"java-21-openjdk-headless","ecosystem":"Red Hat",
+                            "purl":"pkg:rpm/redhat/java-21-openjdk-headless"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"1:21.0.13"}]}]}]}'
+  run_scan "pkg:rpm/redhat/java-21-openjdk-headless@1:21.0.12.1.1-1.2.el9" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" "1:21.0.13"
+}
+
 # A hyphen is not a prerelease marker. Maven ships 31.1-jre and Debian 2.36-9 as ordinary
 # releases; treating those as prereleases would withdraw a real upgrade.
 test_scan_vulns_hyphenated_release_is_not_a_prerelease() {

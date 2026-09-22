@@ -157,6 +157,11 @@ while IFS= read -r id; do
                    ecosystem: (.package.ecosystem // ""),
                    fixed: [ (.ranges // [])[] | (.events // [])[] | .fixed // empty ],
                    last_affected: [ (.ranges // [])[] | (.events // [])[] | .last_affected // empty ],
+                   # The ranges are kept whole, not just flattened into the two lists above.
+                   # An advisory routinely carries one range per release line, and which line
+                   # the installed version sits in decides which fixed version applies to it —
+                   # see applicable_fix below.
+                   ranges: [ (.ranges // [])[] | { type: (.type // ""), events: (.events // []) } ],
                    # An advisory that lists a range but publishes no fixed event is stating
                    # that no fix exists yet. That is a different fact from us not looking.
                    has_range: (((.ranges // []) | length) > 0) } ]}' "$f" >> "$TMP/vulns.jsonl"
@@ -201,6 +206,80 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
     ($v | tostring | ascii_downcase | split("+")[0]
      | test("-(alpha|beta|rc|pre|preview|dev|canary|next|snapshot|nightly|milestone|m[0-9]|cr[0-9])"));
 
+  # Numeric comparison over the first three dotted components. Deliberately narrow: it is
+  # only ever consulted for the ecosystems below, where versions are dotted numbers. RPM and
+  # Debian versions carry epochs and release suffixes (1:21.0.12.1.1-1.2.el9) that this would
+  # read wrongly, so they never reach it and keep the old behaviour.
+  def vnums($v): [ $v | tostring | scan("[0-9]+") | tonumber ];
+  def vkey($v): (vnums($v) + [0,0,0])[0:3];
+  def comparable_ecosystem($e):
+    ($e | ascii_downcase | IN("npm","pub","crates.io","packagist","hex","nuget","rubygems","maven","go"));
+
+  # Which fixed version applies to the version actually installed.
+  #
+  # An OSV range is a sequence of events in order: `introduced` opens an affected interval,
+  # `fixed` or `last_affected` closes it. An advisory with several release lines carries
+  # several ranges, and only the interval containing the installed version says anything
+  # about it. Collecting every `fixed` event across every range — which is what the two flat
+  # lists above do — answers a different question, and answers it wrongly whenever the lines
+  # disagree:
+  #
+  #   keycloak-quarkus-server 26.7.4, GHSA-jgwc-jh89-rpgq: ranges [introduced 0] and
+  #   [introduced 25.0.0, fixed 26.0.6]. 26.7.4 is matched by the first, which publishes no
+  #   fix at all, so "fixed in 26.0.6" named a release older than the one installed and read
+  #   as though someone had simply not upgraded. The finding is real; the remedy is a
+  #   compensating control, not a bump.
+  #
+  #   Microsoft.NETCore.App.Runtime 9.0.11: ranges per line, fixed at 8.0.30, 9.0.19 and
+  #   10.0.11. Reporting 10.0.11 turned a patch bump into what looked like a framework
+  #   migration.
+  #
+  # Returns {found, fixed} — a list of the fixed versions that apply. found=false means the
+  # version could not be placed in any interval, and the caller keeps the previous, flat
+  # answer rather than inventing one.
+  #
+  # Two walks over the same range, because they answer different questions and one closing
+  # rule cannot serve both. Whether the version is affected needs intervals closed properly,
+  # or a version past the fix would still match the interval that the fix ended. Which fixes
+  # apply must not close on the first `fixed` event: a range is allowed to carry several, and
+  # npm advisories do exactly that when a line is patched twice (introduced 0, fixed
+  # 5.0.0-rc.1, fixed 4.18.0), where stopping early would return the prerelease and hide the
+  # stable release behind it.
+  def applicable_fix($fx; $ver):
+    if (comparable_ecosystem($fx.ecosystem) | not) or (vnums($ver) | length) == 0 then
+      {found:false, fixed:[]}
+    else
+      (vkey($ver)) as $v
+      | ( [ $fx.ranges[]? | select(.type != "GIT") ] ) as $rs
+      | ( [ $rs[]
+            | reduce (.events[]?) as $e
+                ({intro:null, affected:false};
+                  if ($e.introduced // null) != null then
+                    .intro = (if $e.introduced == "0" then [0,0,0] else vkey($e.introduced) end)
+                  elif ($e.fixed // null) != null then
+                    (if .intro != null and $v >= .intro and $v < vkey($e.fixed)
+                     then .affected = true else . end) | .intro = null
+                  elif ($e.last_affected // null) != null then
+                    (if .intro != null and $v >= .intro and $v <= vkey($e.last_affected)
+                     then .affected = true else . end) | .intro = null
+                  else . end)
+            # An interval the range never closes runs to infinity.
+            | select(.affected or (.intro != null and $v >= .intro)) ] | length ) as $n_affected
+      | ( [ $rs[]
+            | reduce (.events[]?) as $e
+                ({intro:null, fixes:[]};
+                  if ($e.introduced // null) != null then
+                    .intro = (if $e.introduced == "0" then [0,0,0] else vkey($e.introduced) end)
+                  elif ($e.fixed // null) != null and .intro != null
+                       and $v >= .intro and $v < vkey($e.fixed) then
+                    .fixes += [$e.fixed]
+                  else . end)
+            | .fixes[] ] | unique ) as $fixes
+      | if $n_affected == 0 then {found:false, fixed:[]}
+        else {found:true, fixed:$fixes}
+        end
+    end ;
+
   def fix_for($adv; $purl):
     (purl_keys($purl)) as $keys
     | ($purl | ascii_downcase | split("?")[0] | split("@")[0]) as $mine
@@ -213,18 +292,40 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
           | ((($fx.purl // "") | split("@") | .[0]) // "") as $fp
           | select( ($fp != "" and ($mine | startswith($fp)))
                     or ($fx.name != "" and ($fx.name | IN($keys[]))) ) ] ) as $m
+    # The installed version, from the purl the BOM carries. Scoped npm names are
+    # percent-encoded in a purl, so the only literal @ is the one before the version.
+    | ($purl | capture("@(?<v>[^@?#]+)") | .v // "") as $ver
+    | ( [ $m[] | . as $fx | applicable_fix($fx; $ver) | select(.found)
+                 | {eco: $fx.ecosystem, fixed: .fixed} ] ) as $placed
     | ( [ $m[] | . as $fx | $fx.fixed[]
           | select( (semver_prerelease_ecosystem($fx.ecosystem) and is_prerelease(.)) | not ) ]
-        | unique ) as $stable
+        | unique ) as $all_stable
     | ( [ $m[] | . as $fx | $fx.fixed[]
           | select( semver_prerelease_ecosystem($fx.ecosystem) and is_prerelease(.) ) ]
-        | unique ) as $pre
+        | unique ) as $all_pre
+    # Once the installed version has been placed in an interval, that interval is the answer:
+    # either it names a fix for this release line, or this line has none. Falling back to the
+    # flat list here would put back the version from a different line, which is the defect.
+    | ( if ($placed | length) > 0
+        then [ $placed[] | . as $p | $p.fixed[]
+               | select( (semver_prerelease_ecosystem($p.eco) and is_prerelease(.)) | not ) ] | unique
+        else $all_stable end ) as $stable
+    | ( if ($placed | length) > 0
+        then [ $placed[] | . as $p | $p.fixed[]
+               | select( semver_prerelease_ecosystem($p.eco) and is_prerelease(.) ) ] | unique
+        else $all_pre end ) as $pre
+    | ( ($placed | length) > 0 and ($stable | length) == 0 and ($pre | length) == 0 ) as $placed_without_fix
     | if ($m | length) == 0 then
         # Could not tie the advisory to this component. Reporting "no fix" here would be a
         # claim we have not established.
         {status:"unknown", fixed:[], why:"the advisory does not name this package in a shape that could be matched"}
       elif ($stable | length) > 0 then
         {status:"available", fixed:$stable, why:null}
+      elif $placed_without_fix then
+        {status:"none-published", fixed:[],
+         why:("the installed version sits in an affected range the advisory closes with no fixed "
+              + "event — other release lines are fixed, this one is not, so mitigation here is a "
+              + "compensating control or a VEX statement, not an upgrade")}
       elif ($pre | length) > 0 then
         {status:"prerelease-only", fixed:$pre,
          why:("the only fixed version the advisory publishes is a prerelease (" + ($pre | join(", "))
