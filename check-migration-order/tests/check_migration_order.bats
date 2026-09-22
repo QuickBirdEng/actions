@@ -106,7 +106,11 @@ setup() {
     [[ "$output" == *"correctly ordered"* ]]
 }
 
-@test "fetch-base-ref set to false: does not fetch, fails when base-ref is missing" {
+@test "fetch-base-ref set to false: does not fetch even though origin has it" {
+    remote="${BATS_TEST_TMPDIR}/remote-$RANDOM.git"
+    git init -q --bare "$remote"
+    git remote add origin "$remote"
+    git push -q origin base:base
     git branch -D base
 
     run env \
@@ -117,6 +121,26 @@ setup() {
         INPUT_END_REF="HEAD" \
         bash "$SCRIPT"
     [ "$status" -ne 0 ]
+    [[ "$output" == *"does not resolve to a commit"* ]]
+}
+
+# ── Invalid refs ───────────────────────────────────────────────────────────────
+
+@test "empty base-ref: fails with a clear error instead of silently comparing nothing" {
+    run env \
+        GITHUB_OUTPUT="$(mktemp)" \
+        INPUT_MIGRATIONS_DIR="prisma/migrations" \
+        INPUT_BASE_REF="" \
+        INPUT_END_REF="HEAD" \
+        bash "$SCRIPT"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"base-ref is empty"* ]]
+}
+
+@test "base-ref that does not exist anywhere: fails instead of treating it as empty" {
+    INPUT_BASE_REF="no-such-branch" run_check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"does not resolve to a commit"* ]]
 }
 
 # ── Custom migrations-dir ─────────────────────────────────────────────────────

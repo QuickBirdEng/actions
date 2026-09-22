@@ -12,11 +12,13 @@ init_repo() {
 }
 
 # add_migrations <dir> <folder-name>...
-# Create empty migration folders under <dir> and commit them.
+# Create empty migration folders under <dir> and commit them. Also drops a
+# migration_lock.toml next to them, since every real Prisma migrations dir has one.
 add_migrations() {
     local dir="$1"
     shift
     mkdir -p "$dir"
+    touch "$dir/migration_lock.toml"
     for name in "$@"; do
         mkdir -p "$dir/$name"
         touch "$dir/$name/migration.sql"

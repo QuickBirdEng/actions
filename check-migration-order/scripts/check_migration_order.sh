@@ -16,8 +16,23 @@ is_true() {
   esac
 }
 
+if [ -z "${INPUT_BASE_REF:-}" ]; then
+  echo "::error::base-ref is empty. Pass an explicit base-ref, or trigger the caller on pull_request so github.event.pull_request.base.ref is set."
+  exit 1
+fi
+
 if is_true "${INPUT_FETCH_BASE_REF:-true}"; then
   git fetch origin "${INPUT_BASE_REF}:${INPUT_BASE_REF}" || true
+fi
+
+if ! git rev-parse --verify --quiet "${INPUT_BASE_REF}^{commit}" >/dev/null; then
+  echo "::error::base-ref '$INPUT_BASE_REF' does not resolve to a commit. Check the branch name, and that fetch-base-ref can reach it."
+  exit 1
+fi
+
+if ! git rev-parse --verify --quiet "${INPUT_END_REF}^{commit}" >/dev/null; then
+  echo "::error::end-ref '$INPUT_END_REF' does not resolve to a commit."
+  exit 1
 fi
 
 # List migration folder names at a ref. Return nothing when the path is absent,
@@ -38,6 +53,9 @@ if [ -z "$existing" ] && [ -z "$current" ]; then
   exit 1
 fi
 
+max_existing_ts="$(printf '%s\n' "$existing" | grep -oE "$timestamp_regex" | sort -n | tail -1 || true)"
+echo "max-existing-timestamp=$max_existing_ts" >> "$GITHUB_OUTPUT"
+
 new_migrations="$(comm -13 <(printf '%s\n' "$existing") <(printf '%s\n' "$current"))"
 
 {
@@ -50,9 +68,6 @@ if [ -z "$new_migrations" ]; then
   echo "No new migrations in $INPUT_END_REF relative to $INPUT_BASE_REF."
   exit 0
 fi
-
-max_existing_ts="$(printf '%s\n' "$existing" | grep -oE "$timestamp_regex" | sort -n | tail -1 || true)"
-echo "max-existing-timestamp=$max_existing_ts" >> "$GITHUB_OUTPUT"
 
 if [ -z "$max_existing_ts" ]; then
   echo "::error::No migration under '$INPUT_MIGRATIONS_DIR' on $INPUT_BASE_REF has a name starting with a 14-digit timestamp. Check migrations-dir is set to the right path, and that existing migrations follow Prisma's naming convention."
