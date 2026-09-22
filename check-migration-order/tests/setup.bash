@@ -33,7 +33,6 @@ run_check() {
         INPUT_MIGRATIONS_DIR="${INPUT_MIGRATIONS_DIR:-prisma/migrations}" \
         INPUT_BASE_REF="${INPUT_BASE_REF:-base}" \
         INPUT_END_REF="${INPUT_END_REF:-HEAD}" \
-        INPUT_TIMESTAMP_REGEX="${INPUT_TIMESTAMP_REGEX:-^[0-9]{14}}" \
         bash "$SCRIPT"
     # surface the GITHUB_OUTPUT content in $output alongside stdout
     if [ -s "$tmp_output" ]; then

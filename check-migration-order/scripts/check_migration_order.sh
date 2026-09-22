@@ -6,6 +6,9 @@ set -euo pipefail
 # but it sorts before migrations that were written assuming it did not exist.
 # This check fails a PR that adds a migration not timestamped after base-ref.
 
+# Prisma's own migration generator always names a folder with this prefix.
+timestamp_regex='^[0-9]{14}'
+
 # List migration folder names at a ref. Return nothing when the path is absent,
 # instead of running basename with no input.
 list_migrations() {
@@ -18,6 +21,11 @@ list_migrations() {
 
 existing="$(list_migrations "$INPUT_BASE_REF")"
 current="$(list_migrations "$INPUT_END_REF")"
+
+if [ -z "$existing" ] && [ -z "$current" ]; then
+  echo "::error::No migrations found under '$INPUT_MIGRATIONS_DIR' on either $INPUT_BASE_REF or $INPUT_END_REF. Check migrations-dir is set to the right path."
+  exit 1
+fi
 
 new_migrations="$(comm -13 <(printf '%s\n' "$existing") <(printf '%s\n' "$current"))"
 
@@ -32,12 +40,12 @@ if [ -z "$new_migrations" ]; then
   exit 0
 fi
 
-max_existing_ts="$(printf '%s\n' "$existing" | grep -oE "$INPUT_TIMESTAMP_REGEX" | sort -n | tail -1 || true)"
+max_existing_ts="$(printf '%s\n' "$existing" | grep -oE "$timestamp_regex" | sort -n | tail -1 || true)"
 echo "max-existing-timestamp=$max_existing_ts" >> "$GITHUB_OUTPUT"
 
 if [ -z "$max_existing_ts" ]; then
-  echo "No existing migrations found on $INPUT_BASE_REF - nothing to compare against."
-  exit 0
+  echo "::error::No migration under '$INPUT_MIGRATIONS_DIR' on $INPUT_BASE_REF has a name starting with a 14-digit timestamp. Check migrations-dir is set to the right path, and that existing migrations follow Prisma's naming convention."
+  exit 1
 fi
 
 echo "Latest migration timestamp already on $INPUT_BASE_REF: $max_existing_ts"
@@ -48,9 +56,9 @@ echo ""
 failed=0
 while IFS= read -r migration; do
   [ -z "$migration" ] && continue
-  ts="$(printf '%s' "$migration" | grep -oE "$INPUT_TIMESTAMP_REGEX" || true)"
+  ts="$(printf '%s' "$migration" | grep -oE "$timestamp_regex" || true)"
   if [ -z "$ts" ]; then
-    echo "::warning::Could not match timestamp-regex against '$migration' - skipping the order check for it."
+    echo "::warning::'$migration' does not start with a 14-digit timestamp - skipping the order check for it."
     continue
   fi
   if [ "$ts" -le "$max_existing_ts" ]; then

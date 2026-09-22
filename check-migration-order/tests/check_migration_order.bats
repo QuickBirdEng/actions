@@ -54,7 +54,7 @@ setup() {
 
 # ── No existing migrations on base ────────────────────────────────────────────
 
-@test "no migrations directory on base at all: no-ops instead of failing" {
+@test "no existing migrations on base: fails instead of silently passing" {
     init_repo
     echo hi > README.md
     git add -A && git commit -qm "no migrations yet"
@@ -62,8 +62,20 @@ setup() {
     add_migrations "prisma/migrations" "20260901000000_first"
 
     INPUT_BASE_REF="empty-base" run_check
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"nothing to compare against"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"::error::"* ]]
+}
+
+@test "migrations-dir matches nothing on either ref: fails" {
+    init_repo
+    echo hi > README.md
+    git add -A && git commit -qm "no migrations at all"
+    git branch base2 HEAD
+
+    INPUT_MIGRATIONS_DIR="wrong/path" INPUT_BASE_REF="base2" INPUT_END_REF="base2" run_check
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"::error::"* ]]
+    [[ "$output" == *"wrong/path"* ]]
 }
 
 # ── Unparseable folder name ───────────────────────────────────────────────────
