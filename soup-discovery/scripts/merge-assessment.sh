@@ -241,10 +241,25 @@ jq --slurpfile recs "$TMP/records.json" '
       | group_by(.cve)
       | map({key: .[0].cve, value: (map(.refs) | add | unique)})
       | from_entries ) as $vex_cover
+  # A claim counts as rejected only if NO component of that name ended up covered for the CVE.
+  # The same record matches once per scan target, and a package that ships both in a workspace
+  # and inside an image gets one component instance per target. Only the workspace instance has
+  # graph edges — mark-graph.py derives none for image contents — so the image instance always
+  # fails the subtree test even when the workspace instance already satisfied the claim. Judging
+  # per matched pair therefore printed "the claim was ignored" next to an analysis that had in
+  # fact been applied: @strapi/strapi appears twice in the osteocoach BOM and vite once, and all
+  # seven statements carried the notice while every one of them had taken effect.
   | ( $vex_claims
-      | map(select((.rejected | length) > 0))
       | group_by(.cve)
-      | map({key: .[0].cve, value: (map(.rejected) | add)})
+      | map( { key: .[0].cve,
+               value: ( (.[0].cve) as $cve
+                        | ( map(.refs) | add | unique ) as $covered
+                        | [ .[].rejected[]
+                            | . as $r
+                            | select( [ ($refs_by_name[$r.covered] // [])[]
+                                        | select( . as $x | $covered | index($x) ) ] | length == 0 ) ]
+                        | unique ) } )
+      | map(select((.value | length) > 0))
       | from_entries ) as $vex_rejected
   | ( $all_vex | from_entries ) as $vexmap
 
