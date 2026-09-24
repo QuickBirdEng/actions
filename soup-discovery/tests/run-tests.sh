@@ -4056,10 +4056,59 @@ EOF
   local out
   out=$(bash "$S/summarise-state.sh" "$TMP/sg-bom.json" "$TMP/cp.json" 2>/dev/null) || return 1
   # Two separate upgrades, one artifact -> one group carrying both
-  assert "$(jq -r '.act_by_artifact | length' <<<"$out")" "1" || return 1
-  assert "$(jq -r '.act_by_artifact[0].artifact' <<<"$out")" "web" || return 1
-  assert "$(jq -r '.act_by_artifact[0].items | length' <<<"$out")" "2" || return 1
-  contains "$(jq -r '.act_by_artifact[0].items | join(",")' <<<"$out")" "(1)"
+  assert "$(jq -r '.act_by_artifact.shown | length' <<<"$out")" "1" || return 1
+  assert "$(jq -r '.act_by_artifact.shown[0].artifact' <<<"$out")" "web" || return 1
+  assert "$(jq -r '.act_by_artifact.shown[0].items | length' <<<"$out")" "2" || return 1
+  contains "$(jq -r '.act_by_artifact.shown[0].items | join(",")' <<<"$out")" "(1)"
+}
+
+# Regression: ungapped, a product with 110 actionable units rendered six lines of thirty
+# packages each — the wall of text the channel already had, reorganised. The tail has to be
+# summarised rather than printed.
+test_summary_caps_the_action_list_and_counts_the_tail() {
+  mkpolicy high
+  mksummary_bom
+  local out
+  out=$(TOP_ARTIFACTS=1 TOP_ITEMS=1 bash "$S/summarise-state.sh" "$TMP/sm-bom.json" "$TMP/cp.json" 2>/dev/null) || return 1
+  assert "$(jq -r '.act_by_artifact.shown | length' <<<"$out")" "1" || return 1
+  # act has one unit in one artifact here, so nothing is withheld; the fields must still exist
+  # and be numeric rather than null, which is what a caller renders against.
+  assert "$(jq -r '.act_by_artifact.more_artifacts' <<<"$out")" "0" || return 1
+  assert "$(jq -r '.act_by_artifact.more_units' <<<"$out")" "0"
+}
+
+# The rendered form has to say what it withheld. A truncated list that does not announce the
+# truncation is worse than a long one: it reads as complete.
+test_summary_render_announces_what_it_withheld() {
+  mkpolicy high
+  cat > "$TMP/sc-bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+  {"bom-ref":"a1","type":"library","name":"la","version":"1.0.0","purl":"pkg:npm/la@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:web"}]},
+  {"bom-ref":"a2","type":"library","name":"lb","version":"1.0.0","purl":"pkg:npm/lb@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:app"}]},
+  {"bom-ref":"a3","type":"library","name":"lc","version":"1.0.0","purl":"pkg:npm/lc@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:api"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-2026-3001","affects":[{"ref":"a1"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"}]},
+  {"id":"CVE-2026-3002","affects":[{"ref":"a2"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"}]},
+  {"id":"CVE-2026-3003","affects":[{"ref":"a3"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"}]}]}
+EOF
+  local out
+  out=$(TOP_ARTIFACTS=1 bash "$S/summarise-state.sh" --render "$TMP/sc-bom.json" "$TMP/cp.json" "QA" 2>/dev/null) || return 1
+  # The numbers, not just the words. Checking only for the phrase let a version ship that
+  # rendered "+ null more artifact(s), null action(s)": the message interpolated `.` instead
+  # of the group, and `.` there is the array.
+  contains "$out" "+ 2 more artifact(s), 2 action(s)" || return 1
+  contains "$out" "see the report"
 }
 
 # A stable fix anywhere in the advisory is still the answer — the prerelease branch must not
