@@ -1664,6 +1664,29 @@ test_alert_says_nothing_when_there_is_nothing() {
   [[ ! -f "$d/st.json" ]]
 }
 
+# The overview posts even on an all-clear run. Before it, a week with nothing exploited,
+# nothing overdue and no release required produced no message at all, and the standing state
+# was visible only in a report nobody opens between releases.
+test_alert_overview_posts_without_any_alert_block() {
+  d="$TMP/al7"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"
+  printf '  live (Study): v1.0.3 — not comparable\n  QA (v2)   act 5 · decide 1 · external 1 · parked 3\n' > "$d/ov.txt"
+  OVERVIEW="$d/ov.txt" PRODUCT=p bash "$S/compose-alert.sh" "$d/rec.json" "$d/alert.txt" >/dev/null 2>&1 || return 1
+  contains "$(cat "$d/alert.txt")" "where the work stands" || return 1
+  contains "$(cat "$d/alert.txt")" "act 5" || return 1
+  # The legend matters: the four words are the whole vocabulary of the message.
+  contains "$(cat "$d/alert.txt")" "needs a VEX statement"
+}
+
+# Without OVERVIEW the behaviour is exactly what it was, so the daily KEV path is unaffected
+# by a weekly feature.
+test_alert_without_overview_is_unchanged() {
+  d="$TMP/al8"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"
+  PRODUCT=p bash "$S/compose-alert.sh" "$d/rec.json" "$d/alert.txt" >/dev/null 2>&1 || return 1
+  [[ ! -s "$d/alert.txt" ]]
+}
+
 # ---------------------------------------------------------------- carried clocks
 CMS() { bash "$S/carry-monitor-state.sh" "$@"; }
 

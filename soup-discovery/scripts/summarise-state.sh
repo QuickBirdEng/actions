@@ -99,6 +99,23 @@ classify() {
                            | sort_by(-.findings) ) }'
 }
 
+# One state, rendered for a reader rather than as JSON. Used when there is nothing to compare
+# against — a delta line against the same file would say "unchanged", which is true of any
+# file and reads as though the live environment were up to date.
+if [[ "${1:-}" == "--render" ]]; then
+  BOM="${2:?usage: summarise-state.sh --render <bom> <policy> <label>}"
+  POLICY="${3:?policy required}"; LABEL="${4:-state}"
+  S=$(classify "$BOM" "$POLICY" "one") || exit 1
+  jq -rn --argjson s "$S" --arg l "$LABEL" '
+    [ "  \($l)   act \($s.act) · decide \($s.decide) · external \($s.external) · parked \($s.parked)"
+      + (if $s.overdue > 0 then "  :alarm_clock: \($s.overdue) overdue" else "" end) ]
+    + ( if ($s.act_by_artifact | length) > 0
+        then [ "" ] + ( $s.act_by_artifact | map("  • \(.artifact): " + (.items | join(", "))) )
+        else [] end )
+    | join("\n")'
+  exit 0
+fi
+
 if [[ "${1:-}" != "--compare" ]]; then
   BOM="${1:?usage: summarise-state.sh <bom.cdx.json> <policy.json> [label]}"
   POLICY="${2:?policy required}"
