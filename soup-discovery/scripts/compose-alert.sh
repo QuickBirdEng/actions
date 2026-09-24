@@ -92,6 +92,26 @@ if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
   fi
 fi
 
+# --- the standing overview ---------------------------------------------------
+# Appended last, so the blocks above keep the top of the message: those are interruptions,
+# this is the worklist. Optional — a monitoring run with no OVERVIEW passed behaves exactly
+# as before, which keeps the daily KEV path unchanged while the weekly message carries the
+# table.
+#
+# It also posts on its own. A run where nothing is exploited, nothing is overdue and no
+# release is required produces no alert blocks at all, and before this that meant silence:
+# the standing state was only ever visible in the report nobody opens between releases.
+if [[ -n "${OVERVIEW:-}" && -s "${OVERVIEW:-}" ]]; then
+  {
+    [[ -s "$ALERT" ]] && echo ""
+    echo ":bar_chart: *$PRODUCT: where the work stands*"
+    echo ""
+    cat "$OVERVIEW"
+    echo ""
+    echo "_act: a bump in an artifact we build · decide: no fix published, needs a VEX statement or a recorded acceptance · external: built elsewhere, the lever is a vendor request · parked: a disposition is already on record._"
+  } >> "$ALERT"
+fi
+
 if [[ "$VERDICT" == "incomplete" ]]; then
   {
     [[ -s "$ALERT" ]] && echo ""

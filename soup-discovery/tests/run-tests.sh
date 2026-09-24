@@ -1664,6 +1664,29 @@ test_alert_says_nothing_when_there_is_nothing() {
   [[ ! -f "$d/st.json" ]]
 }
 
+# The overview posts even on an all-clear run. Before it, a week with nothing exploited,
+# nothing overdue and no release required produced no message at all, and the standing state
+# was visible only in a report nobody opens between releases.
+test_alert_overview_posts_without_any_alert_block() {
+  d="$TMP/al7"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"
+  printf '  live (Study): v1.0.3 — not comparable\n  QA (v2)   act 5 · decide 1 · external 1 · parked 3\n' > "$d/ov.txt"
+  OVERVIEW="$d/ov.txt" PRODUCT=p bash "$S/compose-alert.sh" "$d/rec.json" "$d/alert.txt" >/dev/null 2>&1 || return 1
+  contains "$(cat "$d/alert.txt")" "where the work stands" || return 1
+  contains "$(cat "$d/alert.txt")" "act 5" || return 1
+  # The legend matters: the four words are the whole vocabulary of the message.
+  contains "$(cat "$d/alert.txt")" "needs a VEX statement"
+}
+
+# Without OVERVIEW the behaviour is exactly what it was, so the daily KEV path is unaffected
+# by a weekly feature.
+test_alert_without_overview_is_unchanged() {
+  d="$TMP/al8"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"
+  PRODUCT=p bash "$S/compose-alert.sh" "$d/rec.json" "$d/alert.txt" >/dev/null 2>&1 || return 1
+  [[ ! -s "$d/alert.txt" ]]
+}
+
 # ---------------------------------------------------------------- carried clocks
 CMS() { bash "$S/carry-monitor-state.sh" "$@"; }
 
@@ -3846,6 +3869,110 @@ test_scan_vulns_prerelease_only_fix_is_not_available() {
   assert "$(fixprop quickbird:vuln:fix)" "prerelease-only" || return 1
   assert "$(fixprop quickbird:vuln:fix-versions)" "3.0.0-alpha.2" || return 1
   contains "$(fixprop quickbird:vuln:fix-note)" "cannot adopt it"
+}
+
+# ------------------------------------------------------------- state summary
+# A BOM with one finding per class, so the counts can be asserted individually. The artifact
+# property is what separates "we can bump this" from "someone else builds it".
+mksummary_bom() {
+  cat > "$TMP/sm-bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+  {"bom-ref":"ours","type":"library","name":"liba","version":"1.0.0","purl":"pkg:npm/liba@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:web"}]},
+  {"bom-ref":"theirs","type":"library","name":"libv","version":"1.0.0","purl":"pkg:npm/libv@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:deployed-vendor"}]},
+  {"bom-ref":"nofix","type":"library","name":"libn","version":"1.0.0","purl":"pkg:npm/libn@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:web"}]},
+  {"bom-ref":"done","type":"library","name":"libd","version":"1.0.0","purl":"pkg:npm/libd@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:app"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-2026-1001","affects":[{"ref":"ours"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"},{"name":"quickbird:vuln:fix-versions","value":"2.0.0"}]},
+  {"id":"CVE-2026-1002","affects":[{"ref":"theirs"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"},{"name":"quickbird:vuln:fix-versions","value":"2.0.0"}]},
+  {"id":"CVE-2026-1003","affects":[{"ref":"nofix"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"none-published"}]},
+  {"id":"CVE-2026-1004","affects":[{"ref":"done"}],
+   "analysis":{"state":"affected","response":["can_not_fix"],"detail":"d"},
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"none-published"}]}]}
+EOF
+}
+
+# The number in the channel is the remediation unit, not the finding. Four findings that are
+# four different kinds of work must not collapse into one count, and a bump we cannot perform
+# must not sit in the same column as one we can.
+test_summary_sorts_units_by_what_they_demand() {
+  mkpolicy high
+  mksummary_bom
+  local out
+  out=$(bash "$S/summarise-state.sh" "$TMP/sm-bom.json" "$TMP/cp.json" 2>/dev/null) || return 1
+  assert "$(jq -r '.act' <<<"$out")" "1" || return 1
+  assert "$(jq -r '.external' <<<"$out")" "1" || return 1
+  assert "$(jq -r '.decide' <<<"$out")" "1" || return 1
+  assert "$(jq -r '.parked' <<<"$out")" "1"
+}
+
+# Regression guard for the shape of the first draft: counting findings rather than units
+# reported 59 actionable items for a release that had 5, because every OS package inside an
+# image carries a fixed version even though one base-image bump resolves all of them.
+test_summary_counts_units_not_findings() {
+  mkpolicy high
+  mksummary_bom
+  local out
+  out=$(bash "$S/summarise-state.sh" "$TMP/sm-bom.json" "$TMP/cp.json" 2>/dev/null) || return 1
+  local units findings
+  units=$(jq -r '.units_total' <<<"$out"); findings=$(jq -r '.findings' <<<"$out")
+  [[ "$findings" == "4" ]] || { echo "expected 4 findings, got $findings"; return 1; }
+  [[ "$units" -le "$findings" ]] || { echo "units ($units) must not exceed findings ($findings)"; return 1; }
+}
+
+# The comparison is what a weekly message is for. An unchanged state has to say so rather
+# than print an empty line that reads like a rendering fault.
+test_summary_compare_reports_no_change() {
+  mkpolicy high
+  mksummary_bom
+  local out
+  out=$(bash "$S/summarise-state.sh" --compare "$TMP/cp.json" \
+          "$TMP/sm-bom.json" "live" "$TMP/sm-bom.json" "QA" 2>/dev/null) || return 1
+  contains "$out" "unchanged since the last state" || return 1
+  contains "$out" "act 1"
+}
+
+# Actions are listed per artifact, one line each, because four lines naming the same image is
+# what a reader skips. The finding count has to survive that grouping: a base-image bump
+# clearing fifty findings and a single jar upgrade are both one entry, and only the number
+# distinguishes them.
+test_summary_groups_actions_by_artifact_and_keeps_weight() {
+  mkpolicy high
+  cat > "$TMP/sg-bom.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","name":"p","type":"application"}},
+ "components":[
+  {"bom-ref":"c1","type":"library","name":"liba","version":"1.0.0","purl":"pkg:npm/liba@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:web"}]},
+  {"bom-ref":"c2","type":"library","name":"libb","version":"1.0.0","purl":"pkg:npm/libb@1.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"quickbird:artifact:web"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-2026-2001","affects":[{"ref":"c1"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"}]},
+  {"id":"CVE-2026-2002","affects":[{"ref":"c2"}],
+   "ratings":[{"source":{"name":"OSV"},"method":"CVSSv31","vector":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"}]}]}
+EOF
+  local out
+  out=$(bash "$S/summarise-state.sh" "$TMP/sg-bom.json" "$TMP/cp.json" 2>/dev/null) || return 1
+  # Two separate upgrades, one artifact -> one group carrying both
+  assert "$(jq -r '.act_by_artifact | length' <<<"$out")" "1" || return 1
+  assert "$(jq -r '.act_by_artifact[0].artifact' <<<"$out")" "web" || return 1
+  assert "$(jq -r '.act_by_artifact[0].items | length' <<<"$out")" "2" || return 1
+  contains "$(jq -r '.act_by_artifact[0].items | join(",")' <<<"$out")" "(1)"
 }
 
 # A stable fix anywhere in the advisory is still the answer — the prerelease branch must not

@@ -36,9 +36,15 @@ scripts/resolve-scope.sh candidates.json .soup-scope.yml  # -> scan-plan.json, o
 scripts/assess-bom.sh bom/solution.cdx.json effective-policy.json
 ```
 
-Prerequisites on the runner: `jq`, `yq`, `curl`, `docker`. syft is fetched at a pinned version if it is
-not present — never `latest`, because the component list must not change because a scanner updated
-itself between two runs of the same commit.
+Prerequisites on the runner: `jq`, `yq`, `curl`, `docker`, and the Python package `cvss`
+(`pip install cvss`). syft is fetched at a pinned version if it is not present — never `latest`,
+because the component list must not change because a scanner updated itself between two runs of the
+same commit.
+
+`cvss` is not optional and its absence is quiet: `classify-findings.py` aborts on the import, so
+every script downstream of it — the findings, the remediation units, the report, the alert — simply
+does not run. Locally that looked like 34 unrelated test failures blamed on a Python version for
+some time before anyone read the first line of the traceback.
 
 `KEEP_TIMESTAMP=1` when the document needs `metadata.timestamp`. Leave it unset for a committable,
 diffable document: successive builds of the same commit then differ only where the components differ.

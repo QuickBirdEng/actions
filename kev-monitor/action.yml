@@ -21,6 +21,13 @@ inputs:
       way: assuming "false" is the one wrong answer with a legal consequence.
     required: false
     default: ''
+  overview:
+    description: >-
+      Append the standing overview — what the live environment carries, what the QA line
+      carries, and what moved. Off by default so the daily run stays an interruption channel:
+      the table is for the weekly message and for a QA build, not for every morning.
+    required: false
+    default: 'false'
   slack-channel-id:
     description: 'Channel to post to. Without it the run still produces its record; only the notification is skipped.'
     required: false
@@ -90,10 +97,24 @@ runs:
         IN_REPO: ${{ inputs.repo }}
         IN_PRODUCT: ${{ inputs.product }}
         IN_OUT: ${{ inputs.evidence-dir }}
+        IN_OVERVIEW: ${{ inputs.overview }}
       run: |
         set -o pipefail
         OUT="$IN_OUT"
-        bash "$GITHUB_ACTION_PATH/../soup-discovery/scripts/monitor-kev.sh" \
+        S="$GITHUB_ACTION_PATH/../soup-discovery/scripts"
+        # Built before the monitor, because monitor-kev.sh calls compose-alert.sh itself and
+        # that reads OVERVIEW from the environment. A failure here must not take the KEV check
+        # with it: the overview is the worklist, the KEV answer is the reportable one.
+        if [ "$IN_OVERVIEW" = "true" ]; then
+          mkdir -p "$OUT"
+          if bash "$S/compose-overview.sh" "$IN_REPO" --latest - \
+               "${SOUP_POLICY_FILE:-.soup-policy.yml}" "$OUT/overview.txt" 2>"$OUT/overview.err"; then
+            [ -s "$OUT/overview.txt" ] && export OVERVIEW="$OUT/overview.txt"
+          else
+            echo "::warning::the overview could not be built — $(tail -1 "$OUT/overview.err" 2>/dev/null)"
+          fi
+        fi
+        bash "$S/monitor-kev.sh" \
           "$IN_REPO" "$IN_PRODUCT" "$OUT"
         REC=$(ls -1 "$OUT"/*-"$IN_PRODUCT".json | head -1)
         {
