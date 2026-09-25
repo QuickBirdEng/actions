@@ -21,3 +21,7 @@ runs:
     - uses: webfactory/ssh-agent@v0.6.0
       with:
         ssh-private-key: ${{ inputs.ssh-private-key }}
+    - name: Materialise LFS files
+      if: inputs.git-lfs == 'true'
+      shell: bash
+      run: git lfs pull
