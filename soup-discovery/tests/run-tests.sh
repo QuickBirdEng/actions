@@ -1481,6 +1481,55 @@ test_escalate_recorded_decision_holds_the_level() {
   assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "breached"
 }
 
+# `by` names the person carrying the risk acceptance. Without it the entry is a draft, and a
+# draft silencing the escalation while the report still shows the row as a violation is the
+# wrong way round. render-vdr-pdf.py takes the same line.
+test_escalate_unsigned_decision_does_not_hold_the_level() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00"}]'
+  printf 'decisions:\n  - cve: CVE-A\n    decision: risk-accepted\n    by:\n' > "$TMP/dec.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec.yml" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "undecided" || return 1
+  contains "$(jq -r '.escalations[0].detail[-1]' "$TMP/eo.json")" "drafted but unsigned"
+}
+
+# A draft has to behave exactly like no decision, not worse: a finding still inside its
+# decision window must not be escalated early just because someone started writing one.
+test_escalate_unsigned_draft_does_not_shorten_the_window() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-31T00:00:00+00:00"}]'
+  printf 'decisions:\n  - cve: CVE-A\n    decision: risk-accepted\n    by:\n' > "$TMP/dec.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec.yml" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "breached" || return 1
+  contains "$(jq -r '.escalations[0].detail[-1]' "$TMP/eo.json")" "more working day"
+}
+
+# The draft still has to be visible, or whoever wrote it sees "nothing on record" and assumes
+# it was lost.
+test_escalate_unsigned_draft_is_still_reported() {
+  mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00"}]'
+  printf 'decisions:\n  - cve: CVE-A\n    decision: risk-accepted\n    by:\n' > "$TMP/dec.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec.yml" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].decision.decision' "$TMP/eo.json")" "risk-accepted" || return 1
+  assert "$(jq -r '.escalations[0].decision.signed' "$TMP/eo.json")" "false"
+}
+
+# One base image carrying 54 advisories is decided once, not per RHSA. Same opt-in the report
+# uses, so a currency decision does not silence a library's CVEs by accident.
+test_escalate_library_decision_covers_its_findings() {
+  mkesc '[{"id":"RHSA-1","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00",
+           "affects":["pkg:rpm/redhat/glibc@2.34-275.el9_8?arch=x86_64"]}]'
+  printf 'library_decisions:\n  - library: glibc\n    decision: base image\n    by: x\n    covers_findings: true\n' > "$TMP/dec.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec.yml" --out "$TMP/eo.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "breached" || return 1
+  # without the opt-in it must not cover anything
+  printf 'library_decisions:\n  - library: glibc\n    decision: upgrade planned\n    by: x\n' > "$TMP/dec2.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec2.yml" --out "$TMP/eo2.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo2.json")" "undecided" || return 1
+  # and an unsigned one is still a draft
+  printf 'library_decisions:\n  - library: glibc\n    decision: base image\n    by:\n    covers_findings: true\n' > "$TMP/dec3.yml"
+  ESC "$TMP/ef.json" --decisions "$TMP/dec3.yml" --out "$TMP/eo3.json" --now 2026-08-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.escalations[0].level' "$TMP/eo3.json")" "undecided"
+}
+
 # An expired decision reads as handled while protecting nothing — worse than none at all.
 test_escalate_expired_decision_is_undecided() {
   mkesc '[{"id":"CVE-A","track":"immediate","mitigation_due":"2026-07-01T00:00:00+00:00"}]'
