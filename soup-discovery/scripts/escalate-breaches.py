@@ -71,6 +71,20 @@ def working_days_between(a, b):
     return days
 
 
+def is_signed(dec):
+    """A decision nobody signed is a draft, and a draft is not a decision.
+
+    `by` names the person carrying the risk acceptance. render-vdr-pdf.py takes the same line;
+    without this the two disagreed, and in the direction that matters: an unsigned entry
+    silenced the escalation while the report still showed the row as a violation.
+
+    Deliberately not forced to `undecided`: a draft has to behave exactly like no decision at
+    all, so a finding two days past its deadline stays `breached` and its decision window is
+    not cut short.
+    """
+    return bool(dec) and bool(str(dec.get("by") or "").strip())
+
+
 def load_decisions(path):
     """CVE -> decision.
 
@@ -79,7 +93,7 @@ def load_decisions(path):
     breach as undecided — a wrong answer that looks like a real finding.
     """
     if not path:
-        return {}
+        return {}, {}
     try:
         if path.endswith((".yml", ".yaml")):
             r = subprocess.run(["yq", "-o=json", ".", path],
@@ -89,7 +103,7 @@ def load_decisions(path):
             with open(path, encoding="utf-8") as fh:
                 doc = json.load(fh) or {}
     except FileNotFoundError:
-        return {}
+        return {}, {}
     except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as e:
         # Refuse rather than degrade: an unreadable decisions file makes every recorded
         # decision invisible, and the run would escalate breaches that are already handled.
@@ -99,7 +113,44 @@ def load_decisions(path):
     for d in doc.get("decisions", []) or []:
         if d.get("cve"):
             out[d["cve"]] = d
-    return out
+    # Keyed on a library rather than a CVE, and read here only with `covers_findings: true`.
+    # The report's currency and staleness tables have no CVE to key on, and one base image
+    # carrying 54 advisories is decided once, not per RHSA. Without this the two paths
+    # disagreed the other way round: decided in the document, still escalating in Slack.
+    libs = {}
+    for d in doc.get("library_decisions", []) or []:
+        if d.get("library") and d.get("covers_findings"):
+            libs[(d["library"], str(d.get("version") or ""))] = d
+    return out, libs
+
+
+def purl_name(purl):
+    """Library name out of a purl, namespace dropped: pkg:rpm/redhat/glibc@2.34 -> glibc."""
+    s = str(purl or "")
+    if not s.startswith("pkg:"):
+        return ""
+    s = s.split("?", 1)[0].split("#", 1)[0]
+    s = s.split(":", 1)[1].split("/", 1)[-1] if "/" in s else ""
+    name = s.rsplit("@", 1)[0].rsplit("/", 1)[-1]
+    return name
+
+
+def purl_version(purl):
+    s = str(purl or "").split("?", 1)[0].split("#", 1)[0]
+    return s.rsplit("@", 1)[1] if "@" in s else ""
+
+
+def decision_for_finding(by_cve, by_lib, f):
+    """The CVE decision wins; a covering library decision is the fallback."""
+    d = by_cve.get(f.get("id"))
+    if d:
+        return d
+    for p in f.get("affects") or []:
+        n, v = purl_name(p), purl_version(p)
+        d = by_lib.get((n, v)) or by_lib.get((n, ""))
+        if d:
+            return d
+    return None
 
 
 def main():
@@ -139,7 +190,7 @@ def main():
                 unit_of[fid].append(i)
     policy = json.load(open(args.policy, encoding="utf-8")) if args.policy else {}
     decision_window = int(str(policy.get("breach", {}).get("decision_within", "5d")).rstrip("d") or 5)
-    decisions = load_decisions(args.decisions)
+    decisions, lib_decisions = load_decisions(args.decisions)
 
     results = []
     for f in doc.get("findings", []):
@@ -158,17 +209,20 @@ def main():
             if now > due:
                 level = BREACHED
                 overdue_wd = working_days_between(due, now)
-                dec = decisions.get(f["id"])
-                if dec:
+                dec = decision_for_finding(decisions, lib_decisions, f)
+                draft = "" if is_signed(dec) else (" A decision is drafted but unsigned."
+                                                  if dec else "")
+                if is_signed(dec):
                     detail.append(f"{clock} breached {overdue_wd} working day(s) ago. "
                                   f"Decision on record: {dec.get('decision','?')}")
                 elif overdue_wd > decision_window:
                     level = UNDECIDED
                     detail.append(f"{clock} breached {overdue_wd} working days ago and no "
-                                  f"decision is recorded. WI-006-09: Decide required one within {decision_window}")
+                                  f"decision is recorded. WI-006-09: Decide required one within {decision_window}"
+                                  f"{draft}")
                 else:
                     detail.append(f"{clock} breached. A documented decision is required within "
-                                  f"{decision_window - overdue_wd} more working day(s)")
+                                  f"{decision_window - overdue_wd} more working day(s){draft}")
             elif due - now <= lead:
                 level = APPROACHING
                 hrs = int((due - now).total_seconds() // 3600)
@@ -181,7 +235,7 @@ def main():
         if worst == OK:
             continue
 
-        dec = decisions.get(f["id"])
+        dec = decision_for_finding(decisions, lib_decisions, f)
         results.append({
             "id": f["id"],
             "track": f.get("track"),
@@ -190,15 +244,19 @@ def main():
             "detail": detail,
             "mitigation_due": f.get("mitigation_due"),
             "remediation_due": f.get("remediation_due"),
+            # Recorded even when unsigned, so a draft is visible rather than looking lost.
+            # `signed` is what says whether it counted.
             "decision": ({"decision": dec.get("decision"), "by": dec.get("by"),
                           "date": dec.get("date"), "expires": dec.get("expires"),
-                          "reason": dec.get("reason")} if dec else None),
+                          "reason": dec.get("reason"), "signed": is_signed(dec)} if dec else None),
         })
 
     # A recorded decision that has itself expired is worse than none: it reads as handled.
     for r in results:
         d = r.get("decision")
-        if d and d.get("expires"):
+        # Only a signed decision can expire into something worse; an unsigned one never
+        # counted, and the level already reflects that.
+        if d and d.get("signed") and d.get("expires"):
             try:
                 if datetime.fromisoformat(d["expires"]).replace(tzinfo=timezone.utc) < now:
                     r["level"] = UNDECIDED
