@@ -17,16 +17,22 @@
 # The comparison is the message text, not a per-item ledger. Every change worth telling someone
 # about changes the text, and the text is what they read.
 #
-# Usage: decide-alert.sh <alert.txt> <record.json> <state.json>
+# Usage: decide-alert.sh <alert.txt> <record.json> <state.json> [items.json]
 #        prints post=true|false; rewrites <state.json>
 #        ALERT_REPEAT_DAYS  days before an unchanged alert is repeated (default 7)
 #        ALERT_NOW          ISO timestamp, for reproducible tests
+#
+# items.json is compose-alert.sh's ledger of everything open this run, key -> level. It is
+# carried in the state so the next run can tell new from standing. Written here rather than
+# there for one reason: an item must not count as announced until the message carrying it was
+# actually sent, which is the same rule the digest already follows.
 
 set -uo pipefail
 
 ALERT="${1:?missing alert file}"
 RECORD="${2:?missing record}"
 STATE="${3:?missing state file}"
+ITEMS="${4:-}"
 REPEAT_DAYS="${ALERT_REPEAT_DAYS:-7}"
 NOW="${ALERT_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
@@ -83,6 +89,12 @@ fi
 
 # Only a posted message updates the record. Recording a digest that was never sent would suppress
 # the next run, which is the one failure this must not have.
-jq -n --arg d "$DIGEST" --arg at "$NOW" '{digest: $d, posted_at: $at}' > "$STATE"
+NEW_ITEMS='{}'
+if [[ -n "$ITEMS" && -f "$ITEMS" ]]; then
+  NEW_ITEMS=$(jq -c '.' "$ITEMS" 2>/dev/null) || NEW_ITEMS='{}'
+  [[ -n "$NEW_ITEMS" && "$NEW_ITEMS" != "null" ]] || NEW_ITEMS='{}'
+fi
+jq -n --arg d "$DIGEST" --arg at "$NOW" --argjson it "$NEW_ITEMS" \
+  '{digest: $d, posted_at: $at, items: $it}' > "$STATE"
 echo "post=true"
 echo "  posting: $WHY" >&2

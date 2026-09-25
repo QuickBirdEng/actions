@@ -2034,8 +2034,95 @@ test_monitor_alerts_a_breach_without_any_kev_finding() {
     > "$TMP/mon/esc.json"
   PRODUCT=p CRA_SCOPE=unknown bash "$S/compose-alert.sh" \
     "$TMP/mon/record.json" "$TMP/mon/alert.txt" "$TMP/mon/esc.json" "" >/dev/null 2>&1 || return 1
-  grep -q "missed remediation deadlines" "$TMP/mon/alert.txt" || return 1
+  grep -q "deadlines that changed" "$TMP/mon/alert.txt" || return 1
   grep -q "CVE-2026-1" "$TMP/mon/alert.txt"
+}
+
+# --- the daily message is a delta -------------------------------------------
+# Re-listing the standing backlog every morning is what stopped the channel being read.
+# decide-alert.sh could not catch it: each line carries a countdown, so the digest differed
+# every night and the weekly-repeat rule was unreachable.
+esc1() { jq -n --arg lvl "$1" '{summary:{by_level:{}},
+          escalations:[{id:"CVE-2026-1",target:"Production",level:$lvl,track:"expedited",
+                        detail:["due in 167h"]}]}'; }
+
+test_alert_says_nothing_about_what_was_already_announced() {
+  d="$TMP/dlt1"; mkdir -p "$d"; mkalert all-clear; esc1 undecided > "$d/esc.json"
+  PRODUCT=p bash "$S/compose-alert.sh" "$TMP/mon/record.json" "$d/a1.txt" "$d/esc.json" "" \
+    >/dev/null 2>&1 || return 1
+  grep -q "CVE-2026-1" "$d/a1.txt" || return 1
+  bash "$S/decide-alert.sh" "$d/a1.txt" "$TMP/mon/record.json" "$d/st.json" "$d/a1.txt.items.json" \
+    >/dev/null 2>&1
+  # same item, a day later, only the countdown moved
+  jq '.escalations[0].detail=["due in 143h"]' "$d/esc.json" > "$d/esc2.json"
+  ALERT_PREV_STATE="$d/st.json" PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/a2.txt" "$d/esc2.json" "" >/dev/null 2>&1 || return 1
+  [[ ! -s "$d/a2.txt" ]]
+}
+
+test_alert_reports_an_item_that_escalated() {
+  d="$TMP/dlt2"; mkdir -p "$d"; mkalert all-clear; esc1 undecided > "$d/esc.json"
+  PRODUCT=p bash "$S/compose-alert.sh" "$TMP/mon/record.json" "$d/a1.txt" "$d/esc.json" "" \
+    >/dev/null 2>&1
+  bash "$S/decide-alert.sh" "$d/a1.txt" "$TMP/mon/record.json" "$d/st.json" "$d/a1.txt.items.json" \
+    >/dev/null 2>&1
+  esc1 breached > "$d/esc2.json"
+  ALERT_PREV_STATE="$d/st.json" PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/a2.txt" "$d/esc2.json" "" >/dev/null 2>&1 || return 1
+  grep -q "CVE-2026-1" "$d/a2.txt"
+}
+
+# A three-line delta must not read as "three problems open".
+test_alert_delta_names_the_standing_total() {
+  d="$TMP/dlt3"; mkdir -p "$d"; mkalert all-clear
+  jq -n '{summary:{by_level:{}},escalations:[
+     {id:"A",target:"Production",level:"undecided",detail:["x"]},
+     {id:"B",target:"Production",level:"undecided",detail:["x"]}]}' > "$d/esc.json"
+  jq -n '{digest:"x",posted_at:"2026-03-01T06:00:00Z",items:{"esc:A@Production":"undecided"}}' \
+    > "$d/st.json"
+  ALERT_PREV_STATE="$d/st.json" PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/a.txt" "$d/esc.json" "" >/dev/null 2>&1 || return 1
+  grep -q "   • B" "$d/a.txt" || return 1
+  grep -q "   • A" "$d/a.txt" && return 1
+  contains "$(cat "$d/a.txt")" "2 open in total"
+}
+
+# The weekly run carries the whole worklist, under the heading it always had.
+test_alert_full_scope_lists_everything() {
+  d="$TMP/dlt4"; mkdir -p "$d"; mkalert all-clear; esc1 undecided > "$d/esc.json"
+  jq -n '{digest:"x",posted_at:"2026-03-01T06:00:00Z",items:{"esc:CVE-2026-1@Production":"undecided"}}' \
+    > "$d/st.json"
+  ALERT_SCOPE=full ALERT_PREV_STATE="$d/st.json" PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/a.txt" "$d/esc.json" "" >/dev/null 2>&1 || return 1
+  grep -q "missed remediation deadlines" "$d/a.txt" || return 1
+  grep -q "CVE-2026-1" "$d/a.txt"
+}
+
+# The same CVE staged for two environments is two entries; without the target they render as
+# the identical line twice, which is how mindnet reported six findings as twelve.
+test_alert_release_line_names_its_target() {
+  d="$TMP/dlt5"; mkdir -p "$d"; mkalert all-clear
+  jq -n '{summary:{release_required:2},release_required:[
+     {id:"CVE-2026-2",target:"mobile",why:"fixed in main, not deployed"},
+     {id:"CVE-2026-2",target:"Production",why:"fixed in main, not deployed"}]}' > "$d/lc.json"
+  PRODUCT=p bash "$S/compose-alert.sh" "$TMP/mon/record.json" "$d/a.txt" "" "$d/lc.json" \
+    >/dev/null 2>&1 || return 1
+  grep -q "CVE-2026-2 (mobile)" "$d/a.txt" || return 1
+  grep -q "CVE-2026-2 (Production)" "$d/a.txt"
+}
+
+# The ledger is what tomorrow compares against, so it must not advance on a message nobody sent.
+test_alert_ledger_advances_only_on_a_posted_message() {
+  d="$TMP/dlt6"; mkdir -p "$d"; mkalert all-clear; esc1 undecided > "$d/esc.json"
+  PRODUCT=p bash "$S/compose-alert.sh" "$TMP/mon/record.json" "$d/a1.txt" "$d/esc.json" "" \
+    >/dev/null 2>&1
+  ALERT_NOW=2026-03-01T06:00:00Z bash "$S/decide-alert.sh" "$d/a1.txt" "$TMP/mon/record.json" \
+    "$d/st.json" "$d/a1.txt.items.json" >/dev/null 2>&1
+  before=$(jq -c '.items' "$d/st.json")
+  # an unchanged alert is not posted, so the ledger must stay where it was
+  ALERT_NOW=2026-03-02T06:00:00Z bash "$S/decide-alert.sh" "$d/a1.txt" "$TMP/mon/record.json" \
+    "$d/st.json" "$d/a1.txt.items.json" >/dev/null 2>&1
+  assert "$(jq -c '.items' "$d/st.json")" "$before"
 }
 
 # WI-006-09: Notification's release-required signal had the same problem.

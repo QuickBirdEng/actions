@@ -412,13 +412,20 @@ ALERT="$OUT_DIR/alert.txt"
 
 ALERT_ARGS=("$RECORD" "$ALERT")
 ALERT_ARGS+=("${ESCALATION:-}" "${LIFECYCLE:-}")
-PRODUCT="$PRODUCT" CRA_SCOPE="$CRA_SCOPE" bash "$HERE/compose-alert.sh" "${ALERT_ARGS[@]}"
+ALERT_ITEMS="$OUT_DIR/alert-items.json"
+# The same switch that turns on the overview turns on the full list: the weekly message is the
+# one place a complete worklist belongs, and a second knob would let the two drift apart.
+PRODUCT="$PRODUCT" CRA_SCOPE="$CRA_SCOPE" \
+  ALERT_SCOPE="$( [[ -n "${OVERVIEW:-}" ]] && echo full || echo new )" \
+  ALERT_PREV_STATE="$STATE_DIR/alert-state.json" \
+  ALERT_ITEMS="$ALERT_ITEMS" \
+  bash "$HERE/compose-alert.sh" "${ALERT_ARGS[@]}"
 
 if [[ -s "$ALERT" ]]; then
   log "  alert written to $ALERT"
   # Whether it is worth saying again. The state travels with the run evidence, the same way the
   # finding clocks do.
-  DECISION=$(bash "$HERE/decide-alert.sh" "$ALERT" "$RECORD" "$STATE_DIR/alert-state.json")
+  DECISION=$(bash "$HERE/decide-alert.sh" "$ALERT" "$RECORD" "$STATE_DIR/alert-state.json" "$ALERT_ITEMS")
   if [[ "$DECISION" == "post=true" ]]; then
     echo "alert=true"
   else
