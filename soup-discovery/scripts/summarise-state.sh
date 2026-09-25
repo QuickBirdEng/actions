@@ -70,7 +70,10 @@ classify() {
           | ( [ ($unit.findings // [])[] ] ) as $ids
           | { action:   ($unit.action // ""),
               kind:     ($unit.kind // "?"),
-              artifact: (($unit.artifact // "") | sub("^quickbird:artifact:"; "")),
+              # gsub, not sub: a component that ships in more than one artifact carries them
+              # comma-separated, and stripping only the first left "web, quickbird:artifact:..."
+              # in the message.
+              artifact: (($unit.artifact // "") | gsub("quickbird:artifact:"; "")),
               label:    ( if ($unit.kind // "") == "base-image-bump" then "bump base image"
                           else (($unit.action // "") | sub("^upgrade "; "") | sub(" in .*$"; "")) end ),
               n:        ($unit.finding_count // ($ids | length)),
@@ -91,27 +94,52 @@ classify() {
         # reader skips. The finding count rides along per entry: one base-image bump clearing
         # 53 findings and a single jar upgrade are both one line, and only the number says
         # which is which.
+        #
+        # And capped. Ungapped this produced, for a product with 110 actionable units, six
+        # lines of thirty packages each — the same wall of text the channel already had, only
+        # sorted differently. The biggest levers are what a reader needs; the tail is what the
+        # report is for. TOP_ARTIFACTS / TOP_ITEMS override for a caller that wants it all.
         act_by_artifact: ( $actionable
                            | group_by(.artifact)
                            | map({ artifact: .[0].artifact,
+                                   units: length,
                                    findings: (map(.n) | add),
                                    items: (sort_by(-.n) | map("\(.label) (\(.n))")) })
-                           | sort_by(-.findings) ) }'
+                           | sort_by(-.findings)
+                           | ( (env.TOP_ARTIFACTS // "3") | tonumber ) as $ta
+                           | ( (env.TOP_ITEMS // "3") | tonumber ) as $ti
+                           | { shown: ( .[0:$ta] | map( . + { items: (.items[0:$ti]),
+                                                              more_items: ((.units - $ti) | if . > 0 then . else 0 end) } ) ),
+                               more_artifacts: ((length - $ta) | if . > 0 then . else 0 end),
+                               more_units: ( .[$ta:] | map(.units) | add // 0 ) } ) }'
 }
 
 # One state, rendered for a reader rather than as JSON. Used when there is nothing to compare
 # against — a delta line against the same file would say "unchanged", which is true of any
 # file and reads as though the live environment were up to date.
+# The action list, capped and with the tail summarised. Shared by --render and --compare so
+# the two cannot drift apart in formatting, which is the whole reason the block is a function.
+ACTIONS_JQ='
+  def render_actions($s):
+    ($s.act_by_artifact) as $g
+    | if ($g.shown | length) == 0 then []
+      else [ "" ]
+           + ( $g.shown | map("  • \(.artifact): " + (.items | join(", "))
+                              + (if .more_items > 0 then " + \(.more_items) more" else "" end)) )
+           + ( if $g.more_artifacts > 0
+               then [ "  • + \($g.more_artifacts) more artifact(s), \($g.more_units) action(s) — see the report" ]
+               else [] end )
+      end ;
+'
+
 if [[ "${1:-}" == "--render" ]]; then
   BOM="${2:?usage: summarise-state.sh --render <bom> <policy> <label>}"
   POLICY="${3:?policy required}"; LABEL="${4:-state}"
   S=$(classify "$BOM" "$POLICY" "one") || exit 1
-  jq -rn --argjson s "$S" --arg l "$LABEL" '
+  jq -rn --argjson s "$S" --arg l "$LABEL" "$ACTIONS_JQ"'
     [ "  \($l)   act \($s.act) · decide \($s.decide) · external \($s.external) · parked \($s.parked)"
       + (if $s.overdue > 0 then "  :alarm_clock: \($s.overdue) overdue" else "" end) ]
-    + ( if ($s.act_by_artifact | length) > 0
-        then [ "" ] + ( $s.act_by_artifact | map("  • \(.artifact): " + (.items | join(", "))) )
-        else [] end )
+    + render_actions($s)
     | join("\n")'
   exit 0
 fi
@@ -130,7 +158,7 @@ QA="${5:?QA BOM required}";      QA_LABEL="${6:-QA}"
 L=$(classify "$LIVE" "$POLICY" "live") || exit 1
 Q=$(classify "$QA"   "$POLICY" "qa")   || exit 1
 
-jq -rn --argjson a "$L" --argjson b "$Q" --arg la "$LIVE_LABEL" --arg lb "$QA_LABEL" '
+jq -rn --argjson a "$L" --argjson b "$Q" --arg la "$LIVE_LABEL" --arg lb "$QA_LABEL" "$ACTIONS_JQ"'
   def row($l; $s): "  \($l)   act \($s.act) · decide \($s.decide) · external \($s.external) · parked \($s.parked)"
                    + (if $s.overdue > 0 then "  :alarm_clock: \($s.overdue) overdue" else "" end);
   def d($k): ($b[$k] - $a[$k]);
@@ -142,8 +170,5 @@ jq -rn --argjson a "$L" --argjson b "$Q" --arg la "$LIVE_LABEL" --arg lb "$QA_LA
           (if d("parked") != 0 then "parked \(sgn(d("parked")))" else empty end),
           (if d("units_total") != 0 then "actions total \(sgn(d("units_total")))" else empty end) ]
         | if length == 0 then "  -> unchanged since the last state" else "  -> since the last state: " + join(" · ") end ) ]
-  + ( if ($b.act_by_artifact | length) > 0
-      then [ "" ] + ( $b.act_by_artifact
-                      | map("  • \(.artifact): " + (.items | join(", "))) )
-      else [] end )
+  + render_actions($b)
   | join("\n")'
