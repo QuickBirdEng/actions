@@ -168,6 +168,74 @@ def load_project_keys(path):
         return set()
 
 
+def load_decisions(path, today):
+    """(by CVE, by library) -> decision, from .soup-decisions.yml.
+
+    Until this existed the report printed "No decision recorded." into every currency, CVE
+    and staleness row unconditionally, while its own footer claimed decisions were read from
+    this file. Recording one changed the Slack escalation and nothing in the document.
+
+    `decisions` keys on `cve` and is the same list escalate-breaches.py reads.
+    `library_decisions` keys on `library` (+ optional `version`), for the currency and
+    staleness tables, which have no CVE to key on. Entries escalate-breaches.py cannot use
+    are skipped there, so the two stay compatible.
+    """
+    if not path:
+        return {}, {}
+    try:
+        r = subprocess.run(["yq", "-o=json", ".", path], capture_output=True,
+                           text=True, check=True)
+        doc = json.loads(r.stdout or "{}") or {}
+    except FileNotFoundError:
+        return {}, {}
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as e:
+        # Refuse rather than degrade: a decisions file that silently failed to parse renders a
+        # document saying nothing is decided, which is the claim this change exists to stop.
+        print(f"::error::could not read {path}: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    def annotate(d):
+        exp = str(d.get("expires") or "")
+        d = dict(d)
+        d["_expired"] = bool(exp) and exp[:10] < today
+        return d
+
+    by_cve = {d["cve"]: annotate(d) for d in (doc.get("decisions") or []) if d.get("cve")}
+    by_lib = {}
+    for d in (doc.get("library_decisions") or []):
+        if d.get("library"):
+            by_lib[(d["library"], str(d.get("version") or ""))] = annotate(d)
+    return by_cve, by_lib
+
+
+def decision_for(by_lib, name, version):
+    """A decision pinned to one version wins over one that covers the library."""
+    return by_lib.get((name, str(version or ""))) or by_lib.get((name, ""))
+
+
+def decision_cell(dec):
+    """(text, accepted) — accepted decides whether the row still counts as a violation."""
+    if not dec:
+        return "No decision recorded.", False
+    who = dec.get("by")
+    when = str(dec.get("date") or "")[:10]
+    sig = " · ".join(x for x in (esc(who) if who else "", when) if x)
+    body = esc(dec.get("decision") or dec.get("reason") or "recorded")
+    if dec.get("_expired"):
+        # An expired decision reads as handled while covering nothing, which is worse than
+        # none at all. escalate-breaches.py takes the same line.
+        return (f'<font color="#b91c1c"><b>Decision expired {esc(str(dec.get("expires"))[:10])}.</b></font> '
+                f"{body}"), False
+    if not who:
+        # The schema carries `by` because a risk acceptance on a medical device belongs to a
+        # person. Unsigned, it is a draft, and the row stays a violation.
+        return f'<font color="#b45309"><b>Decision drafted, unsigned.</b></font> {body}', False
+    out = body + (f" <font color='#5b6472'>({sig})</font>" if sig else "")
+    if dec.get("expires"):
+        out += f" <font color='#5b6472'>· expires {esc(str(dec['expires'])[:10])}</font>"
+    return out, True
+
+
 def src_chip(is_config):
     return ('<font color="#1f4e79"><b>config</b></font>' if is_config
             else '<font color="#5b6472">default</font>')
@@ -226,6 +294,8 @@ def build(args):
     units = (json.load(open(args.units, encoding="utf-8")) if args.units else {})
     windows = (json.load(open(args.windows, encoding="utf-8")) if args.windows else {})
     project_keys = load_project_keys(args.project_policy)
+    dec_cve, dec_lib = load_decisions(
+        args.decisions, args.date or datetime.date.today().isoformat())
 
     meta = bundle.get("metadata") or {}
     mp = props(meta)
@@ -423,13 +493,18 @@ def build(args):
         rows = [["Library", "Installed", "Latest", "Detail", "Status"]]
         shade = {}
         for c, p, arts in sorted(g["beyond"], key=lambda cp: (cp[0].get("name") or "").lower()):
-            shade[len(rows)] = SEV2
+            txt, accepted = decision_cell(
+                decision_for(dec_lib, c.get("name"), c.get("version")))
+            # The legend promises plain shading for "accepted with a recorded reason". Before
+            # the lookup existed every row shaded, so the legend described nothing.
+            if not accepted:
+                shade[len(rows)] = SEV2
             rows.append([
                 lib_cell(c, arts, cell, small),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(f"<b>{esc(p.get('quickbird:currency:latest', '?'))}</b>", cell),
                 Paragraph(esc(p.get("quickbird:currency:detail", "beyond limit")), small),
-                Paragraph("No decision recorded.", cell),
+                Paragraph(txt, cell),
             ])
         for c, p, arts in sorted(g["within"], key=lambda cp: (cp[0].get("name") or "").lower()):
             rows.append([
@@ -530,10 +605,32 @@ def build(args):
                        props(v).get("quickbird:finding:remediation-due", "") for v in vs),
                       default="")[:10]
             track = props(vs[0]).get("quickbird:finding:track", "")
-            status = "No decision recorded."
+            # One row can carry several CVEs. It only counts as decided when every one of them
+            # is: a row that showed the first decision would hide the undecided rest.
+            row_cves = [v.get("id") for v in vs if v.get("id")]
+            # A library decision covers this library's findings only when it says so. Without
+            # the opt-in a currency decision ("major upgrade next window") would silence every
+            # CVE in the package, including one published tomorrow.
+            lib_dec = decision_for(dec_lib, name, version)
+            if not (lib_dec or {}).get("covers_findings"):
+                lib_dec = None
+            row_decs = [dec_cve.get(i) or lib_dec for i in row_cves]
+            cells = [decision_cell(d) for d in row_decs]
+            accepted = bool(cells) and all(a for _, a in cells)
+            if accepted:
+                status = cells[0][0] if len(cells) == 1 else (
+                    f"{cells[0][0]}<br/><font size='6.5' color='#5b6472'>"
+                    f"and {len(cells) - 1} further, each decided</font>")
+            else:
+                undecided = sum(1 for _, a in cells if not a)
+                first = next((t for t, a in cells if not a), "No decision recorded.")
+                status = first if undecided == 1 else (
+                    f"{first}<br/><font size='6.5' color='#5b6472'>"
+                    f"{undecided} of {len(cells)} without an accepted decision</font>")
             if due:
                 status += f" Mitigation due {due} ({track})."
-            shade[len(rows)] = SEV2 if (kev or mx >= 9) else SEV1
+            if not accepted:
+                shade[len(rows)] = SEV2 if (kev or mx >= 9) else SEV1
             rows.append([
                 Paragraph(lib, cell),
                 Paragraph(sev_txt, cell),
@@ -571,17 +668,28 @@ def build(args):
         rows = [["Library", "Installed = latest", "Detail", "Registry status", "Status"]]
         shade = {}
         for c, p, arts in sorted(g["dep"], key=lambda cp: (cp[0].get("name") or "").lower()):
-            shade[len(rows)] = SEV2
+            txt, accepted = decision_cell(
+                decision_for(dec_lib, c.get("name"), c.get("version")))
+            if not accepted:
+                shade[len(rows)] = SEV2
             rows.append([
                 lib_cell(c, arts, cell, small),
                 Paragraph(esc(c.get("version")), cell),
                 Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
                 Paragraph('<font color="#b91c1c"><b>deprecated</b></font>', cell),
-                Paragraph("No decision recorded.", cell),
+                Paragraph(txt, cell),
             ])
         for c, p, arts in sorted(g["stale"], key=lambda cp: (cp[0].get("name") or "").lower()):
+            # The policy exemption is a standing rule and outranks a per-library decision;
+            # recording one against a package the process already exempts is a no-op, not a
+            # conflict.
             exempt = p.get("quickbird:currency:stale-exempt")
-            if not exempt:
+            if exempt:
+                txt, accepted = esc(exempt), True
+            else:
+                txt, accepted = decision_cell(
+                    decision_for(dec_lib, c.get("name"), c.get("version")))
+            if not accepted:
                 shade[len(rows)] = SEV1
             who = p.get("quickbird:currency:publisher")
             rows.append([
@@ -590,7 +698,7 @@ def build(args):
                 Paragraph(esc(p.get("quickbird:currency:detail", "")), small),
                 Paragraph(f"verified publisher {esc(who)}" if who else "active flag not set",
                           small),
-                Paragraph(esc(exempt) if exempt else "No decision recorded.", cell),
+                Paragraph(txt, cell),
             ])
         # Status carries a full sentence once a publisher exemption is in force, and
         # Registry status carries "verified publisher <domain>". Both were sized for two
@@ -670,6 +778,7 @@ def main():
     ap.add_argument("--units")
     ap.add_argument("--windows")
     ap.add_argument("--date")
+    ap.add_argument("--decisions", help=".soup-decisions.yml")
     args = ap.parse_args()
     build(args)
     import os

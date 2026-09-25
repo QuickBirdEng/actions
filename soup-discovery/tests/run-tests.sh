@@ -4329,6 +4329,128 @@ assert len(m.one_row_per_library(entries + [other])) == 2
 PYEOF
 }
 
+# The report printed "No decision recorded." into every currency, CVE and staleness row
+# unconditionally while its footer claimed it read .soup-decisions.yml. It never opened the file.
+dec_fixture() {
+  cat > "$TMP/dec-bundle.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","type":"application","name":"prod","version":"v1.0.0"}},
+ "components":[
+  {"bom-ref":"a","type":"library","name":"oldlib","version":"1.0.0","purl":"pkg:npm/oldlib@1.0.0",
+   "properties":[{"name":"quickbird:dependency:scope","value":"direct"},
+                 {"name":"quickbird:currency:status","value":"behind"},
+                 {"name":"quickbird:currency:latest","value":"2.0.0"},
+                 {"name":"quickbird:currency:detail","value":"behind by 1 major"}]},
+  {"bom-ref":"b","type":"library","name":"cvelib","version":"1.0.0","purl":"pkg:npm/cvelib@1.0.0",
+   "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-DEC-1","affects":[{"ref":"b"}],
+   "properties":[{"name":"quickbird:finding:track","value":"planned"},
+                 {"name":"quickbird:finding:cvss","value":"5.0"},
+                 {"name":"quickbird:vuln:fix","value":"none-published"}]}]}
+EOF
+}
+
+dec_render() {   # $1 = decisions yaml, prints the pdf text
+  dec_fixture
+  printf '%s\n' "$1" > "$TMP/dec.yml"
+  python3 "$S/render-vdr-pdf.py" "$TMP/dec-bundle.json" "$TMP/dec.pdf" \
+    --policy "$TMP/cp.json" --date 2026-09-25 --decisions "$TMP/dec.yml" >/dev/null 2>&1 || return 1
+  pdftotext -layout "$TMP/dec.pdf" - 2>/dev/null
+}
+
+test_render_signed_decision_replaces_the_fixed_string() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  command -v yq >/dev/null 2>&1 || { echo "yq not installed"; return 77; }
+  local txt; txt=$(dec_render 'decisions:
+  - cve: CVE-DEC-1
+    decision: accepted until the vendor ships a fix
+    by: A Person
+    date: "2026-09-25"
+library_decisions:
+  - library: oldlib
+    decision: major upgrade planned for the next window
+    by: A Person
+    date: "2026-09-25"') || return 1
+  contains "$txt" "major upgrade planned" || return 1
+  contains "$txt" "accepted until the vendor" || return 1
+  grep -q "No decision recorded" <<<"$txt" && { echo "still printing the fixed string"; return 1; }
+  return 0
+}
+
+# A risk acceptance on a medical device belongs to a person. Unsigned it is a draft, and the
+# row has to keep reading as a violation rather than as handled.
+test_render_unsigned_decision_is_a_draft() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  command -v yq >/dev/null 2>&1 || { echo "yq not installed"; return 77; }
+  local txt; txt=$(dec_render 'library_decisions:
+  - library: oldlib
+    decision: major upgrade planned for the next window') || return 1
+  contains "$txt" "Decision drafted, unsigned"
+}
+
+test_render_expired_decision_does_not_read_as_handled() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  command -v yq >/dev/null 2>&1 || { echo "yq not installed"; return 77; }
+  local txt; txt=$(dec_render 'library_decisions:
+  - library: oldlib
+    decision: accepted for one quarter
+    by: A Person
+    date: "2026-01-01"
+    expires: "2026-06-30"') || return 1
+  # Asserted as two fragments: the cell wraps, so the rendered date lands on the next line.
+  contains "$txt" "Decision expired" || return 1
+  contains "$txt" "2026-06-30"
+}
+
+# A currency decision must not silence the library's CVEs. Without the opt-in, "major upgrade
+# next window" would cover a critical published tomorrow.
+test_render_library_decision_does_not_cover_findings_by_default() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  command -v yq >/dev/null 2>&1 || { echo "yq not installed"; return 77; }
+  local txt; txt=$(dec_render 'library_decisions:
+  - library: cvelib
+    decision: major upgrade planned
+    by: A Person
+    date: "2026-09-25"') || return 1
+  contains "$txt" "No decision recorded" || return 1
+  txt=$(dec_render 'library_decisions:
+  - library: cvelib
+    decision: ships inside a base image we do not build
+    by: A Person
+    date: "2026-09-25"
+    covers_findings: true') || return 1
+  contains "$txt" "ships inside a base image"
+}
+
+# A decision against another library must not silence this one.
+test_render_decision_does_not_leak_between_libraries() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  command -v yq >/dev/null 2>&1 || { echo "yq not installed"; return 77; }
+  local txt; txt=$(dec_render 'library_decisions:
+  - library: somethingelse
+    decision: not about oldlib
+    by: A Person
+    date: "2026-09-25"') || return 1
+  contains "$txt" "No decision recorded"
+}
+
+# An unreadable decisions file must not render a document claiming nothing is decided.
+test_render_refuses_an_unparseable_decisions_file() {
+  need_reportlab || return 77
+  command -v yq >/dev/null 2>&1 || { echo "yq not installed"; return 77; }
+  dec_fixture
+  printf '%s\n' "decisions: [ unclosed" > "$TMP/dec-bad.yml"
+  python3 "$S/render-vdr-pdf.py" "$TMP/dec-bundle.json" "$TMP/dec-bad.pdf" \
+    --policy "$TMP/cp.json" --decisions "$TMP/dec-bad.yml" >/dev/null 2>&1
+  [[ "$?" -ne 0 ]]
+}
+
 test_render_fix_version_order_is_numeric() {
   need_reportlab || return 77
   S="$S" python3 - <<'PYEOF'

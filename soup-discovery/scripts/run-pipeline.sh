@@ -289,6 +289,9 @@ if [[ "${RENDER_PDF:-false}" == "true" ]]; then
         && VDR_ARGS+=(--units "$BOMDIR/solution.remediation-units.json")
       [[ -f "$BOMDIR/maintenance-windows.json" ]] \
         && VDR_ARGS+=(--windows "$BOMDIR/maintenance-windows.json")
+      # Same default path monitor-kev.sh uses, so one file drives the document and the alerts.
+      DECISIONS_FILE="${SOUP_DECISIONS_FILE:-.soup-decisions.yml}"
+      [[ -f "$DECISIONS_FILE" ]] && VDR_ARGS+=(--decisions "$DECISIONS_FILE")
       python3 "$HERE/render-vdr-pdf.py" "${VDR_ARGS[@]}" \
         || log "::warning::vulnerability report rendering failed; the bundle itself is unaffected"
     else
