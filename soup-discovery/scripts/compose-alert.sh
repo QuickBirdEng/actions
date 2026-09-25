@@ -17,6 +17,9 @@
 #
 # Usage: compose-alert.sh <record.json> <alert-out> [escalation.json] [lifecycle.json]
 # Env:   PRODUCT, CRA_SCOPE
+#        ALERT_SCOPE       new (default) | full — see below
+#        ALERT_PREV_STATE  previous alert-state.json, for the item ledger
+#        ALERT_ITEMS       where to write this run's ledger (default <alert-out>.items.json)
 
 set -uo pipefail
 
@@ -26,9 +29,54 @@ ESCALATION="${3:-}"
 LIFECYCLE="${4:-}"
 PRODUCT="${PRODUCT:-?}"
 CRA_SCOPE="${CRA_SCOPE:-unknown}"
+SCOPE="${ALERT_SCOPE:-new}"
+ITEMS="${ALERT_ITEMS:-$ALERT.items.json}"
 
 : > "$ALERT"
 VERDICT=$(jq -r '.verdict' "$RECORD")
+
+# --- what has changed since the last posted message --------------------------
+# The daily message carries the delta; the full list rides with the weekly overview
+# (ALERT_SCOPE=full). decide-alert.sh cannot do this on its own: each line embeds a live
+# countdown ("due in 167h"), so its digest differs every night and its weekly-repeat rule is
+# unreachable for any product with an open deadline.
+#
+# Keyed per target: the same unit in mobile and in Production are two clocks, and collapsing
+# them would hide the second one going overdue.
+PREV_ITEMS='{}'; SINCE=""
+if [[ -n "${ALERT_PREV_STATE:-}" && -f "${ALERT_PREV_STATE:-}" ]]; then
+  PREV_ITEMS=$(jq -c '.items // {}' "$ALERT_PREV_STATE" 2>/dev/null) || PREV_ITEMS='{}'
+  [[ -n "$PREV_ITEMS" && "$PREV_ITEMS" != "null" ]] || PREV_ITEMS='{}'
+  SINCE=$(jq -r '.posted_at // "" | .[0:10]' "$ALERT_PREV_STATE" 2>/dev/null) || SINCE=""
+fi
+
+ESC_KEY='"esc:" + (.id|tostring) + "@" + (.target // "-")'
+REL_KEY='"rel:" + (.id|tostring) + "@" + (.target // "-")'
+
+esc_open() {
+  [[ -n "$ESCALATION" && -f "$ESCALATION" ]] || { echo '[]'; return; }
+  jq -c "[ .escalations[] | select(.level==\"undecided\" or .level==\"breached\")
+           | . + {key: ($ESC_KEY)} ]" "$ESCALATION" 2>/dev/null || echo '[]'
+}
+rel_open() {
+  [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] || { echo '[]'; return; }
+  jq -c "[ .release_required[]? | . + {key: ($REL_KEY)} ]" "$LIFECYCLE" 2>/dev/null || echo '[]'
+}
+
+ESC_ALL=$(esc_open)
+REL_ALL=$(rel_open)
+
+# Written every run; decide-alert.sh copies it into the state only when the message goes out.
+jq -c -n --argjson e "$ESC_ALL" --argjson r "$REL_ALL" '
+  ([ $e[] | {key: .key, value: .level} ] + [ $r[] | {key: .key, value: "release-required"} ])
+  | from_entries' > "$ITEMS"
+
+# A level change counts as new: undecided -> breached is the transition someone has to see.
+select_new() {
+  jq -c --argjson prev "$PREV_ITEMS" --arg scope "$SCOPE" --arg fixed "${2:-}" '
+    if $scope == "full" then .
+    else map(select($prev[.key] != (if $fixed == "" then .level else $fixed end))) end' <<<"$1"
+}
 
 if [[ "$VERDICT" == "kev-findings" ]]; then
   {
@@ -61,35 +109,43 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
 fi
 
 # --- breached deadlines, whatever the verdict --------------------------------
-if [[ -n "$ESCALATION" && -f "$ESCALATION" ]]; then
-  UD=$(jq -r '.summary.by_level.undecided // 0' "$ESCALATION")
-  BR=$(jq -r '.summary.by_level.breached // 0' "$ESCALATION")
-  if [[ "$UD" != "0" || "$BR" != "0" ]]; then
-    {
-      [[ -s "$ALERT" ]] && echo ""
+ESC_SHOW=$(select_new "$ESC_ALL")
+if [[ "$(jq 'length' <<<"$ESC_SHOW")" != "0" ]]; then
+  BR=$(jq '[.[] | select(.level=="breached")] | length' <<<"$ESC_SHOW")
+  UD=$(jq '[.[] | select(.level=="undecided")] | length' <<<"$ESC_SHOW")
+  OPEN=$(jq 'length' <<<"$ESC_ALL")
+  {
+    [[ -s "$ALERT" ]] && echo ""
+    if [[ "$SCOPE" == "full" ]]; then
       [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT: missed remediation deadlines*" && echo ""
       echo ":alarm_clock: *Deadlines*: $BR breached, $UD past the decision period with nothing on record:"
-      jq -r '.escalations[] | select(.level=="undecided" or .level=="breached")
-             | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' "$ESCALATION"
-      [[ "$UD" != "0" ]] && echo "_The work instruction requires a recorded decision in .soup-decisions.yml: a revised date, or a risk acceptance._"
-    } >> "$ALERT"
-  fi
+    else
+      [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT: deadlines that changed${SINCE:+ since $SINCE}*" && echo ""
+      echo ":alarm_clock: *Deadlines, new or escalated*: $BR breached, $UD past the decision period:"
+    fi
+    jq -r '.[] | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' <<<"$ESC_SHOW"
+    # Without this a three-line delta reads as "three problems open".
+    [[ "$SCOPE" != "full" ]] && echo "_$OPEN open in total. The full list goes out with the weekly overview._"
+    [[ "$UD" != "0" ]] && echo "_The work instruction requires a recorded decision in .soup-decisions.yml: a revised date, or a risk acceptance._"
+  } >> "$ALERT"
 fi
 
 # --- release-required (WI-006-09: Notification), whatever the verdict ---------------------------
-if [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]]; then
-  RR=$(jq -r '.summary.release_required' "$LIFECYCLE")
-  if [[ "$RR" != "0" && -n "$RR" && "$RR" != "null" ]]; then
-    {
-      [[ -s "$ALERT" ]] && echo ""
-      [[ ! -s "$ALERT" ]] && echo ":package: *$PRODUCT: an out-of-band release is required*" && echo ""
-      echo ":package: *Release required*: $RR finding(s) are fixed in a later build but not yet live:"
-      jq -r '.release_required[] | "   • \(.id): \(.why)"' "$LIFECYCLE"
-      AGAINST=$(jq -r '.compared_against // ""' "$LIFECYCLE")
-      [[ -n "$AGAINST" ]] && echo "_Compared against \`$AGAINST\`, which is a snapshot at that tag: anything merged after it is not counted here._"
-      echo "_A merged fix does not stop the remediation clock. Only a deploy does._"
-    } >> "$ALERT"
-  fi
+REL_SHOW=$(select_new "$REL_ALL" "release-required")
+if [[ "$(jq 'length' <<<"$REL_SHOW")" != "0" ]]; then
+  RR=$(jq 'length' <<<"$REL_SHOW")
+  OPEN_RR=$(jq 'length' <<<"$REL_ALL")
+  {
+    [[ -s "$ALERT" ]] && echo ""
+    [[ ! -s "$ALERT" ]] && echo ":package: *$PRODUCT: an out-of-band release is required*" && echo ""
+    echo ":package: *Release required*: $RR finding(s) are fixed in a later build but not yet live:"
+    # Same CVE in two environments is two entries; without the target they render identically.
+    jq -r '.[] | "   • \(.id)\(if .target then " (" + .target + ")" else "" end): \(.why)"' <<<"$REL_SHOW"
+    [[ "$SCOPE" != "full" ]] && echo "_$OPEN_RR awaiting release in total._"
+    AGAINST=$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -r '.compared_against // ""' "$LIFECYCLE" )
+    [[ -n "$AGAINST" ]] && echo "_Compared against \`$AGAINST\`, which is a snapshot at that tag: anything merged after it is not counted here._"
+    echo "_A merged fix does not stop the remediation clock. Only a deploy does._"
+  } >> "$ALERT"
 fi
 
 # --- the standing overview ---------------------------------------------------
