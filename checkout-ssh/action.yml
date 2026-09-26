@@ -10,6 +10,10 @@ inputs:
   git-submodules:
     description: "Checkout the project with git submodules"
     required: false
+  fetch-depth:
+    description: "Number of commits to fetch. 0 fetches the full history, which tools like sentry-cli need to see the commits of a release."
+    required: false
+    default: '1'
 runs:
   using: "composite"
   steps:
@@ -17,6 +21,7 @@ runs:
       with:
         lfs: ${{ inputs.git-lfs }}
         submodules: ${{ inputs.git-submodules }}
+        fetch-depth: ${{ inputs.fetch-depth }}
         ssh-key: ${{ inputs.git-submodules != 'false' && inputs.ssh-private-key || '' }}
     - uses: webfactory/ssh-agent@v0.6.0
       with:
