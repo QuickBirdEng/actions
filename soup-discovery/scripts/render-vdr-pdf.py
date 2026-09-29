@@ -32,6 +32,16 @@ import subprocess
 import sys
 from collections import deque
 
+# The headline numbers live in summarise-bom.py so the Slack summary and this document
+# share one definition. Loaded by path: the filename has a hyphen, like its siblings.
+import importlib.util as _ilu
+import os as _os
+_spec = _ilu.spec_from_file_location(
+    "soup_bom_summary", _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "summarise-bom.py"))
+_mod = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_mod)
+bom_summary = _mod.summary
+
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
@@ -435,6 +445,16 @@ def build(args):
     n_units = (units.get("summary") or {}).get("units_total")
     n_findings = len(scored)
 
+    # One definition of the headline, shared with the Slack summary. Asserted rather than
+    # trusted: the tiles below are rendered from the local values, so a divergence between the
+    # two would otherwise show up as a document and a channel quietly disagreeing.
+    _s = bom_summary(bundle, units)
+    assert (_s["beyond_limit"], _s["critical"], _s["high"], _s["kev"], _s["overdue"]) == \
+           (len(beyond), n_crit, n_high, n_kev, n_overdue), "summarise-bom.py drifted from the report"
+    if getattr(args, "summary_json", None):
+        with open(args.summary_json, "w", encoding="utf-8") as fh:
+            json.dump(_s, fh, indent=2)
+
     # ---- 1 summary ---------------------------------------------------------------
     el.append(Paragraph("1&nbsp;&nbsp;Summary", h2))
     tiles = [
@@ -779,6 +799,7 @@ def main():
     ap.add_argument("--windows")
     ap.add_argument("--date")
     ap.add_argument("--decisions", help=".soup-decisions.yml")
+    ap.add_argument("--summary-json", help="also write the headline numbers here")
     args = ap.parse_args()
     build(args)
     import os
