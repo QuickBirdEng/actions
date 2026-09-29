@@ -2083,7 +2083,7 @@ test_monitor_alerts_a_breach_without_any_kev_finding() {
     > "$TMP/mon/esc.json"
   PRODUCT=p CRA_SCOPE=unknown bash "$S/compose-alert.sh" \
     "$TMP/mon/record.json" "$TMP/mon/alert.txt" "$TMP/mon/esc.json" "" >/dev/null 2>&1 || return 1
-  grep -q "deadlines that changed" "$TMP/mon/alert.txt" || return 1
+  grep -q "new finding(s) at" "$TMP/mon/alert.txt" || return 1
   grep -q "CVE-2026-1" "$TMP/mon/alert.txt"
 }
 
@@ -2094,6 +2094,98 @@ test_monitor_alerts_a_breach_without_any_kev_finding() {
 esc1() { jq -n --arg lvl "$1" '{summary:{by_level:{}},
           escalations:[{id:"CVE-2026-1",target:"Production",level:$lvl,track:"expedited",
                         detail:["due in 167h"]}]}'; }
+
+# The daily message interrupts someone; the weekly one is read on purpose. Below the policy
+# threshold a breach waits for the weekly list rather than being dropped.
+test_alert_daily_is_filtered_by_the_policy_threshold() {
+  d="$TMP/thr"; mkdir -p "$d"; mkalert all-clear
+  jq -n '{summary:{by_level:{}},escalations:[
+     {id:"dependency-upgrade:quickbird:artifact:web:lodash",target:"Production",level:"breached",
+      track:"planned",artifact:"quickbird:artifact:web",finding_count:1,detail:["x"]},
+     {id:"dependency-upgrade:quickbird:artifact:web:openssl",target:"Production",level:"breached",
+      track:"immediate",artifact:"quickbird:artifact:web",finding_count:1,detail:["x"]}]}' > "$d/esc.json"
+  ALERT_THRESHOLD=critical PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/a.txt" "$d/esc.json" "" >/dev/null 2>&1 || return 1
+  grep -q "openssl" "$d/a.txt" || return 1
+  grep -q "lodash" "$d/a.txt" && { echo "a planned-track finding reached the daily message"; return 1; }
+  # the weekly list carries everything, whatever the threshold
+  ALERT_SCOPE=full ALERT_THRESHOLD=critical PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/b.txt" "$d/esc.json" "" >/dev/null 2>&1 || return 1
+  grep -q "lodash" "$d/b.txt"
+}
+
+# The Slack summary and the VDR must not disagree about the headline. render-vdr-pdf.py
+# asserts the same thing at runtime; this covers the numbers without needing reportlab.
+test_summary_counts_one_row_per_library() {
+  d="$TMP/sum"; mkdir -p "$d"
+  # the same library found in two artefacts is one library, not two
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",components:[
+     {name:"lib",version:"1.0.0",purl:"pkg:npm/lib@1.0.0",
+      properties:[{name:"quickbird:currency:status",value:"behind"}]},
+     {name:"lib",version:"1.0.0",purl:"pkg:npm/lib@1.0.0",
+      properties:[{name:"quickbird:currency:status",value:"behind"}]},
+     {name:"old",version:"2.0.0",purl:"pkg:npm/old@2.0.0",
+      properties:[{name:"quickbird:currency:status",value:"stale"}]}],
+   vulnerabilities:[
+     {id:"CVE-1",properties:[{name:"quickbird:finding:track",value:"immediate"},
+                             {name:"quickbird:finding:cvss",value:"9.5"}]},
+     {id:"CVE-2",properties:[{name:"quickbird:finding:track",value:"expedited"},
+                             {name:"quickbird:finding:cvss",value:"7.2"}]}]}' > "$d/b.json"
+  python3 "$S/summarise-bom.py" "$d/b.json" --out "$d/s.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.beyond_limit' "$d/s.json")" "1" || return 1
+  assert "$(jq -r '.critical' "$d/s.json")" "1" || return 1
+  assert "$(jq -r '.high' "$d/s.json")" "1" || return 1
+  assert "$(jq -r '.stale' "$d/s.json")" "1" || return 1
+  contains "$(python3 "$S/summarise-bom.py" "$d/b.json" --render "tag")" "1 / 1"
+}
+
+# A first run after a quiet period carries the whole backlog. Eighty lines is the wall of text
+# this replaced, so the daily message caps and defers the rest.
+test_alert_daily_list_is_capped() {
+  d="$TMP/cap"; mkdir -p "$d"; mkalert all-clear
+  jq -n '[range(0;9) | {id:"dependency-upgrade:quickbird:artifact:web:pkg\(.)",
+          target:"Production", level:"breached", track:"immediate",
+          artifact:"quickbird:artifact:web", finding_count:1, detail:["x"]}]
+         | {summary:{by_level:{}}, escalations:.}' > "$d/esc.json"
+  ALERT_MAX_LINES=3 PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/a.txt" "$d/esc.json" "" >/dev/null 2>&1 || return 1
+  assert "$(grep -c '^   • \*' "$d/a.txt")" "3" || return 1
+  contains "$(cat "$d/a.txt")" "+ 6 more" || return 1
+  # the count in the heading is the real one, not the capped one
+  contains "$(cat "$d/a.txt")" "9 new finding(s)"
+}
+
+# An unclassified breach is not evidence that it is unimportant.
+test_alert_untracked_finding_is_not_filtered_out() {
+  d="$TMP/thr2"; mkdir -p "$d"; mkalert all-clear
+  jq -n '{summary:{by_level:{}},escalations:[
+     {id:"dependency-upgrade:quickbird:artifact:web:mystery",target:"Production",level:"breached",
+      artifact:"quickbird:artifact:web",finding_count:1,detail:["x"]}]}' > "$d/esc.json"
+  ALERT_THRESHOLD=critical PRODUCT=p bash "$S/compose-alert.sh" \
+    "$TMP/mon/record.json" "$d/a.txt" "$d/esc.json" "" >/dev/null 2>&1 || return 1
+  grep -q "mystery" "$d/a.txt"
+}
+
+# "dependency-upgrade:quickbird:artifact:web-packages-keycloak-Dockerfile-final:io.netty/netty-handler"
+# is an identifier, not a sentence.
+test_alert_daily_says_what_and_where() {
+  d="$TMP/hum"; mkdir -p "$d"; mkalert all-clear
+  jq -n '{summary:{by_level:{}},escalations:[
+     {id:"dependency-upgrade:quickbird:artifact:web-packages-keycloak-Dockerfile-final:io.netty/netty-handler",
+      target:"Production",level:"breached",track:"immediate",
+      artifact:"quickbird:artifact:web-packages-keycloak-Dockerfile-final",finding_count:2,detail:["x"]},
+     {id:"third-party-image:quickbird:artifact:deployed-wireguard",target:"mobile",level:"breached",
+      track:"immediate",artifact:"quickbird:artifact:deployed-wireguard",finding_count:124,detail:["x"]}]}' > "$d/esc.json"
+  PRODUCT=p bash "$S/compose-alert.sh" "$TMP/mon/record.json" "$d/a.txt" "$d/esc.json" "" \
+    >/dev/null 2>&1 || return 1
+  contains "$(cat "$d/a.txt")" "CRITICAL" || return 1
+  contains "$(cat "$d/a.txt")" "io.netty/netty-handler" || return 1
+  contains "$(cat "$d/a.txt")" "2 findings" || return 1
+  # an image unit names the image, not a package parsed out of its own id
+  contains "$(cat "$d/a.txt")" "deployed-wireguard" || return 1
+  grep -q "third-party-image:quickbird" "$d/a.txt" && { echo "raw unit id leaked into the message"; return 1; }
+  return 0
+}
 
 test_alert_says_nothing_about_what_was_already_announced() {
   d="$TMP/dlt1"; mkdir -p "$d"; mkalert all-clear; esc1 undecided > "$d/esc.json"
@@ -2131,8 +2223,8 @@ test_alert_delta_names_the_standing_total() {
     > "$d/st.json"
   ALERT_PREV_STATE="$d/st.json" PRODUCT=p bash "$S/compose-alert.sh" \
     "$TMP/mon/record.json" "$d/a.txt" "$d/esc.json" "" >/dev/null 2>&1 || return 1
-  grep -q "   • B" "$d/a.txt" || return 1
-  grep -q "   • A" "$d/a.txt" && return 1
+  grep -q "\`B\`" "$d/a.txt" || return 1
+  grep -q "\`A\`" "$d/a.txt" && return 1
   contains "$(cat "$d/a.txt")" "2 open in total"
 }
 

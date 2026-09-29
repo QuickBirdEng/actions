@@ -71,11 +71,49 @@ jq -c -n --argjson e "$ESC_ALL" --argjson r "$REL_ALL" '
   ([ $e[] | {key: .key, value: .level} ] + [ $r[] | {key: .key, value: "release-required"} ])
   | from_entries' > "$ITEMS"
 
+# Which tracks interrupt someone on an ordinary morning. `alerts.threshold` in the policy is a
+# severity word; the tracks are what the escalation actually carries, and classify-findings.py
+# already mapped one to the other. Applied only to the daily delta: the weekly message is
+# ALERT_SCOPE=full and lists everything, so a Medium breach is deferred, never dropped.
+case "${ALERT_THRESHOLD:-high}" in
+  critical) TRACKS='["kev","immediate"]' ;;
+  high)     TRACKS='["kev","immediate","expedited"]' ;;
+  medium)   TRACKS='["kev","immediate","expedited","planned"]' ;;
+  *)        TRACKS='["kev","immediate","expedited","planned","monitor"]' ;;
+esac
+
 # A level change counts as new: undecided -> breached is the transition someone has to see.
 select_new() {
-  jq -c --argjson prev "$PREV_ITEMS" --arg scope "$SCOPE" --arg fixed "${2:-}" '
+  jq -c --argjson prev "$PREV_ITEMS" --arg scope "$SCOPE" --arg fixed "${2:-}" \
+        --argjson tracks "$TRACKS" '
     if $scope == "full" then .
-    else map(select($prev[.key] != (if $fixed == "" then .level else $fixed end))) end' <<<"$1"
+    else map(select($prev[.key] != (if $fixed == "" then .level else $fixed end)))
+         # A finding with no track at all still gets through: an unclassified breach is not
+         # evidence that it is unimportant.
+         | map(select((.track == null) or (.track | IN($tracks[])))) end' <<<"$1"
+}
+
+# "dependency-upgrade:quickbird:artifact:web-packages-keycloak-Dockerfile-final:io.netty/netty-handler"
+# is an identifier, not a sentence. The daily message says what and where, in that order.
+SEV_LABEL='{"kev":"KEV","immediate":"CRITICAL","expedited":"HIGH","planned":"MEDIUM","monitor":"LOW"}'
+human_lines() {
+  jq -r --argjson sev "$SEV_LABEL" '
+    .[] |
+    # split on "" yields [], so the [0] needs its own default — without it the line read
+    # "in `null`" for any escalation that carries no artifact.
+    ((.artifact // "") | gsub("quickbird:artifact:"; "") | split(", ") | (.[0] // "")) as $art
+    | (.id | tostring) as $id
+    | ($id | split(":")[0]) as $kind
+    | (if ($id | test(":")) then ($id | split(":") | last) else $id end) as $tail
+    | (if $tail == $art or $kind == "third-party-image" or $kind == "base-image-bump"
+       then "" else $tail end) as $pkg
+    | ($sev[.track // ""] // "OPEN") as $s
+    | "   • *\($s)*  "
+      + (if $art == "" then "`\($pkg)`"
+         elif $pkg == "" then "the `\($art)` image"
+         else "`\($pkg)` in `\($art)`" end)
+      + (if .target then " (\(.target))" else "" end)
+      + (if (.finding_count // 0) > 1 then " — \(.finding_count) findings" else "" end)' <<<"$1"
 }
 
 if [[ "$VERDICT" == "kev-findings" ]]; then
@@ -119,13 +157,18 @@ if [[ "$(jq 'length' <<<"$ESC_SHOW")" != "0" ]]; then
     if [[ "$SCOPE" == "full" ]]; then
       [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT: missed remediation deadlines*" && echo ""
       echo ":alarm_clock: *Deadlines*: $BR breached, $UD past the decision period with nothing on record:"
+      jq -r '.[] | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' <<<"$ESC_SHOW"
     else
-      [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT: deadlines that changed${SINCE:+ since $SINCE}*" && echo ""
-      echo ":alarm_clock: *Deadlines, new or escalated*: $BR breached, $UD past the decision period:"
+      N=$(jq 'length' <<<"$ESC_SHOW")
+      [[ ! -s "$ALERT" ]] && echo ":rotating_light: *$PRODUCT: $N new finding(s) at ${ALERT_THRESHOLD:-high} or above*" && echo ""
+      # Capped. The delta is normally one or two lines, but a first run after a quiet period
+      # carries the whole backlog, and eighty lines is the wall of text this replaced.
+      CAP="${ALERT_MAX_LINES:-5}"
+      human_lines "$(jq -c ".[0:$CAP]" <<<"$ESC_SHOW")"
+      [[ "$N" -gt "$CAP" ]] && echo "   • + $((N - CAP)) more — see the weekly summary"
     fi
-    jq -r '.[] | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' <<<"$ESC_SHOW"
     # Without this a three-line delta reads as "three problems open".
-    [[ "$SCOPE" != "full" ]] && echo "_$OPEN open in total. The full list goes out with the weekly overview._"
+    [[ "$SCOPE" != "full" ]] && echo "_$OPEN open in total. The full list goes out with the weekly summary._"
     [[ "$UD" != "0" ]] && echo "_The work instruction requires a recorded decision in .soup-decisions.yml: a revised date, or a risk acceptance._"
   } >> "$ALERT"
 fi

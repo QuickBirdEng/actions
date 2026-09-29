@@ -87,6 +87,16 @@ inputs:
       resolve-deployed.sh looks for exactly this asset.
     required: false
     default: 'true'
+  slack-channel-id:
+    description: >-
+      Announce the new assessment here. Without it the pipeline still produces and attaches the
+      documents; only the message is skipped, which is the state every product was in before.
+    required: false
+    default: ''
+  slack-bot-token:
+    description: 'Slack bot token. Needs files:write to attach the VDR; without it the message still goes out with a link.'
+    required: false
+    default: ''
   do-access-key:
     description: >-
       DigitalOcean Spaces access key. With it, the bundle and the PDF are also written to the
@@ -311,6 +321,29 @@ runs:
         gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --notes "" $PRE
         gh release upload "$TAG" "${args[@]}" --clobber
         echo "attached ${args[*]} to release $TAG (tier $TIER)"
+
+    # The assessment is dated and nobody was told it existed. The monitor cannot cover this: it
+    # reads the newest release that already exists, so it always describes yesterday's build.
+    - name: Announce the new assessment
+      if: ${{ inputs.publish-to-release == 'true' && inputs.slack-channel-id != '' && steps.tier.outputs.tag != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.repo-token }}
+        SLACK_TOKEN: ${{ inputs.slack-bot-token }}
+        SLACK_CHANNEL: ${{ inputs.slack-channel-id }}
+        PRODUCT: ${{ inputs.product }}
+      run: |
+        BOM="${{ inputs.output-dir }}/bom/solution.assessed.cdx.json"
+        # Only an assessed bundle carries the numbers. A component list without a policy has no
+        # severities to summarise, and a message of four zeroes would read as good news.
+        if [ ! -f "$BOM" ]; then
+          echo "::warning::no assessed bundle — nothing to summarise, message skipped"
+          exit 0
+        fi
+        bash "$GITHUB_ACTION_PATH/scripts/post-release-summary.sh" \
+          "${{ github.repository }}" "${{ steps.tier.outputs.tag }}" "$BOM" \
+          "${{ inputs.output-dir }}/bom/vdr-report.pdf" \
+          "${{ inputs.output-dir }}/bom/solution.remediation-units.json"
 
     # Same space and same action as the mobile build artifacts. Path:
     # <repo>/soup-sbom/<tier>/<ref>/. The tier segment keeps candidate documents, which may become
