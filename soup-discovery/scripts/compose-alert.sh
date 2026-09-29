@@ -140,6 +140,21 @@ if [[ "$VERDICT" == "kev-findings" ]]; then
   } >> "$ALERT"
 fi
 
+# The weekly message is one thing to read, not three stacked notifications. Its heading is
+# emitted here so every section below can drop its own.
+WEEKLY=false
+[[ "$SCOPE" == "full" && -n "${OVERVIEW:-}" && -s "${OVERVIEW:-}" ]] && WEEKLY=true
+if [[ "$WEEKLY" == "true" ]]; then
+  TAG=""; AGE=""
+  [[ -s "${OVERVIEW}.tag" ]] && IFS=$'\t' read -r TAG AGE < "${OVERVIEW}.tag"
+  {
+    [[ -s "$ALERT" ]] && echo ""
+    echo ":bar_chart: *$PRODUCT — weekly summary*${TAG:+  ·  $TAG}"
+    echo ""
+    cat "$OVERVIEW"
+  } >> "$ALERT"
+fi
+
 # --- breached deadlines, whatever the verdict --------------------------------
 ESC_SHOW=$(select_new "$ESC_ALL")
 if [[ "$(jq 'length' <<<"$ESC_SHOW")" != "0" ]]; then
@@ -150,7 +165,7 @@ if [[ "$(jq 'length' <<<"$ESC_SHOW")" != "0" ]]; then
     [[ -s "$ALERT" ]] && echo ""
     if [[ "$SCOPE" == "full" ]]; then
       [[ ! -s "$ALERT" ]] && echo ":alarm_clock: *$PRODUCT: missed remediation deadlines*" && echo ""
-      echo ":alarm_clock: *Deadlines*: $BR breached, $UD past the decision period with nothing on record:"
+      echo ":alarm_clock: *Deadlines*: $BR breached, $UD past the decision period:"
       jq -r '.[] | "   • \(.id)\(if .target then " (" + .target + ")" else "" end) [\(.level)] \(.detail[-1])"' <<<"$ESC_SHOW"
     else
       N=$(jq 'length' <<<"$ESC_SHOW")
@@ -172,15 +187,19 @@ if [[ "$(jq 'length' <<<"$REL_SHOW")" != "0" ]]; then
   RR=$(jq 'length' <<<"$REL_SHOW")
   OPEN_RR=$(jq 'length' <<<"$REL_ALL")
   {
-    [[ -s "$ALERT" ]] && echo ""
-    [[ ! -s "$ALERT" ]] && echo ":package: *$PRODUCT: an out-of-band release is required*" && echo ""
-    echo ":package: *Release required*: $RR finding(s) are fixed in a later build but not yet live:"
-    # Same CVE in two environments is two entries; without the target they render identically.
-    jq -r '.[] | "   • \(.id)\(if .target then " (" + .target + ")" else "" end): \(.why)"' <<<"$REL_SHOW"
-    [[ "$SCOPE" != "full" ]] && echo "_$OPEN_RR awaiting release in total._"
-    AGAINST=$( [[ -n "$LIFECYCLE" && -f "$LIFECYCLE" ]] && jq -r '.compared_against // ""' "$LIFECYCLE" )
-    [[ -n "$AGAINST" ]] && echo "_Compared against \`$AGAINST\`, which is a snapshot at that tag: anything merged after it is not counted here._"
-    echo "_A merged fix does not stop the remediation clock. Only a deploy does._"
+    if [[ "$WEEKLY" == "true" ]]; then
+      # One line: the clock runs until a deploy, and that is the whole message.
+      echo ""
+      echo ":package: $RR $( [[ "$RR" -eq 1 ]] && echo fix || echo fixes ) staged but not deployed — $(jq -r '[.[] | .id] | unique | .[0:3] | join(", ")' <<<"$REL_SHOW")$( [[ "$RR" -gt 3 ]] && echo " + $((RR - 3)) more" )"
+    else
+      [[ -s "$ALERT" ]] && echo ""
+      [[ ! -s "$ALERT" ]] && echo ":package: *$PRODUCT: an out-of-band release is required*" && echo ""
+      echo ":package: *Release required*: $RR finding(s) are fixed in a later build but not yet live:"
+      # Same CVE in two environments is two entries; without the target they render identically.
+      jq -r '.[] | "   • \(.id)\(if .target then " (" + .target + ")" else "" end): \(.why)"' <<<"$REL_SHOW"
+      echo "_$OPEN_RR awaiting release in total._"
+      echo "_A merged fix does not stop the remediation clock. Only a deploy does._"
+    fi
   } >> "$ALERT"
 fi
 
@@ -193,18 +212,21 @@ fi
 # It also posts on its own. A run where nothing is exploited, nothing is overdue and no
 # release is required produces no alert blocks at all, and before this that meant silence:
 # the standing state was only ever visible in the report nobody opens between releases.
-if [[ -n "${OVERVIEW:-}" && -s "${OVERVIEW:-}" ]]; then
+if [[ "$WEEKLY" != "true" && -n "${OVERVIEW:-}" && -s "${OVERVIEW:-}" ]]; then
   {
     [[ -s "$ALERT" ]] && echo ""
     echo ":bar_chart: *$PRODUCT: where the work stands*"
     echo ""
     cat "$OVERVIEW"
-    echo ""
-    echo "_act: a bump in an artifact we build · decide: no fix published, needs a VEX statement or a recorded acceptance · external: built elsewhere, the lever is a vendor request · parked: a disposition is already on record._"
   } >> "$ALERT"
 fi
 
-if [[ "$VERDICT" == "incomplete" ]]; then
+if [[ "$VERDICT" == "incomplete" && "$WEEKLY" == "true" ]]; then
+  {
+    echo ""
+    echo ":warning: The live version could not be assessed — $(jq -r '[.not_scanned[]? | "\(.name // "?") @ \(.version // "?")"] | join(", ")' "$RECORD")"
+  } >> "$ALERT"
+elif [[ "$VERDICT" == "incomplete" ]]; then
   {
     [[ -s "$ALERT" ]] && echo ""
     echo ":warning: *$PRODUCT: the KEV check could not be completed*"
@@ -218,3 +240,13 @@ if [[ "$VERDICT" == "incomplete" ]]; then
   } >> "$ALERT"
 fi
 
+
+# Last, so it is the line a reader leaves with. The numbers describe the assessed build and
+# nothing newer; only a release moves them.
+if [[ "$WEEKLY" == "true" ]]; then
+  {
+    echo ""
+    AGE_TXT=""; [[ -n "$AGE" && "$AGE" -gt 0 ]] 2>/dev/null && AGE_TXT=", released ${AGE}d ago"
+    echo "_Assessed from \`${TAG:-the latest release}\`${AGE_TXT}. Cut a staging release for a current VDR._"
+  } >> "$ALERT"
+fi

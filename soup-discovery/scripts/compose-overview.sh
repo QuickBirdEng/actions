@@ -107,9 +107,8 @@ BLOCKED=$(jq -r --arg order "$LIVE_ORDER" '
 
 {
   # Same numbers as the VDR, in the same order.
-  "$PY" "$HERE/summarise-bom.py" "$QA_BOM" --render "${QA_TAG:-$QA_LABEL}" 2>/dev/null \
+  "$PY" "$HERE/summarise-bom.py" "$QA_BOM" --render "" 2>/dev/null \
     || echo "  (headline numbers unavailable)"
-  echo ""
 
   if [[ -n "$PICK" ]]; then
     LIVE_ENV=$(jq -r '.env' <<<"$PICK")
@@ -117,7 +116,7 @@ BLOCKED=$(jq -r --arg order "$LIVE_ORDER" '
     LIVE_URL=$(jq -r '.sbom' <<<"$PICK")
     if gh api -H "Accept: application/octet-stream" "$LIVE_URL" > "$WORK/live.cdx.json" 2>/dev/null \
        && [[ -s "$WORK/live.cdx.json" ]]; then
-      PYTHON="$PY" bash "$HERE/summarise-state.sh" --compare "$POLICY" \
+      COMPACT=true PYTHON="$PY" bash "$HERE/summarise-state.sh" --compare "$POLICY" \
         "$WORK/live.cdx.json" "live ($LIVE_ENV, $LIVE_REF)" "$QA_BOM" "$QA_LABEL"
     else
       echo "  live ($LIVE_ENV, $LIVE_REF): SBOM could not be downloaded — showing the QA line only"
@@ -141,12 +140,7 @@ BLOCKED=$(jq -r --arg order "$LIVE_ORDER" '
     PYTHON="$PY" bash "$HERE/summarise-state.sh" --render "$QA_BOM" "$POLICY" "$QA_LABEL"
   fi
 
-  if [[ -n "${QA_TAG:-}" ]]; then
-    echo ""
-    if [[ -n "$QA_AGE_DAYS" && "$QA_AGE_DAYS" -gt 0 ]]; then
-      echo "_Assessed from \`$QA_TAG\`, released ${QA_AGE_DAYS}d ago. Cut a staging release for a current VDR._"
-    else
-      echo "_Assessed from \`$QA_TAG\`. Cut a staging release for a current VDR._"
-    fi
-  fi
 } > "$OUT"
+
+# The tag and its age, for whoever composes the message around this.
+[[ -n "${QA_TAG:-}" ]] && printf '%s\t%s\n' "$QA_TAG" "${QA_AGE_DAYS:-}" > "$OUT.tag"
