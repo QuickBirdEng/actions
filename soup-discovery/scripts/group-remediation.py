@@ -183,6 +183,11 @@ def main():
     bom = json.load(open(args.bom, encoding="utf-8"))
 
     # component ref -> what it is and where it came from
+    # Artefacts that are images. Their contents arrive prebuilt; what a repository can change
+    # about them is the reference, not the files inside.
+    image_artifacts = {c.get("bom-ref") for c in bom.get("components", []) or []
+                       if c.get("type") == "container"}
+
     comp = {}
     for c in bom.get("components", []) or []:
         p = props(c)
@@ -191,7 +196,21 @@ def main():
             "name": c.get("name") or "?",
             "version": c.get("version") or "",
             "artifact": p.get("quickbird:component:artifact", ""),
+            "artifacts": [a.strip() for a in
+                          (p.get("quickbird:component:artifact", "") or "").split(",") if a.strip()],
+            "path": p.get("syft:location:0:path", ""),
         }
+
+    # Everything a manifest in this repository declares. A component found only inside an image
+    # was not chosen here, and "upgrade it" is not an action anyone can carry out: the file lives
+    # in a layer the build pulled ready-made.
+    declared = {c["purl"] for c in comp.values()
+                if c["purl"] and any(a not in image_artifacts for a in c["artifacts"])}
+
+    def fix_is_reachable(c):
+        if not c["artifacts"] or not all(a in image_artifacts for a in c["artifacts"]):
+            return True
+        return bool(c["purl"]) and c["purl"] in declared
 
     # finding id -> the refs it affects, and its published fix status
     affects = defaultdict(list)
@@ -254,7 +273,11 @@ def main():
                           f"version published is a prerelease, which a released product "
                           f"cannot adopt; track the stable release, add a compensating "
                           f"control, or record a VEX statement")
-            elif ptype in OS_PKG_TYPES:
+            elif ptype in OS_PKG_TYPES or not fix_is_reachable(c):
+                # An OS package is the base image by definition. So is a library that only ever
+                # appears inside the image: a published fix for it is not a fix this repository
+                # can adopt, and "upgrade org.bouncycastle/bcprov-jdk18on" reads as a task while
+                # the jar sits in /opt/keycloak/lib of an image the build only FROMs.
                 key = ("base-image-bump", artifact)
                 action = (f"bump the base image of "
                           f"{artifact.replace('quickbird:artifact:', '')}")
