@@ -66,8 +66,7 @@ if [[ "$QA_BOM" == "--latest" ]]; then
   [[ -s "$QA_BOM" ]] || { echo "  the SBOM for $QA_TAG could not be downloaded" > "$OUT"; exit 0; }
 fi
 
-# How old the assessed release is. The summary describes that build and nothing newer, and a
-# reader who does not know its age will take it for today's state.
+# The summary describes that build and nothing newer.
 QA_AGE_DAYS=""
 if [[ -n "${QA_PUBLISHED:-}" && "$QA_PUBLISHED" != "null" ]]; then
   QA_AGE_DAYS=$(( ( $(date -u +%s) - $(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$QA_PUBLISHED" +%s 2>/dev/null \
@@ -107,8 +106,7 @@ BLOCKED=$(jq -r --arg order "$LIVE_ORDER" '
   | first // empty' "$WORK/deployed.json" 2>/dev/null)
 
 {
-  # The headline first, in the order the VDR uses. Same numbers, one definition — a reader who
-  # has the report open should not have to reconcile two sets of figures.
+  # Same numbers as the VDR, in the same order.
   "$PY" "$HERE/summarise-bom.py" "$QA_BOM" --render "${QA_TAG:-$QA_LABEL}" 2>/dev/null \
     || echo "  (headline numbers unavailable)"
   echo ""
@@ -143,8 +141,6 @@ BLOCKED=$(jq -r --arg order "$LIVE_ORDER" '
     PYTHON="$PY" bash "$HERE/summarise-state.sh" --render "$QA_BOM" "$POLICY" "$QA_LABEL"
   fi
 
-  # Where a current answer comes from. The assessment is produced by the release pipeline, so
-  # the only way to move these numbers forward is to cut a build.
   if [[ -n "${QA_TAG:-}" ]]; then
     echo ""
     if [[ -n "$QA_AGE_DAYS" && "$QA_AGE_DAYS" -gt 0 ]]; then

@@ -41,8 +41,6 @@ POLICY_JSON=""
 if [[ -f "$POLICY_FILE" ]]; then
   if POLICY_JSON=$(bash "$HERE/validate-policy.sh" "$POLICY_FILE" 2>/dev/null); then
     [[ -z "$CRA_SCOPE" ]] && CRA_SCOPE=$(jq -r '.cra_scope | tostring' <<<"$POLICY_JSON")
-    # Which severities interrupt someone on an ordinary morning. The full list still goes out
-    # weekly, so a lower-severity breach is deferred here, never dropped.
     ALERT_THRESHOLD=$(jq -r '.alerts.threshold // "high"' <<<"$POLICY_JSON")
     log "policy: $(jq -r '"\(.product) · CRA \(.cra_scope)"' <<<"$POLICY_JSON")"
   else

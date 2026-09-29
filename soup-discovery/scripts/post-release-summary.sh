@@ -2,15 +2,8 @@
 # Announce a new assessment: the headline numbers, what moved since the previous release, and
 # the VDR itself.
 #
-# This is the message that was missing. The pipeline produced a dated assessment on every
-# release and told nobody; the only way to learn a release had a new VDR was to open the
-# release page. The monitor cannot fill the gap — it reads the newest release that already
-# exists, so it is always describing yesterday.
-#
-# The document is attached rather than linked where the bot is allowed to: a private repo link
-# asks for a GitHub account and a click, and the four numbers plus the file is the whole point.
-# Without files:write the post still goes out with a link, because a summary nobody sees is
-# worse than a summary without an attachment.
+# Attaching needs files:write on the bot. Without it the post still goes out with a link — a
+# summary nobody sees is worse than one without an attachment.
 #
 # Usage: post-release-summary.sh <owner/repo> <tag> <assessed.cdx.json> [vdr.pdf] [units.json]
 # Env:   SLACK_TOKEN, SLACK_CHANNEL (both required to post), PRODUCT, PYTHON, GH_TOKEN
@@ -35,8 +28,7 @@ trap 'rm -rf "$WORK"' EXIT
 SUM_ARGS=("$BOM"); [[ -n "$UNITS" && -f "$UNITS" ]] && SUM_ARGS+=(--units "$UNITS")
 "$PY" "$HERE/summarise-bom.py" "${SUM_ARGS[@]}" --out "$WORK/now.json" || exit 1
 
-# The previous release carrying an assessment, so the message can say what moved. Ordered by
-# publication rather than by tag name: tag order is a naming convention, not a timeline.
+# Ordered by publication, not by tag name: tag order is a convention, not a timeline.
 PREV=$(gh api "repos/$REPO/releases?per_page=100" 2>/dev/null | jq -r --arg tag "$TAG" '
   [ .[] | select(.draft | not)
     | { tag: .tag_name, published: .published_at,
@@ -90,8 +82,7 @@ post_text() {
   | jq -e '.ok' >/dev/null
 }
 
-# files.upload is retired; the current flow is get-url, PUT, complete. `initial_comment` is what
-# puts the summary above the file rather than posting two separate things.
+# files.upload is retired; the flow is get-url, PUT, complete.
 upload_with_vdr() {
   [[ -n "$VDR" && -s "$VDR" ]] || return 1
   local name="vdr-$TAG.pdf" len url fid

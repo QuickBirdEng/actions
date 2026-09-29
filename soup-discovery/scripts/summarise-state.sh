@@ -43,10 +43,8 @@ command -v jq >/dev/null 2>&1 || { echo "::error::jq required" >&2; exit 1; }
 WORK=$(mktemp -d) || exit 1
 trap 'rm -rf "$WORK"' EXIT
 
-# classify-findings.py reads the effective policy as JSON. Callers hand over whatever the
-# product configured, which is a .soup-policy.yml, and that is how the weekly overview failed
-# on every run since it was built: a YAML file reaching json.load raises
-# "Expecting value: line 1 column 1", and the caller reported it as "classify-findings failed".
+# classify-findings.py reads the effective policy as JSON; callers pass the product's
+# .soup-policy.yml. Nothing else converts it.
 effective_policy() {
   case "$1" in
     *.yml|*.yaml)
@@ -65,8 +63,6 @@ classify() {
   [[ -s "$bom" ]]    || { echo "::error::BOM not found or empty: $bom" >&2; return 1; }
   [[ -s "$policy" ]] || { echo "::error::policy not found or empty: $policy" >&2; return 1; }
   policy=$(effective_policy "$policy") || return 1
-  # stderr is kept. Sending it to /dev/null is what turned a one-line JSONDecodeError into a
-  # silent weekly failure nobody could diagnose from the run log.
   "$PY" "$HERE/classify-findings.py" "$bom" "$policy" --out "$WORK/f-$tag.json" >/dev/null 2>"$WORK/c.err" || {
     echo "::error::classify-findings failed for $bom: $(tail -2 "$WORK/c.err" | tr '\n' ' ')" >&2; return 1; }
   "$PY" "$HERE/group-remediation.py" "$WORK/f-$tag.json" "$bom" --out "$WORK/u-$tag.json" >/dev/null 2>"$WORK/g.err" || {

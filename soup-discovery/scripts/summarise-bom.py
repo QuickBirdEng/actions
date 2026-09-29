@@ -51,8 +51,6 @@ def summary(bundle, units=None):
                               if st in ("behind", "stale-and-behind")])
     stale = _one_per_library([(c, p) for c, p, st in cur if st == "stale"])
     deprecated = _one_per_library([(c, p) for c, p, st in cur if st == "deprecated"])
-    # Exempt by the process (a publisher on the staleness allow-list) stays listed in the
-    # document but is not a number anyone has to act on.
     exempt = _one_per_library([(c, p) for c, p, st in cur
                                if st == "stale" and p.get("quickbird:currency:stale-exempt")])
 

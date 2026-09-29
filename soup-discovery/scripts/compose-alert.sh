@@ -71,10 +71,8 @@ jq -c -n --argjson e "$ESC_ALL" --argjson r "$REL_ALL" '
   ([ $e[] | {key: .key, value: .level} ] + [ $r[] | {key: .key, value: "release-required"} ])
   | from_entries' > "$ITEMS"
 
-# Which tracks interrupt someone on an ordinary morning. `alerts.threshold` in the policy is a
-# severity word; the tracks are what the escalation actually carries, and classify-findings.py
-# already mapped one to the other. Applied only to the daily delta: the weekly message is
-# ALERT_SCOPE=full and lists everything, so a Medium breach is deferred, never dropped.
+# Applied to the daily delta only. ALERT_SCOPE=full lists everything, so a breach below the
+# threshold is deferred, never dropped.
 case "${ALERT_THRESHOLD:-high}" in
   critical) TRACKS='["kev","immediate"]' ;;
   high)     TRACKS='["kev","immediate","expedited"]' ;;
@@ -88,19 +86,15 @@ select_new() {
         --argjson tracks "$TRACKS" '
     if $scope == "full" then .
     else map(select($prev[.key] != (if $fixed == "" then .level else $fixed end)))
-         # A finding with no track at all still gets through: an unclassified breach is not
-         # evidence that it is unimportant.
+         # Untracked still gets through: unclassified is not evidence of unimportant.
          | map(select((.track == null) or (.track | IN($tracks[])))) end' <<<"$1"
 }
 
-# "dependency-upgrade:quickbird:artifact:web-packages-keycloak-Dockerfile-final:io.netty/netty-handler"
-# is an identifier, not a sentence. The daily message says what and where, in that order.
 SEV_LABEL='{"kev":"KEV","immediate":"CRITICAL","expedited":"HIGH","planned":"MEDIUM","monitor":"LOW"}'
 human_lines() {
   jq -r --argjson sev "$SEV_LABEL" '
     .[] |
-    # split on "" yields [], so the [0] needs its own default — without it the line read
-    # "in `null`" for any escalation that carries no artifact.
+    # split on "" yields [], so [0] needs its own default.
     ((.artifact // "") | gsub("quickbird:artifact:"; "") | split(", ") | (.[0] // "")) as $art
     | (.id | tostring) as $id
     | ($id | split(":")[0]) as $kind
@@ -161,8 +155,7 @@ if [[ "$(jq 'length' <<<"$ESC_SHOW")" != "0" ]]; then
     else
       N=$(jq 'length' <<<"$ESC_SHOW")
       [[ ! -s "$ALERT" ]] && echo ":rotating_light: *$PRODUCT: $N new finding(s) at ${ALERT_THRESHOLD:-high} or above*" && echo ""
-      # Capped. The delta is normally one or two lines, but a first run after a quiet period
-      # carries the whole backlog, and eighty lines is the wall of text this replaced.
+      # Capped: a first run after a quiet period carries the whole backlog.
       CAP="${ALERT_MAX_LINES:-5}"
       human_lines "$(jq -c ".[0:$CAP]" <<<"$ESC_SHOW")"
       [[ "$N" -gt "$CAP" ]] && echo "   • + $((N - CAP)) more — see the weekly summary"

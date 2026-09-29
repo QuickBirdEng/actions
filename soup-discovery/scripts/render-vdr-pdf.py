@@ -32,8 +32,7 @@ import subprocess
 import sys
 from collections import deque
 
-# The headline numbers live in summarise-bom.py so the Slack summary and this document
-# share one definition. Loaded by path: the filename has a hyphen, like its siblings.
+# Shared with the Slack summary. Loaded by path: the filename has a hyphen.
 import importlib.util as _ilu
 import os as _os
 _spec = _ilu.spec_from_file_location(
@@ -445,9 +444,7 @@ def build(args):
     n_units = (units.get("summary") or {}).get("units_total")
     n_findings = len(scored)
 
-    # One definition of the headline, shared with the Slack summary. Asserted rather than
-    # trusted: the tiles below are rendered from the local values, so a divergence between the
-    # two would otherwise show up as a document and a channel quietly disagreeing.
+    # The tiles below render from the local values, so a drift would otherwise be silent.
     _s = bom_summary(bundle, units)
     assert (_s["beyond_limit"], _s["critical"], _s["high"], _s["kev"], _s["overdue"]) == \
            (len(beyond), n_crit, n_high, n_kev, n_overdue), "summarise-bom.py drifted from the report"
