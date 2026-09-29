@@ -43,6 +43,20 @@ command -v jq >/dev/null 2>&1 || { echo "::error::jq required" >&2; exit 1; }
 WORK=$(mktemp -d) || exit 1
 trap 'rm -rf "$WORK"' EXIT
 
+# classify-findings.py reads the effective policy as JSON. Callers hand over whatever the
+# product configured, which is a .soup-policy.yml, and that is how the weekly overview failed
+# on every run since it was built: a YAML file reaching json.load raises
+# "Expecting value: line 1 column 1", and the caller reported it as "classify-findings failed".
+effective_policy() {
+  case "$1" in
+    *.yml|*.yaml)
+      bash "$HERE/validate-policy.sh" "$1" > "$WORK/policy.effective.json" 2>"$WORK/policy.err" || {
+        echo "::error::policy $1 did not validate: $(tail -1 "$WORK/policy.err")" >&2; return 1; }
+      printf '%s' "$WORK/policy.effective.json" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 # BOM + policy -> the counts, via the pipeline's own classification and grouping. Running
 # them rather than reimplementing is the point: a second opinion on what a unit is would
 # drift from the report, and then two numbers describe the same release.
@@ -50,10 +64,13 @@ classify() {
   local bom="$1" policy="$2" tag="$3"
   [[ -s "$bom" ]]    || { echo "::error::BOM not found or empty: $bom" >&2; return 1; }
   [[ -s "$policy" ]] || { echo "::error::policy not found or empty: $policy" >&2; return 1; }
-  "$PY" "$HERE/classify-findings.py" "$bom" "$policy" --out "$WORK/f-$tag.json" >/dev/null 2>&1 || {
-    echo "::error::classify-findings failed for $bom" >&2; return 1; }
-  "$PY" "$HERE/group-remediation.py" "$WORK/f-$tag.json" "$bom" --out "$WORK/u-$tag.json" >/dev/null 2>&1 || {
-    echo "::error::group-remediation failed for $bom" >&2; return 1; }
+  policy=$(effective_policy "$policy") || return 1
+  # stderr is kept. Sending it to /dev/null is what turned a one-line JSONDecodeError into a
+  # silent weekly failure nobody could diagnose from the run log.
+  "$PY" "$HERE/classify-findings.py" "$bom" "$policy" --out "$WORK/f-$tag.json" >/dev/null 2>"$WORK/c.err" || {
+    echo "::error::classify-findings failed for $bom: $(tail -2 "$WORK/c.err" | tr '\n' ' ')" >&2; return 1; }
+  "$PY" "$HERE/group-remediation.py" "$WORK/f-$tag.json" "$bom" --out "$WORK/u-$tag.json" >/dev/null 2>"$WORK/g.err" || {
+    echo "::error::group-remediation failed for $bom: $(tail -2 "$WORK/g.err" | tr '\n' ' ')" >&2; return 1; }
 
   jq -c -n --slurpfile f "$WORK/f-$tag.json" --slurpfile u "$WORK/u-$tag.json" '
     ($f[0]) as $F | ($u[0]) as $U
