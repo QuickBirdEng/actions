@@ -2363,6 +2363,38 @@ mkunits() {
 # Inside an image we deploy but do not build, "upgrade <module>" is not an action anyone here
 # can perform. The first version of this grouping emitted ten such items for a third-party
 # WireGuard image.
+# A library that only ever appears inside an image was not chosen in this repository, and
+# "upgrade it" is not an action anyone can carry out — the jar sits in a layer the build pulled
+# ready-made. Measured on one product: eight separate upgrade actions against jars in a vendor
+# image, none of which the repository could perform.
+test_units_fix_inside_an_image_is_a_base_image_bump() {
+  cat > "$TMP/ur-b.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","type":"application","name":"p","version":"1"}},
+ "components":[
+  {"bom-ref":"img","type":"container","name":"svc-Dockerfile-final","version":"1"},
+  {"bom-ref":"lock","type":"application","name":"web","version":"1"},
+  {"bom-ref":"a","type":"library","name":"bcprov","version":"1.84","purl":"pkg:maven/org.bouncycastle/bcprov@1.84",
+   "properties":[{"name":"quickbird:component:artifact","value":"img"},
+                 {"name":"syft:location:0:path","value":"/opt/app/lib/bcprov-1.84.jar"}]},
+  {"bom-ref":"b","type":"library","name":"lodash","version":"4.0.0","purl":"pkg:npm/lodash@4.0.0",
+   "properties":[{"name":"quickbird:component:artifact","value":"img, lock"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-IMG","affects":[{"ref":"a"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"},
+                 {"name":"quickbird:finding:track","value":"immediate"}]},
+  {"id":"CVE-OWN","affects":[{"ref":"b"}],
+   "properties":[{"name":"quickbird:vuln:fix","value":"available"},
+                 {"name":"quickbird:finding:track","value":"planned"}]}]}
+EOF
+  jq -n '{findings:[{id:"CVE-IMG",track:"immediate"},{id:"CVE-OWN",track:"planned"}]}' > "$TMP/ur-f.json"
+  python3 "$S/group-remediation.py" "$TMP/ur-f.json" "$TMP/ur-b.json" --out "$TMP/ur-u.json" >/dev/null 2>&1 || return 1
+  # image-only: folded into the image action, not an upgrade task
+  assert "$(jq -r '[.units[] | select(.findings | index("CVE-IMG")) | .kind] | .[0]' "$TMP/ur-u.json")" "base-image-bump" || return 1
+  # also declared in a lockfile here: still ours to upgrade
+  assert "$(jq -r '[.units[] | select(.findings | index("CVE-OWN")) | .kind] | .[0]' "$TMP/ur-u.json")" "dependency-upgrade"
+}
+
 test_units_third_party_image_is_one_action() {
   mkunits "quickbird:artifact:deployed-wireguard-1.0.20210914" \
           "pkg:golang/golang.org/x/crypto@v0.1.0" available immediate || return 1
