@@ -87,8 +87,11 @@ classify() {
               # comma-separated, and stripping only the first left "web, quickbird:artifact:..."
               # in the message.
               artifact: (($unit.artifact // "") | gsub("quickbird:artifact:"; "")),
-              label:    ( if ($unit.kind // "") == "base-image-bump" then "bump base image"
-                          else (($unit.action // "") | sub("^upgrade "; "") | sub(" in .*$"; "")) end ),
+              # org.bouncycastle/bcprov-jdk18on reads as bcprov-jdk18on; the group id is noise
+              # in a one-line summary and the artifact id is what anyone would search for.
+              label:    ( if ($unit.kind // "") == "base-image-bump" then "base image"
+                          else (($unit.action // "") | sub("^upgrade "; "") | sub(" in .*$"; "")
+                                | sub("^[a-z0-9.]+/"; "")) end ),
               n:        ($unit.finding_count // ($ids | length)),
               parked:   (($ids | length) > 0
                          and ([ $ids[] | select( . as $i | $disposed | index($i)) ] | length) == ($ids | length)),
@@ -133,14 +136,21 @@ classify() {
 # The action list, capped and with the tail summarised. Shared by --render and --compare so
 # the two cannot drift apart in formatting, which is the whole reason the block is a function.
 ACTIONS_JQ='
+  # web-packages-keycloak-Dockerfile-final is a scan target id, not something a reader should
+  # have to parse. The -Dockerfile-final suffix is what marks a candidate as an image.
+  def short($a):
+    ($a | sub("^web-packages-"; "") | sub("^web-dockerfiles-"; "") | sub("^Dockerfile\\."; "")) as $s
+    | if ($a | test("-Dockerfile-final$"))
+      then ($s | sub("-Dockerfile-final$"; "")) + " image"
+      else $s end ;
   def render_actions($s):
     ($s.act_by_artifact) as $g
     | if ($g.shown | length) == 0 then []
-      else [ "" ]
-           + ( $g.shown | map("  • \(.artifact): " + (.items | join(", "))
+      else [ "", "Biggest levers" ]
+           + ( $g.shown | map("   • " + short(.artifact) + " — " + (.items | join(", "))
                               + (if .more_items > 0 then " + \(.more_items) more" else "" end)) )
            + ( if $g.more_artifacts > 0
-               then [ "  • + \($g.more_artifacts) more artifact(s), \($g.more_units) action(s) — see the report" ]
+               then [ "   • + \($g.more_artifacts) more artifact(s), \($g.more_units) action(s) — see the report" ]
                else [] end )
       end ;
 '
@@ -176,12 +186,13 @@ jq -rn --argjson a "$L" --argjson b "$Q" --arg la "$LIVE_LABEL" --arg lb "$QA_LA
                    + (if $s.overdue > 0 then "  :alarm_clock: \($s.overdue) overdue" else "" end);
   def d($k): ($b[$k] - $a[$k]);
   def sgn($n): if $n > 0 then "+\($n)" else "\($n)" end;
-  [ row($la; $a), row($lb; $b) ]
+  ( if env.COMPACT == "true" then [] else [ row($la; $a), row($lb; $b) ] end )
   + [ ( [ (if d("act")    != 0 then "act \(sgn(d("act")))" else empty end),
           (if d("decide") != 0 then "decide \(sgn(d("decide")))" else empty end),
           (if d("external") != 0 then "external \(sgn(d("external")))" else empty end),
           (if d("parked") != 0 then "parked \(sgn(d("parked")))" else empty end),
-          (if d("units_total") != 0 then "actions total \(sgn(d("units_total")))" else empty end) ]
-        | if length == 0 then "  -> unchanged since the last state" else "  -> since the last state: " + join(" · ") end ) ]
+          (if (env.COMPACT != "true") and d("units_total") != 0 then "actions total \(sgn(d("units_total")))" else empty end) ]
+        | if length == 0 then (if env.COMPACT == "true" then "Unchanged since last week" else "  -> unchanged since the last state" end)
+          else (if env.COMPACT == "true" then "Since last week: " else "  -> since the last state: " end) + join(" · ") end ) ]
   + render_actions($b)
   | join("\n")'

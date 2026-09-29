@@ -1722,9 +1722,30 @@ test_alert_overview_posts_without_any_alert_block() {
   printf '  live (Study): v1.0.3 — not comparable\n  QA (v2)   act 5 · decide 1 · external 1 · parked 3\n' > "$d/ov.txt"
   OVERVIEW="$d/ov.txt" PRODUCT=p bash "$S/compose-alert.sh" "$d/rec.json" "$d/alert.txt" >/dev/null 2>&1 || return 1
   contains "$(cat "$d/alert.txt")" "where the work stands" || return 1
-  contains "$(cat "$d/alert.txt")" "act 5" || return 1
-  # The legend matters: the four words are the whole vocabulary of the message.
-  contains "$(cat "$d/alert.txt")" "needs a VEX statement"
+  contains "$(cat "$d/alert.txt")" "act 5"
+}
+
+# The weekly message is one thing to read: one heading, and the other signals folded into a line
+# each rather than stacked as their own notifications.
+test_alert_weekly_is_one_message() {
+  d="$TMP/wk"; mkdir -p "$d"
+  alertrec all-clear "$d/rec.json"
+  printf '*3* beyond update limit\nSince last week: act -2\n\nBiggest levers\n   • keycloak image — base image (4)\n' > "$d/ov.txt"
+  printf 'v9.9.9-qa1\t12\n' > "$d/ov.txt.tag"
+  jq -n '{summary:{release_required:1},release_required:[{id:"CVE-9",target:"Production",why:"staged"}]}' > "$d/lc.json"
+  ALERT_SCOPE=full OVERVIEW="$d/ov.txt" PRODUCT=p bash "$S/compose-alert.sh" \
+    "$d/rec.json" "$d/a.txt" "" "$d/lc.json" >/dev/null 2>&1 || return 1
+  local txt; txt=$(cat "$d/a.txt")
+  contains "$txt" "p — weekly summary" || return 1
+  contains "$txt" "v9.9.9-qa1" || return 1
+  # release-required folds to one line, without its own heading
+  contains "$txt" "staged but not deployed" || return 1
+  grep -q "out-of-band release is required" "$d/a.txt" && { echo "release block kept its heading"; return 1; }
+  grep -q "where the work stands" "$d/a.txt" && { echo "two headings in one message"; return 1; }
+  grep -q "needs a VEX statement" "$d/a.txt" && { echo "the legend came back"; return 1; }
+  # and it closes by saying where a current answer comes from
+  contains "$txt" "Cut a staging release" || return 1
+  contains "$txt" "released 12d ago"
 }
 
 # Without OVERVIEW the behaviour is exactly what it was, so the daily KEV path is unaffected
