@@ -112,10 +112,12 @@ and is well-formed; the review is what validates that someone with authority agr
 split is deliberate — a script cannot judge whether "not reachable from our code" is true,
 and pretending otherwise would be the more dangerous design.
 
-**`under_investigation` expires.** It is a holding state, not a resting state — if it is
-still `under_investigation` when the finding's mitigation deadline elapses, it reverts to
-`affected` and alerts (see WI-006-09-01: Classification of a finding, rule 0). Without that rule
-`under_investigation` becomes the mute button `not_affected` was designed not to be.
+**`under_investigation` suppresses nothing.** It records that applicability is still being
+established. Only `not_affected` with a justification removes a finding from the tracks, so a
+finding in this state keeps its track and both deadlines throughout and appears in the report
+and in the escalation like any other open finding. Its one effect is at the fix-or-VEX gate,
+where it counts as dispositioned unless `strict-under-investigation` is set — which is the
+setting to reach for if it is being used as a resting state.
 
 **Scope — the approval is a version *family*, not a version.** The record's `version` field
 carries the family (`1.x.x`), and `metadata.input_version` is merely the version that was
