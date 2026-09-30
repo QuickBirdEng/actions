@@ -1363,6 +1363,113 @@ test_classify_escalation_restarts_the_clock() {
   assert "$(jq -r '.findings[0].first_seen[0:10]' "$TMP/e2.json")" "2026-02-01"
 }
 
+# --- window deadlines (WI-006-09-01: The maintenance window) --------------------------------------
+# The grid origin is the last production deployment, so a release that ships late used to move
+# every open window deadline outward by the length of the delay. None of these paths had a test,
+# which is why that survived: CLS was never called with --windows at all.
+
+mkwin() { # <grid-origin> <interval-days>
+  jq -n --arg o "$1" --argjson iv "$2" '{grid_origin:$o, interval_days:$iv}' > "$TMP/wwin.json"; }
+
+mkwinvuln() { # <id> <fix-state>   medium CVSS -> planned, remediation "next-release"
+  jq -n --arg id "$1" --arg fix "$2" \
+    '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"p"}},
+      components:[{"bom-ref":"pkg:npm/x@1.0.0",type:"library",name:"x",version:"1.0.0",
+                   purl:"pkg:npm/x@1.0.0"}],
+      vulnerabilities:[{id:$id, affects:[{ref:"pkg:npm/x@1.0.0"}],
+        ratings:[{source:{name:"OSV"},method:"CVSSv31",
+                  vector:"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"}],
+        properties:[{name:"quickbird:vuln:kev",value:"false"},
+                    {name:"quickbird:vuln:fix",value:$fix}]}]}' > "$TMP/cv.json"; }
+
+# The finding already sat on the window of 2026-04-01, which passed with no release. The grid
+# now starts at the release that eventually shipped on 2026-05-01 and offers 2026-07-30.
+mkwinstate() {
+  jq -n '{findings:[{id:"CVE-1",track:"planned",first_seen:"2026-01-10T00:00:00+00:00",
+          remediation_due:"2026-04-01T00:00:00+00:00",
+          remediation_basis:"maintenance window 2026-04-01 (every 90d, earliest window at least 30d after discovery)"}]}' \
+    > "$TMP/wstate.json"; }
+
+test_classify_window_deadline_is_held_when_a_fix_is_published() {
+  mkpolicy; mkwin 2026-05-01T00:00:00+00:00 90; mkwinstate
+  mkwinvuln CVE-1 available
+  CLS "$TMP/cv.json" "$TMP/cp.json" --windows "$TMP/wwin.json" --state "$TMP/wstate.json" \
+      --out "$TMP/w1.json" --now 2026-05-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/w1.json")" "2026-04-01" || return 1
+  assert "$(jq -r '.findings[0].remediation_overdue' "$TMP/w1.json")" "true" || return 1
+  jq -e '.findings[0].remediation_basis | test("held at 2026-04-01")' "$TMP/w1.json" >/dev/null || return 1
+  # not knowing whether a fix exists is not evidence that none does
+  mkwinvuln CVE-1 unknown
+  CLS "$TMP/cv.json" "$TMP/cp.json" --windows "$TMP/wwin.json" --state "$TMP/wstate.json" \
+      --out "$TMP/w1u.json" --now 2026-05-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/w1u.json")" "2026-04-01"
+}
+
+test_classify_window_deadline_moves_when_no_fix_is_published() {
+  mkpolicy; mkwin 2026-05-01T00:00:00+00:00 90; mkwinstate
+  for fix in none-published prerelease-only; do
+    mkwinvuln CVE-1 "$fix"
+    CLS "$TMP/cv.json" "$TMP/cp.json" --windows "$TMP/wwin.json" --state "$TMP/wstate.json" \
+        --out "$TMP/w2.json" --now 2026-05-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+    assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/w2.json")" "2026-07-30" || return 1
+    assert "$(jq -r '.findings[0].remediation_overdue' "$TMP/w2.json")" "false" || return 1
+    jq -e '.findings[0].remediation_basis | test("moved out from 2026-04-01")' "$TMP/w2.json" >/dev/null || return 1
+  done
+}
+
+# An unsigned entry is a draft in escalate-breaches.py and must not buy time here either,
+# otherwise the developer who did not ship the fix writes their own extension.
+test_classify_window_deadline_moves_only_on_a_signed_decision() {
+  mkpolicy; mkwin 2026-05-01T00:00:00+00:00 90; mkwinstate; mkwinvuln CVE-1 available
+  printf 'decisions:\n  - cve: CVE-1\n    decision: peer dependency blocks the upgrade\n    by: ""\n' \
+    > "$TMP/wdec.yml"
+  CLS "$TMP/cv.json" "$TMP/cp.json" --windows "$TMP/wwin.json" --state "$TMP/wstate.json" \
+      --decisions "$TMP/wdec.yml" --out "$TMP/w3.json" --now 2026-05-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/w3.json")" "2026-04-01" || return 1
+  printf 'decisions:\n  - cve: CVE-1\n    decision: peer dependency blocks the upgrade\n    by: A Reviewer\n' \
+    > "$TMP/wdec.yml"
+  CLS "$TMP/cv.json" "$TMP/cp.json" --windows "$TMP/wwin.json" --state "$TMP/wstate.json" \
+      --decisions "$TMP/wdec.yml" --out "$TMP/w4.json" --now 2026-05-02T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings[0].remediation_due[0:10]' "$TMP/w4.json")" "2026-07-30" || return 1
+  jq -e '.findings[0].remediation_basis | test("signed decision is on record \\(A Reviewer\\)")' \
+    "$TMP/w4.json" >/dev/null
+}
+
+# WI-006-09-02: Outputs — the process defaults carry maintenance_interval: 90d, so running
+# without a policy would give the product a commitment nobody agreed to.
+test_monitor_refuses_to_run_without_a_policy() {
+  rm -rf "$TMP/mnp"; mkdir -p "$TMP/mnp"
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"},
+                    properties:[{name:"quickbird:sbom:tier",value:"candidate"}]},
+          components:[],vulnerabilities:[]}' > "$TMP/mnp/bom.json"
+  MONITOR_LOCAL_SBOM="$TMP/mnp/bom.json" SOUP_POLICY_FILE="$TMP/mnp/absent.yml" \
+    bash "$S/monitor-kev.sh" QuickBirdEng/x p "$TMP/mnp/out" >"$TMP/mnp/log" 2>&1 && return 1
+  grep -q 'will not run on process defaults' "$TMP/mnp/log"
+}
+
+# The action decided on "is alert.txt non-empty" and threw this verdict away, so an unchanged
+# message went out every day and the repeat rule never took effect.
+test_monitor_writes_the_post_decision() {
+  rm -rf "$TMP/mpd"; mkdir -p "$TMP/mpd"
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/mpd/.soup-policy.yml"
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",
+          metadata:{component:{name:"p","bom-ref":"p",type:"application"},
+                    properties:[{name:"quickbird:sbom:tier",value:"candidate"}]},
+          components:[],vulnerabilities:[]}' > "$TMP/mpd/bom.json"
+  # First run: the message is new, so it goes out.
+  MONITOR_LOCAL_SBOM="$TMP/mpd/bom.json" SOUP_POLICY_FILE="$TMP/mpd/.soup-policy.yml" \
+    bash "$S/monitor-kev.sh" QuickBirdEng/x p "$TMP/mpd/out" >/dev/null 2>&1 || return 1
+  [[ -f "$TMP/mpd/out/post-decision" ]] || return 1
+  assert "$(tr -d '[:space:]' < "$TMP/mpd/out/post-decision")" "true" || return 1
+  # Second run, same state: the text has not changed, so it must not go out again. This is
+  # the case the action used to post anyway, every day, because it read only whether
+  # alert.txt had content.
+  MONITOR_LOCAL_SBOM="$TMP/mpd/bom.json" SOUP_POLICY_FILE="$TMP/mpd/.soup-policy.yml" \
+    bash "$S/monitor-kev.sh" QuickBirdEng/x p "$TMP/mpd/out" >/dev/null 2>&1 || return 1
+  assert "$(tr -d '[:space:]' < "$TMP/mpd/out/post-decision")" "false"
+}
+
 test_classify_alert_threshold_from_policy() {
   mkpolicy critical; mkvuln CVE-1 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" false null  # high
   CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/co.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
@@ -2712,6 +2819,32 @@ test_net_currency_detects_an_abandoned_package() {
   assert "$(jq -r '.beyond_policy[0].finding' "$TMP/co.json")" "upstream-stale-and-we-are-current" || return 1
   [[ "$(jq -r '.beyond_policy[0].last_release_age_days' "$TMP/co.json")" -gt 1000 ]] \
     || { echo "age looks like npm's modified field, not the publish time"; return 1; }
+}
+
+# WI-006-09-02: Currency and obsolescence — a recorded reason keeps an obsolete component only
+# where the project allows it. The flag was read in validate-policy.sh only, so outside
+# TR-03161 scope the default `false` prevented nothing.
+test_net_currency_reason_is_refused_without_obsolescence_permission() {
+  need_net || return 77
+  mkcur '[{"bom-ref":"a","type":"library","name":"request","version":"2.88.2","purl":"pkg:npm/request@2.88.2",
+           "properties":[{"name":"quickbird:soup:record","value":"r"}]}]'
+  mkdir -p "$TMP/csoups9"
+  printf '{"package":"request","version":"2.x.x","currency_reason":"kept deliberately"}' \
+    > "$TMP/csoups9/r.json"
+  # default: obsolescence may not be accepted
+  mkpolicy
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp.json" --soups "$TMP/csoups9" \
+    --out "$TMP/co9.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.beyond_policy[0].justified // "absent"' "$TMP/co9.json")" "absent" || return 1
+  jq -e '.beyond_policy[0].reason_refused | test("obsolescence_may_be_accepted is false")' \
+    "$TMP/co9.json" >/dev/null || return 1
+  # and with permission the same reason applies
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\ndependency_currency:\n  obsolescence_may_be_accepted: true\n  reason: customer accepted the residual risk\n' \
+    > "$TMP/cp9.yml"
+  bash "$S/validate-policy.sh" "$TMP/cp9.yml" 2>/dev/null > "$TMP/cp9.json"
+  python3 "$S/check-currency.py" "$TMP/cb.json" "$TMP/cp9.json" --soups "$TMP/csoups9" \
+    --out "$TMP/co10.json" >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.justified[0].justified' "$TMP/co10.json")" "true"
 }
 
 test_net_currency_reads_packagist() {
