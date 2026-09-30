@@ -1538,6 +1538,34 @@ test_escalate_expired_decision_is_undecided() {
   assert "$(jq -r '.escalations[0].level' "$TMP/eo.json")" "undecided"
 }
 
+# A release from before onboarding cannot carry an SBOM, and a flavour that was never released
+# has nothing to examine. Both were reported as failed checks, which made the verdict
+# `incomplete` every day for a gap no action could close — and a warning nobody can clear is
+# one people learn to skip.
+test_deployed_a_gap_no_action_can_close_is_not_a_failed_check() {
+  command -v jq >/dev/null 2>&1 || return 77
+  d="$TMP/eg"; mkdir -p "$d"
+  jq -n '{environments:[
+      {environment:"Production", ref:"v2", sbom:"u", sbom_status:"available", sbom_expected:true},
+      {environment:"Study", ref:"v1", sbom:null, sbom_expected:false,
+       sbom_status:"released 2026-05-07, before this product was onboarded"},
+      {environment:"Other", ref:"v3", sbom:null, sbom_expected:true,
+       sbom_status:"the publish step did not run"}],
+    mobile:null, unresolvable:[], expected_gaps:[]}' > "$d/in.json"
+  # the split the resolver makes, applied to a constructed record
+  out=$(jq -c '{
+    unresolvable: [.environments[] | select(.sbom == null and (.sbom_expected != false))
+                   | {environment, why: .sbom_status}],
+    expected_gaps: ([.environments[] | select(.sbom == null and .sbom_expected == false)
+                     | {environment, why: .sbom_status}]
+                    + (if .mobile == null then [{environment:"mobile"}] else [] end))
+  }' "$d/in.json")
+  # a failed publish step stays a gap someone must fix
+  assert "$(jq -r '[.unresolvable[].environment] | join(",")' <<<"$out")" "Other" || return 1
+  # the pre-onboarding release and the unreleased flavour are stated, not counted
+  assert "$(jq -r '[.expected_gaps[].environment] | join(",")' <<<"$out")" "Study,mobile"
+}
+
 # An unreadable decisions file must stop the run: silently ignoring it would escalate every
 # breach that is in fact already handled.
 test_escalate_refuses_unreadable_decisions() {

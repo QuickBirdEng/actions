@@ -42,6 +42,8 @@ if [[ -f "$POLICY_FILE" ]]; then
   if POLICY_JSON=$(bash "$HERE/validate-policy.sh" "$POLICY_FILE" 2>/dev/null); then
     [[ -z "$CRA_SCOPE" ]] && CRA_SCOPE=$(jq -r '.cra_scope | tostring' <<<"$POLICY_JSON")
     ALERT_THRESHOLD=$(jq -r '.alerts.threshold // "high"' <<<"$POLICY_JSON")
+    # resolve-deployed.sh needs it to tell "no SBOM could exist" from "the publish step failed".
+    export SOUP_ONBOARDED=$(jq -r '.onboarded // ""' <<<"$POLICY_JSON")
     log "policy: $(jq -r '"\(.product) · CRA \(.cra_scope)"' <<<"$POLICY_JSON")"
   else
     # An invalid policy is not a reason to fall back to defaults quietly — the defaults
@@ -97,6 +99,9 @@ TARGETS=$(jq -c '
 UNSCANNABLE=$(jq -c '[ .unresolvable[]?
   | select((.environment | test("prod|study|mobile"; "i")) or .environment == "*")
   | {name:.environment, version:.ref, why:.why} ]' "$DEPLOYED")
+
+# Stated in the record, never counted as a failed check.
+EXPECTED_GAPS=$(jq -c '[ .expected_gaps[]? | {name:.environment, version:.ref, why:.why} ]' "$DEPLOYED")
 
 N_TARGETS=$(jq 'length' <<<"$TARGETS")
 N_UNSCANNABLE=$(jq 'length' <<<"$UNSCANNABLE")
@@ -325,6 +330,7 @@ RECORD="$OUT_DIR/${RUN_DATE}-${PRODUCT}.json"
 jq -n \
   --arg product "$PRODUCT" --arg repo "$REPO" --arg at "$RUN_TS" --arg cra "$CRA_SCOPE" \
   --argjson scanned "$SCANNED" --argjson unscannable "$UNSCANNABLE" \
+  --argjson expected_gaps "$EXPECTED_GAPS" \
   --argjson findings "$FINDINGS" --argjson suppressed "$SUPPRESSED" \
   --argjson unknown "$UNKNOWN" --argjson feeds "$FEEDS" --argjson synthetic "$SYNTHETIC" \
   --arg cadence "$(jq -r '.release_cadence // ""' <<<"${POLICY_JSON:-{\}}" 2>/dev/null)" \
@@ -361,6 +367,7 @@ jq -n \
      feeds: $feeds,
      scanned: $scanned,
      not_scanned: $unscannable,
+     expected_gaps: $expected_gaps,
      kev_findings: $findings,
      kev_suppressed_by_vex: $suppressed,
      kev_membership_unknown: $unknown,
