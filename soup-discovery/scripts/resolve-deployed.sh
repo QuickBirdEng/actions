@@ -22,6 +22,10 @@ set -uo pipefail
 REPO="${1:?usage: resolve-deployed.sh <owner/repo> [environment]}"
 WANT_ENV="${2:-}"
 ASSET_PATTERN="${SBOM_ASSET_PATTERN:-sbom-%s.cdx.json}"
+# A release published before the product was onboarded cannot carry an SBOM: the pipeline did
+# not exist for it. Reporting that as a failed check produces a warning no action can clear,
+# and an alert that always fires carries no information.
+ONBOARDED="${SOUP_ONBOARDED:-}"
 
 for t in gh jq; do command -v "$t" >/dev/null 2>&1 || { echo "::error::$t required" >&2; exit 1; }; done
 
@@ -201,6 +205,7 @@ while IFS=$'\t' read -r env ref sha at id; do
     # deployed tag reported "release carries no SBOM asset" — a wrong answer that read like
     # a missing publish step. Caught by the code review, not by a run, because every
     # monitor run until then had used MONITOR_LOCAL_SBOM.
+    sbom_expected=true
     sbom_url=$(gh api "repos/$REPO/releases/tags/$ref" 2>/dev/null \
                  | jq -r --arg a "$asset" '[.assets[] | select(.name==$a) | .url][0] // ""' \
                  2>/dev/null || echo "")
@@ -209,7 +214,14 @@ while IFS=$'\t' read -r env ref sha at id; do
     else
       # Distinguish "no release" from "release without the asset" — different fixes.
       if gh api "repos/$REPO/releases/tags/$ref" >/dev/null 2>&1; then
-        sbom_state="release exists but carries no $asset — released before the SBOM pipeline, or the publish step did not run"
+        rel_published=$(gh api "repos/$REPO/releases/tags/$ref" 2>/dev/null \
+                          | jq -r '.published_at // ""' 2>/dev/null || echo "")
+        if [[ -n "$ONBOARDED" && -n "$rel_published" && "${rel_published:0:10}" < "$ONBOARDED" ]]; then
+          sbom_state="released ${rel_published:0:10}, before this product was onboarded on $ONBOARDED — no SBOM could have been published for it"
+          sbom_expected=false
+        else
+          sbom_state="release exists but carries no $asset — the publish step did not run"
+        fi
       else
         sbom_state="tag exists but has no GitHub release, so there is nowhere for an SBOM asset to live"
       fi
@@ -220,10 +232,10 @@ while IFS=$'\t' read -r env ref sha at id; do
 
   out=$(jq -c --arg env "$env" --arg ref "$ref" --arg sha "$sha" --arg at "$at" \
            --arg state "$state" --argjson is_tag "$ref_is_tag" \
-           --arg url "$sbom_url" --arg sstate "$sbom_state" \
+           --arg url "$sbom_url" --arg sstate "$sbom_state" --argjson exp "${sbom_expected:-true}" \
     '. + [{environment:$env, ref:$ref, sha:$sha, deployed_at:$at, status:$state,
            ref_is_tag:$is_tag, sbom: (if $url == "" then null else $url end),
-           sbom_status:$sstate}]' <<<"$out")
+           sbom_status:$sstate, sbom_expected:$exp}]' <<<"$out")
 done < <(jq -r '.[] | "\(.env)\t\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$latest")
 
 jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argjson nontag "$NONTAG" \
@@ -246,14 +258,22 @@ jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argj
   non_release_deployments: $nontag,
   scannable: ([$envs[] | select(.sbom != null) | .environment]
               + (if ($mobile != null and $mobile.sbom != null) then ["mobile"] else [] end)),
+  # Only gaps an action could close. A release from before onboarding and a flavour that was
+  # never released are both permanent, and a warning nobody can clear is one people learn to
+  # skip — which costs the warnings that do matter.
   unresolvable: ($unreadable
-                 + [$envs[] | select(.sbom == null) | {environment, ref, why: .sbom_status}]
+                 + [$envs[] | select(.sbom == null and (.sbom_expected != false))
+                    | {environment, ref, why: .sbom_status}]
                  + (if $mobile != null and $mobile.sbom == null
                     then [{environment: "mobile", ref: $mobile.tag,
-                           why: "production release carries no SBOM asset"}] else [] end)
-                 + (if $mobile == null
-                    then [{environment: "mobile", ref: null,
-                           why: "no release carries a production artifact — the product may not be live yet (study/staging flavours only)"}] else [] end))
+                           why: "production release carries no SBOM asset"}] else [] end))
+  ,
+  # Stated, so the record still says what was not examined, and not counted as a failed check.
+  expected_gaps: ([$envs[] | select(.sbom == null and .sbom_expected == false)
+                   | {environment, ref, why: .sbom_status}]
+                  + (if $mobile == null
+                     then [{environment: "mobile", ref: null,
+                            why: "no release carries a production artifact — this flavour is not live"}] else [] end))
 }'
 
 # Warnings on stderr so a CI job surfaces them without parsing the JSON.

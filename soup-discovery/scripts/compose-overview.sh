@@ -100,7 +100,7 @@ BLOCKED=$(jq -r --arg order "$LIVE_ORDER" '
   ($order | split(",")) as $pref
   | (.environments // []) as $envs
   | [ $pref[] as $e
-      | ((.unresolvable // [])[] | select(.environment == $e)
+      | (((.unresolvable // []) + (.expected_gaps // []))[] | select(.environment == $e)
          | { env: .environment, ref: (.ref // "-"), why: .why,
              at: ([ $envs[] | select(.environment == $e) | .deployed_at // "" ] | first // "") }) ]
   | first // empty' "$WORK/deployed.json" 2>/dev/null)
