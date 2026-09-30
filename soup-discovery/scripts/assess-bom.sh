@@ -109,9 +109,15 @@ if [[ -n "${MAINTENANCE_LAST_RELEASE:-}" ]]; then
   python3 "$HERE/maintenance-windows.py" "${MW_ARGS[@]}" >/dev/null 2>&1 || WINDOWS=""
 fi
 
+# Same default as monitor-kev.sh and run-pipeline.sh. Read from the env alone, which nothing
+# sets, so the grouping had never seen a vendor request.
+DECISIONS_FILE="${SOUP_DECISIONS_FILE:-.soup-decisions.yml}"
+
 CLS_ARGS=("$ASSESSED" "$POLICY" --out "$FINDINGS" --annotate-bom "$ASSESSED")
 [[ -n "$WINDOWS" && -f "$WINDOWS" ]] && CLS_ARGS+=(--windows "$WINDOWS")
 [[ -n "$STATE" && -f "$STATE" ]] && CLS_ARGS+=(--state "$STATE")
+# A signed decision can move a window deadline, so the classifier reads the same file.
+[[ -f "$DECISIONS_FILE" ]] && CLS_ARGS+=(--decisions "$DECISIONS_FILE")
 python3 "$HERE/classify-findings.py" "${CLS_ARGS[@]}" 2>&1 | sed 's/^/5\/5 classify   /' >&2 \
   || { echo "::error::classification failed" >&2; exit 1; }
 
@@ -139,8 +145,7 @@ fi
 # demands 311 mitigations in three weeks; with it, it names two images.
 UNITS="$OUT_DIR/$BASE.remediation-units.json"
 GR_ARGS=("$FINDINGS" "$ASSESSED" --out "$UNITS")
-[[ -n "${SOUP_DECISIONS_FILE:-}" && -f "${SOUP_DECISIONS_FILE}" ]] \
-  && GR_ARGS+=(--decisions "$SOUP_DECISIONS_FILE")
+[[ -f "$DECISIONS_FILE" ]] && GR_ARGS+=(--decisions "$DECISIONS_FILE")
 python3 "$HERE/group-remediation.py" "${GR_ARGS[@]}" 2>&1 \
   | sed 's/^/7\/7 group      /' >&2 \
   || echo "::warning::could not group findings by remediation action — the per-finding deadlines still stand" >&2
