@@ -376,6 +376,11 @@ def main():
     exempt_publishers = {str(x).strip().lower()
                          for x in (cur_policy.get("stale_exempt_publishers") or [])
                          if str(x).strip()}
+    # WI-006-09-02: Currency and obsolescence. Read here as well as in validate-policy.sh,
+    # which only refuses `true` for a TR-03161 product. Outside that scope the flag decided
+    # nothing: a reason in the SOUP record justified an obsolete component either way, which
+    # made the default `false` mean nothing at all.
+    obsolescence_ok = bool(cur_policy.get("obsolescence_may_be_accepted", False))
     if args.now:
         now = datetime.fromisoformat(str(args.now).replace("Z", "+00:00"))
         if now.tzinfo is None:
@@ -527,8 +532,17 @@ def main():
                 entry["exempt_publisher"] = meta["publisher"]
                 entry["reason"] = note["stale_exempt"]
             if name in reasons:
-                entry["justified"] = True
-                entry["reason"] = reasons[name]
+                # A recorded reason keeps an obsolete component only where the project allows
+                # that. Being behind the update limit is not obsolescence — there a reason
+                # still justifies the upgrade finding.
+                if (is_stale or meta.get("deprecated")) and not obsolescence_ok:
+                    entry["reason_refused"] = (
+                        f"{reasons[name]} — not applied: this component is no longer "
+                        f"maintained, and dependency_currency."
+                        f"obsolescence_may_be_accepted is false for this product.")
+                else:
+                    entry["justified"] = True
+                    entry["reason"] = reasons[name]
             results.append(entry)
 
     # --- image obsolescence ---------------------------------------------------

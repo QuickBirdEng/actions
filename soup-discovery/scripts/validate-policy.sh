@@ -54,7 +54,7 @@ for spec in \
   'dependency_currency:.dependency_currency // {} | keys:["max_behind","stale_after","stale_exempt_publishers","obsolescence_may_be_accepted","reason"]' \
   'dependency_currency.max_behind:.dependency_currency.max_behind // {} | keys:["major","minor","patch"]' \
   'alerts:.alerts // {} | keys:["threshold","slack_channel"]' \
-  'breach:.breach // {} | keys:["decision_within","risk_acceptance_approvers"]' \
+  'breach:.breach // {} | keys:["decision_within"]' \
   'production_release:.production_release // {} | keys:["tag_pattern"]'; do
   name="${spec%%:*}"; rest="${spec#*:}"; expr="${rest%:*}"; allowed="${rest##*:}"
   U=$(jq -r --argjson a "$allowed" "[$expr] | flatten - \$a | join(\", \")" <<<"$P" 2>/dev/null)
@@ -85,7 +85,7 @@ case "$CRA" in
   true|false|unknown|"") ;;
   *) err "$POLICY: cra_scope must be true, false or unknown — got '$CRA'" ;;
 esac
-[[ "$CRA" == "unknown" ]] && warn "$POLICY: cra_scope is 'unknown'. Alerts will say so rather than assume. Determine it before 2026-09-11."
+[[ "$CRA" == "unknown" ]] && warn "$POLICY: cra_scope is 'unknown'. Alerts will say so rather than assume. The CRA reporting duties have applied since 2026-09-11, so this determination is overdue."
 
 # --- the two SLA intervals must be durations ---------------------------------
 # No upper bound is enforced. What a product commits to is the SLA's business, and a value that

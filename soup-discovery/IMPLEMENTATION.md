@@ -50,9 +50,9 @@ filter-gradle-lockfile.sh| A `gradle.lockfile` written by `dependencyLocking { l
 resolve-scope.sh| Join candidates against the scope declaration. Exits non-zero on the first unclassified candidate.  
 resolve-tier.sh| Document level from the tag shape, not from `github.ref_type`, which is `tag` for a QA tag too. Fails loudly on an invalid `tag_pattern` rather than falling through to a level.  
 normalize-bom.sh| Per scanned target: record the identity. Image digest, image id, manifest digest and the image build date. Needs syft's native format as well as CycloneDX, because only the native one carries them.  
-verify-bom.sh| Gate a produced document before it is merged: schema, a non-empty component list, purls present.  
+verify-bom.sh| Gate a produced document before it is merged: a component with no version, a scan path leaking in as a component name, and speculative `syft:cpe23` entries. purl, licence and hash coverage are reported, not enforced.  
 consolidate.sh| Merge the per-target documents into one, stamping each component with the artefact it came from and carrying the target's hashes and properties onto the artefact component.  
-assess-bom.sh| **Entry point for assessment.** Six stages: scan, enrich, merge enrichment, merge SOUP records and VEX, classify, check currency. Exists because the stages were separate scripts and two of them were called by nothing, so the enrichment never reached the document and no finding was ever given a deadline.  
+assess-bom.sh| **Entry point for assessment.** Seven stages: scan, enrich, merge enrichment, merge SOUP records and VEX, classify, check currency, group by remediation action. Exists because the stages were separate scripts and two of them were called by nothing, so the enrichment never reached the document and no finding was ever given a deadline.  
 scan-vulns.sh| Vulnerabilities per component, joined on purl.  
 merge-enrichment.sh| KEV membership and EPSS onto the vulnerabilities, feed provenance into the metadata: KEV catalog version, EPSS model version and score date.  
 merge-assessment.sh| SOUP requirement results, approval annotations and VEX analysis into the document.  
@@ -85,8 +85,9 @@ bom/<target>.cdx.json| One document per scanned target.
 bom/<target>.syft.json| The native scan output. Deleted after the identity has been recorded, on the gap paths too.  
 **bom/solution.cdx.json**|  The consolidated inventory: components, their artefact, the identity of each scanned image, and whether the inventory is complete.  
 **bom/solution.assessed.cdx.json**|  The same document with vulnerabilities, enrichment provenance, VEX analysis, classification and remediation units. This is the release asset.  
-bom/solution.assessed.pdf| The readable rendering.  
-effective-policy.json| Defaults merged with the project configuration — the values this run actually applied.  
+bom/sbom-report.pdf| The readable statement of composition. Attached to a release as `sbom-<tag>.pdf`.  
+bom/vdr-report.pdf| The readable assessment. Attached to a release as `vdr-<tag>.pdf`.  
+policy.effective.json| Defaults merged with the project configuration — the values this run actually applied.  
   
 Findings and dispositions live inside the assessed document rather than beside it, so that a finding cannot become separated from what was decided about it.
 
@@ -174,8 +175,8 @@ quickbird:scan:image-created| The image build date, for the age check.
 quickbird:component:artifact| Which artefact a component came from.  
 quickbird:soup:approval-drift  
 quickbird:soup:record-version-mismatch | A SOUP approval exists and does not cover the shipped version, on the component, and as a per-record line in the metadata. A review event (WI-006-09, Observe), distinct from an orphaned record.  
-quickbird:feed:kev-catalog-version  
-quickbird:feed:epss-model / :epss-score-date| Which feed version produced the enrichment. EPSS scores are not comparable between model versions, so the version is part of the finding.  
+quickbird:vuln:kev-catalog-version  
+quickbird:vuln:epss-model-version / :epss-score-date| Which feed version produced the enrichment. EPSS scores are not comparable between model versions, so the version is part of the finding.  
 quickbird:finding:track / :rule / :why / :cvss  
 :mitigation-due / :remediation-due / :*-overdue  
 :clock-start | The classification on the vulnerability itself: track, matched rule, score, both dated deadlines and their overdue state. What the PDF renders as the assessment.  

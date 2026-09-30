@@ -59,7 +59,6 @@ tracks:
 # WI-006-09: Decide — after a breach, how long until a decision is required.
 breach:
   decision_within: 5d
-  risk_acceptance_approvers: 1     # may be the SOUP approver (decided 2026-08-02)
 
 # WI-006-09-01: The maintenance window — the maintenance release commitment.
 #

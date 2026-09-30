@@ -52,7 +52,12 @@ if [[ -f "$POLICY_FILE" ]]; then
     exit 1
   fi
 else
-  log "::warning::no $POLICY_FILE — falling back to arguments and process defaults"
+  # WI-006-09-02: Outputs — an effective configuration the tooling refuses to run without.
+  # The process defaults carry maintenance_interval: 90d, so falling back would give the
+  # product a maintenance commitment nobody agreed and deadlines derived from it that look
+  # exactly like real ones.
+  echo "::error::no $POLICY_FILE — this observation computes deadlines and will not run on process defaults" >&2
+  exit 1
 fi
 CRA_SCOPE="${CRA_SCOPE:-unknown}"
 
@@ -435,12 +440,18 @@ if [[ -s "$ALERT" ]]; then
   # Whether it is worth saying again. The state travels with the run evidence, the same way the
   # finding clocks do.
   DECISION=$(bash "$HERE/decide-alert.sh" "$ALERT" "$RECORD" "$STATE_DIR/alert-state.json" "$ALERT_ITEMS")
+  # The verdict has to leave this script as a file. stdout is the run log, and the action
+  # was deciding on "is alert.txt non-empty" instead — which posted an unchanged message
+  # every day and meant the repeat rule never took effect.
   if [[ "$DECISION" == "post=true" ]]; then
+    printf 'true\n' > "$OUT_DIR/post-decision"
     echo "alert=true"
   else
+    printf 'false\n' > "$OUT_DIR/post-decision"
     echo "alert=false"
   fi
 else
   log "  no alert — all clear, record kept as evidence of monitoring"
+  printf 'false\n' > "$OUT_DIR/post-decision"
   echo "alert=false"
 fi

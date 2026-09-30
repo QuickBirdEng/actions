@@ -1,0 +1,64 @@
+name: 'SOUP - Backstop reconciliation'
+description: 'Reconcile the evidence history: coverage, undecided breaches, expired acceptances, the maintenance cadence, and whether the reconciliation itself ran as often as promised'
+
+inputs:
+  evidence:
+    description: 'Directory holding the dated observation records'
+    required: true
+  products:
+    description: 'Comma-separated products that must have records. A product missing entirely is the finding this catches.'
+    required: true
+  window:
+    description: 'Days of history to reconcile'
+    required: false
+    default: '366'
+  previous:
+    description: 'Directory of earlier reconciliation reports. Without it, the question "did this reconciliation run as often as promised" can only ever answer "first run".'
+    required: false
+    default: ''
+  out:
+    description: 'Where to write the report'
+    required: false
+    default: 'backstop-report.json'
+
+outputs:
+  verdict:
+    description: 'clean or action-required'
+    value: ${{ steps.run.outputs.verdict }}
+  report:
+    description: 'Path to the written report'
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Reconcile
+      id: run
+      shell: bash
+      run: |
+        # The script lives in soup-discovery/ with the rest of the pipeline it reads. The
+        # workflow used to run `.github/soup/backstop-report.py` out of the calling product
+        # repository, where no such file has ever existed.
+        REPORT="$GITHUB_ACTION_PATH/../soup-discovery/scripts/backstop-report.py"
+        if [ ! -f "$REPORT" ]; then
+          echo "::error::backstop script not found at $REPORT"
+          exit 1
+        fi
+        ARGS=("${{ inputs.evidence }}"
+              --products "${{ inputs.products }}"
+              --window "${{ inputs.window }}"
+              --out "${{ inputs.out }}")
+        if [ -n "${{ inputs.previous }}" ] && [ -d "${{ inputs.previous }}" ]; then
+          ARGS+=(--previous "${{ inputs.previous }}")
+        else
+          echo "::warning::no earlier reconciliation reports supplied — the cadence of the reconciliation itself cannot be checked"
+        fi
+        set +e
+        python3 "$REPORT" "${ARGS[@]}"
+        rc=$?
+        set -e
+        {
+          echo "verdict=$(jq -r '.verdict // "unknown"' "${{ inputs.out }}" 2>/dev/null || echo unknown)"
+          echo "report=${{ inputs.out }}"
+        } >> "$GITHUB_OUTPUT"
+        exit $rc

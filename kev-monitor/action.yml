@@ -120,7 +120,9 @@ runs:
         {
           echo "verdict=$(jq -r '.verdict' "$REC")"
           echo "record=$REC"
-          echo "has-alert=$([ -s "$OUT/alert.txt" ] && echo true || echo false)"
+          # The monitor's own verdict, not merely "there is text": decide-alert.sh holds
+          # back a message that has not changed since it was last sent.
+          echo "has-alert=$( [ -f "$OUT/post-decision" ] && tr -d '[:space:]' < "$OUT/post-decision" || echo false )"
         } >> "$GITHUB_OUTPUT"
 
     - name: Post to Slack

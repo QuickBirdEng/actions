@@ -208,6 +208,9 @@ def main():
     ap.add_argument("--state", help="previous run, for latching and clock starts")
     ap.add_argument("--windows", help="maintenance-windows.py output; without it, Track 3/4 "
                                       "remediation has no date and cannot breach")
+    ap.add_argument("--decisions", help=".soup-decisions.yml. A signed decision is one of the two "
+                                        "things that let a maintenance-window deadline move to a "
+                                        "later window")
     ap.add_argument("--annotate-bom", help="stamp the grq-4 contradiction back onto the assessed "
                                            "BOM. The bundle is the evidence, so a record whose "
                                            "snapshot no longer holds belongs in it — and the PDF "
@@ -244,6 +247,15 @@ def main():
                                "maintenance-windows.py"))
         mw = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mw)
+
+    # The signature rule has one definition, in escalate-breaches.py: an unsigned entry is a
+    # draft there, and a draft must not buy time here either.
+    esc_spec = importlib.util.spec_from_file_location(
+        "esc", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "escalate-breaches.py"))
+    esc = importlib.util.module_from_spec(esc_spec)
+    esc_spec.loader.exec_module(esc)
+    dec_by_cve, dec_by_lib = esc.load_decisions(args.decisions)
 
     threshold = BANDS.get(str(policy.get("alerts", {}).get("threshold", "high")).lower(), 1)
 
@@ -382,6 +394,20 @@ def main():
         if escalated and was:
             out["escalated_from"] = was.get("track")
 
+        # WI-006-09-01: The maintenance window — a deadline moves to a later window only
+        # where there was nothing to ship. `unknown` counts as a fix being available: not
+        # knowing is not evidence that none exists.
+        _fix = props(v).get("quickbird:vuln:fix", "unknown")
+        _dec = esc.decision_for_finding(dec_by_cve, dec_by_lib, out)
+        if _fix == "none-published":
+            slip_ok, slip_why = True, "no fix is published for this vulnerability"
+        elif _fix == "prerelease-only":
+            slip_ok, slip_why = True, "the only published fix is a pre-release"
+        elif esc.is_signed(_dec):
+            slip_ok, slip_why = True, f"a signed decision is on record ({str(_dec.get('by')).strip()})"
+        else:
+            slip_ok, slip_why = False, ""
+
         for clock in ("mitigation", "remediation"):
             spec = td.get(clock)
             delta = parse_duration(spec)
@@ -401,12 +427,28 @@ def main():
                         floor_days = (mit.days if mit
                                       else mw.DEFAULT_MITIGATION_FLOOR_DAYS)
                         due = mw.window_for(clock_start, floor_days, origin, iv)
+                        # The grid origin is the last production deployment, so a late
+                        # release moves every open window deadline outward by the length of
+                        # the delay — the opposite of what rule 2 promises.
+                        prev_due = mw.parse_ts((was or {}).get(f"{clock}_due"))
+                        prev_window = str((was or {}).get(f"{clock}_basis") or "").startswith(
+                            "maintenance window")
+                        note = ""
+                        if prev_due and prev_window and due > prev_due:
+                            if slip_ok:
+                                note = (f"; moved out from {prev_due.date().isoformat()} — "
+                                        f"{slip_why}")
+                            else:
+                                note = (f"; held at {prev_due.date().isoformat()} — the grid now "
+                                        f"gives {due.date().isoformat()}, and a missed window does "
+                                        f"not extend a deadline while a fix is published")
+                                due = prev_due
                         out[f"{clock}_due"] = due.isoformat()
                         out[f"{clock}_overdue"] = now > due
                         out[f"{clock}_basis"] = (
                             f"maintenance window {due.date().isoformat()} "
                             f"(every {iv}d, earliest window at least {floor_days}d after "
-                            f"discovery)")
+                            f"discovery)" + note)
                     else:
                         out[f"{clock}_basis"] = (
                             "next regular release — NO DATE: no maintenance window was "

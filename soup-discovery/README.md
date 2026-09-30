@@ -84,8 +84,9 @@ Under `sbom/`:
 | `bom/<target>.cdx.json` | One document per scanned target. |
 | `bom/solution.cdx.json` | The consolidated inventory: each component's originating artefact, the identity of each scanned image, and whether the inventory is complete. |
 | `bom/solution.assessed.cdx.json` | The same document with vulnerabilities, enrichment provenance, VEX analysis, classification and remediation units. This is the release asset. |
-| `bom/solution.assessed.pdf` | The readable rendering, with the document level on the cover. |
-| `effective-policy.json` | Defaults merged with the project's configuration — what this run actually applied. |
+| `bom/sbom-report.pdf` | The readable statement of composition, with the document level on the cover. |
+| `bom/vdr-report.pdf` | The readable assessment, with the document level on the cover. |
+| `policy.effective.json` | Defaults merged with the project's configuration — what this run actually applied. |
 
 Consolidation exists because two readers want different things and both are legitimate: a
 dependency-tracking tool wants one document per shipped artefact, since a document has a single
@@ -99,7 +100,7 @@ scanned survives into the published bundle.
 | Situation | Result |
 |---|---|
 | A candidate has no scope decision | Run fails. |
-| A produced document fails the gate — no components, missing purls, a component with no version | Run fails. |
+| A produced document fails the gate — a component with no version, a scan path as a component name, a speculative `syft:cpe23` | Run fails. |
 | Consolidation loses a component | Run fails. |
 | An in-scope artefact cannot be scanned — private registry without credentials, an image reference resolvable only at deploy time | Recorded as a named gap; `complete` is `false`. The run does not fail: the document has to state the gap, and failing would discard the evidence of it. |
 
@@ -107,8 +108,8 @@ scanned survives into the published bundle.
 
 Everything recorded uses the `quickbird:` namespace, so a document can be audited after the fact: what
 was scanned (`scan:image-digest`, `scan:image-id`, `scan:image-created`), which artefact a component came
-from (`component:artifact`), which feed version produced the enrichment (`feed:kev-catalog-version`,
-`feed:epss-model`, `feed:epss-score-date`), and the classification with both dated deadlines
+from (`component:artifact`), which feed version produced the enrichment (`vuln:kev-catalog-version`,
+`vuln:epss-model-version`, `vuln:epss-score-date`), and the classification with both dated deadlines
 (`finding:track`, `finding:rule`, `finding:mitigation-due`, `finding:remediation-due`,
 `finding:clock-start`).
 
