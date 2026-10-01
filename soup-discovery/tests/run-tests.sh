@@ -3906,7 +3906,40 @@ FAKE
 # Regression: an environment whose newest records are all non-tag refs disappeared from
 # both lists — real on a repo whose Production env is also written by a content-migration
 # workflow dispatching from branches.
-test_resolve_deployed_names_tagless_environments() {
+# Nothing was scanned and every reason is permanent: the product has nothing in production to
+# look at yet. That is a state, not a failed check — the run used to report `incomplete` and
+# post a message whose body listed nothing at all, because not_scanned was empty.
+test_monitor_nothing_to_observe_when_every_gap_is_expected() {
+  make_fake_gh
+  fake_gh_fixtures "$TMP/nto"
+  # Production deploys a branch, and no release carries an SBOM.
+  cat > "$TMP/nto/deployments.json" <<'EOF'
+[{"environment":"Production","ref":"main","sha":"d","created_at":"2026-08-01T10:00:00Z","id":7}]
+EOF
+  cat > "$TMP/nto/tags.json" <<'EOF'
+[]
+EOF
+  cat > "$TMP/nto/releases.json" <<'EOF'
+[]
+EOF
+  printf 'product: p\ncra_scope: false\nmaintenance_interval: 90d\n' > "$TMP/nto/.soup-policy.yml"
+  FAKE_DIR="$TMP/nto" PATH="$TMP/fakebin:$PATH" SOUP_POLICY_FILE="$TMP/nto/.soup-policy.yml" \
+    bash "$S/monitor-kev.sh" owner/repo p "$TMP/nto/out" >/dev/null 2>&1
+  local rec; rec=$(ls "$TMP/nto/out"/*-p.json 2>/dev/null | head -1)
+  [[ -s "$rec" ]] || return 1
+  assert "$(jq -r '.verdict' "$rec")" "nothing-to-observe" || return 1
+  # the state is still written down, it is only not alerted
+  [[ "$(jq -r '.expected_gaps | length' "$rec")" -gt 0 ]] || return 1
+  # and nothing goes out
+  [[ -s "$TMP/nto/out/alert.txt" ]] && { echo "an alert was composed"; return 1; }
+  assert "$(tr -d '[:space:]' < "$TMP/nto/out/post-decision")" "false"
+}
+
+# An environment that only ever deploys branches has no version to resolve, and no change in
+# this repository can give it one. Named in the record so the state is visible, and carried by
+# the weekly overview — but not a failed check, because a daily alert nobody can clear is one
+# people learn to skip.
+test_resolve_deployed_tagless_environment_is_an_expected_gap() {
   make_fake_gh
   fake_gh_fixtures "$TMP/fx4"
   cat > "$TMP/fx4/deployments.json" <<'EOF'
@@ -3916,7 +3949,8 @@ EOF
 []
 EOF
   out=$(FAKE_DIR="$TMP/fx4" PATH="$TMP/fakebin:$PATH" bash "$S/resolve-deployed.sh" owner/repo) || return 1
-  contains "$(jq -r '.unresolvable[] | select(.environment=="Study") | .why' <<<"$out")" "none from a tag"
+  contains "$(jq -r '.expected_gaps[] | select(.environment=="Study") | .why' <<<"$out")" "none from a tag" || return 1
+  assert "$(jq -r '[.unresolvable[] | select(.environment=="Study")] | length' <<<"$out")" "0"
 }
 
 # Regression: a Development environment without an SBOM kept every record at `incomplete`.
