@@ -599,10 +599,25 @@ def build(args):
                                          or "").split(", ")
                                if f}, key=version_key)
 
+            def applicable(cands):
+                """The version this row has to reach.
+
+                A multi-line advisory publishes a fix per release line — brace-expansion 1.1.18
+                is fixed by 1.1.21 and 5.0.9 by 5.0.12, both listed on the same CVE. Taking the
+                highest named 5.0.12 as the answer for the 1.x row: four majors up, and not an
+                upgrade anyone can perform there.
+                """
+                ahead = [f for f in cands if version_key(f) > version_key(version)]
+                if not ahead:
+                    return []
+                same = [f for f in ahead if version_key(f)[:1] == version_key(version)[:1]]
+                return same or [min(ahead, key=version_key)]
+
             # Split by state rather than pooling every fix-version in the group: a component
             # with a stable fix for one CVE and only a prerelease for another would otherwise
             # show whichever sorted last, which is how an alpha ends up printed as the answer.
-            fx_avail, fx_pre = versions_in("available"), versions_in("prerelease-only")
+            fx_avail = applicable(versions_in("available"))
+            fx_pre = applicable(versions_in("prerelease-only"))
             fstates = {props(v).get("quickbird:vuln:fix", "?") for v in vs}
             if fx_avail:
                 fixed = f"<b>{esc(fx_avail[-1])}</b>"
