@@ -158,7 +158,7 @@ TAGS=$(gh api --paginate "repos/$REPO/git/matching-refs/tags" 2>/dev/null \
 is_tag() { printf '%s\n' "$TAGS" | grep -Fxq "$1"; }
 
 # per environment: newest tag-ref deployment, plus a note if newer non-tag records exist
-picked='[]'; NONTAG='[]'
+picked='[]'; NONTAG='[]'; EXPECTED_NONTAG='[]'
 while IFS= read -r group; do
   [[ -z "$group" ]] && continue
   env=$(jq -r '.[0].env' <<<"$group")
@@ -179,8 +179,14 @@ while IFS= read -r group; do
   else
     # Every record for this environment is a non-tag ref. The environment is real and
     # something deploys to it; dropping it here would hide it from both lists.
-    UNREADABLE=$(jq -c --arg e "$env" --argjson n "$skipped" '. + [{environment:$e, ref:null,
-      why:"\($n) deployment record(s), none from a tag — nothing states which application release runs here"}]' <<<"$UNREADABLE")
+    #
+    # Not a failed check, though. The observation resolves "which release runs here" from the
+    # deployment record, and an environment that never deploys a release has no version to
+    # resolve — that is how it is deployed, not a finding about the software. Reported in the
+    # record and in the weekly overview, which is where a deployment practice belongs; a daily
+    # alert nobody can clear from this repository is one people learn to skip.
+    EXPECTED_NONTAG=$(jq -c --arg e "$env" --argjson n "$skipped" '. + [{environment:$e, ref:null,
+      why:"\($n) deployment record(s), none from a tag — this environment does not deploy releases, so no version can be resolved for it"}]' <<<"$EXPECTED_NONTAG")
   fi
 done < <(jq -c '.[]' <<<"$latest")
 latest="$picked"
@@ -239,6 +245,7 @@ while IFS=$'\t' read -r env ref sha at id; do
 done < <(jq -r '.[] | "\(.env)\t\(.ref)\t\(.sha)\t\(.at)\t\(.id)"' <<<"$latest")
 
 jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argjson nontag "$NONTAG" \
+      --argjson nontagenvs "$EXPECTED_NONTAG" \
       --argjson unreadable "$UNREADABLE" '{
   schema: "quickbird.deployed-version/v1",
   repo: $repo,
@@ -269,8 +276,9 @@ jq -n --arg repo "$REPO" --argjson envs "$out" --argjson mobile "$mobile" --argj
                            why: "production release carries no SBOM asset"}] else [] end))
   ,
   # Stated, so the record still says what was not examined, and not counted as a failed check.
-  expected_gaps: ([$envs[] | select(.sbom == null and .sbom_expected == false)
-                   | {environment, ref, why: .sbom_status}]
+  expected_gaps: ($nontagenvs
+                  + [$envs[] | select(.sbom == null and .sbom_expected == false)
+                     | {environment, ref, why: .sbom_status}]
                   + (if $mobile == null
                      then [{environment: "mobile", ref: null,
                             why: "no release carries a production artifact — this flavour is not live"}] else [] end))

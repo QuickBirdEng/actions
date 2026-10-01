@@ -386,7 +386,15 @@ jq -n \
                  and ($findings | length) == 0
                  and ($unscannable | length) == 0
                  and ($unknown | length) == 0),
+     # Nothing was scanned, and every reason is a gap no action in this repository could
+     # close: an environment that does not deploy releases, a release from before onboarding,
+     # a flavour that was never published. That is not a failed check, it is a product with
+     # nothing in production to observe yet. Stated in the record and carried by the weekly
+     # overview; a daily alert here is the one people learn to skip.
      verdict: (if ($findings | length) > 0 then "kev-findings"
+               elif ($scanned | length) == 0 and ($unscannable | length) == 0
+                    and ($unknown | length) == 0 and ($expected_gaps | length) > 0
+                 then "nothing-to-observe"
                elif ($scanned | length) == 0 then "incomplete"
                elif ($unscannable | length) > 0 or ($unknown | length) > 0 then "incomplete"
                else "all-clear" end)
