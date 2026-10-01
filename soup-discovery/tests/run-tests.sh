@@ -4313,6 +4313,78 @@ test_scan_vulns_prerelease_only_fix_is_not_available() {
   contains "$(fixprop quickbird:vuln:fix-note)" "cannot adopt it"
 }
 
+# --- Red Hat product streams ----------------------------------------------------------------
+# Red Hat tracks a CVE per product stream and OSV ignores the distro qualifier in the purl, so
+# a query for a RHEL 9 package returns advisories for RHEL 10 and for the Hardened Images build
+# as well. Red Hat was also missing from comparable_ecosystem, so nothing could be placed in an
+# interval and the flat list of every fixed version was used instead. On one product that turned
+# 80 package findings into 0 real ones, each demanding a version that cannot exist on el9.
+
+test_scan_vulns_advisory_for_another_redhat_stream_is_not_a_finding() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0101"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"glibc","ecosystem":"Red Hat:enterprise_linux:10.2"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"0:2.43-8.5.el10"}]}]},
+     {"package":{"name":"glibc","ecosystem":"Red Hat:hummingbird:1"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"0:2.43-8.3.hum1"}]}]}]}'
+  run_scan "pkg:rpm/redhat/glibc@2.34-275.el9_8?arch=x86_64&distro=rhel-9.8" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "not-applicable" || return 1
+  contains "$(fixprop quickbird:vuln:fix-note)" "another Red Hat product stream"
+}
+
+# The stream matches and the installed version is already past the fix. Falling back to the flat
+# list reported the package as vulnerable against a version it exceeds — 13 of them on one image.
+test_scan_vulns_version_past_the_fix_is_not_a_finding() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0102"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"java-21-openjdk-headless","ecosystem":"Red Hat:enterprise_linux:9::appstream"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"1:21.0.1.0.12-2.el9"}]}]}]}'
+  run_scan "pkg:rpm/redhat/java-21-openjdk-headless@21.0.12.1.1-1.2.el9?arch=x86_64&distro=rhel-9.8&epoch=1" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "not-applicable" || return 1
+  contains "$(fixprop quickbird:vuln:fix-note)" "outside every affected range"
+}
+
+# The epoch lives in a purl qualifier and inline in the advisory. Without putting it back, an
+# epoch-0 version compares below its own epoch-1 fix and every such package reads as vulnerable.
+test_scan_vulns_rpm_epoch_comes_from_the_purl_qualifier() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0103"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"java-21-openjdk-headless","ecosystem":"Red Hat:enterprise_linux:9::appstream"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"1:21.0.13-1.el9"}]}]}]}'
+  run_scan "pkg:rpm/redhat/java-21-openjdk-headless@21.0.12.1.1-1.2.el9?arch=x86_64&distro=rhel-9.8&epoch=1" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" "1:21.0.13-1.el9"
+}
+
+# An alphabetic segment ranks below a numeric one in rpmvercmp. A plain list of the numbers in
+# the string cannot express that, and "2.34-275.el9_8" then read as newer than "2.43-8.3".
+test_scan_vulns_rpm_release_segments_compare_like_rpm() {
+  fake_osv '{"id":"OSV-PRE","aliases":["CVE-2026-0104"],"summary":"s",
+    "severity":[{"type":"CVSS_V3","score":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+    "affected":[{"package":{"name":"glibc","ecosystem":"Red Hat:enterprise_linux:9"},
+      "ranges":[{"type":"ECOSYSTEM","events":[{"introduced":"0"},{"fixed":"0:2.34-276.el9_8"}]}]}]}'
+  run_scan "pkg:rpm/redhat/glibc@2.34-275.el9_8?arch=x86_64&distro=rhel-9.8" || return 1
+  assert "$(fixprop quickbird:vuln:fix)" "available" || return 1
+  assert "$(fixprop quickbird:vuln:fix-versions)" "0:2.34-276.el9_8"
+}
+
+# A finding the advisory does not cover is recorded with its reason rather than dropped, so the
+# evidence shows why the match was refused.
+test_classify_not_applicable_is_suppressed_with_a_reason() {
+  mkpolicy
+  jq -n '{bomFormat:"CycloneDX",specVersion:"1.6",metadata:{component:{name:"p"}},components:[],
+    vulnerabilities:[{id:"CVE-2026-0105",
+      ratings:[{source:{name:"OSV"},method:"CVSSv31",vector:"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
+      properties:[{name:"quickbird:vuln:kev",value:"false"},
+                  {name:"quickbird:vuln:fix",value:"not-applicable"},
+                  {name:"quickbird:vuln:fix-note",value:"another Red Hat product stream"}]}]}' \
+    > "$TMP/cv.json"
+  CLS "$TMP/cv.json" "$TMP/cp.json" --out "$TMP/na.json" --now 2026-01-01T00:00:00+00:00 >/dev/null 2>&1 || return 1
+  assert "$(jq -r '.findings | length' "$TMP/na.json")" "0" || return 1
+  assert "$(jq -r '.suppressed[0].id' "$TMP/na.json")" "CVE-2026-0105" || return 1
+  contains "$(jq -r '.suppressed[0].why' "$TMP/na.json")" "another Red Hat product stream"
+}
+
 # ------------------------------------------------------------- state summary
 # A BOM with one finding per class, so the counts can be asserted individually. The artifact
 # property is what separates "we can bump this" from "someone else builds it".
@@ -4610,6 +4682,33 @@ EOF
 # A component with a stable fix for one CVE and only a prerelease for another must show the
 # stable one. Pooling every fix-version in the group and taking the last printed whichever
 # sorted highest, which is how an alpha reaches the column as the answer.
+# A multi-line advisory publishes a fix per release line and lists them all on the same CVE.
+# Pooling them and printing the highest told the 1.x row to jump four majors.
+test_render_fix_is_the_one_for_this_release_line() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  cat > "$TMP/ln-bundle.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","type":"application","name":"prod","version":"v1.0.0"}},
+ "components":[
+  {"bom-ref":"old","type":"library","name":"brace-expansion","version":"1.1.18",
+   "purl":"pkg:npm/brace-expansion@1.1.18",
+   "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-LN","affects":[{"ref":"old"}],
+   "properties":[{"name":"quickbird:finding:track","value":"expedited"},
+                 {"name":"quickbird:finding:cvss","value":"7.5"},
+                 {"name":"quickbird:vuln:fix","value":"available"},
+                 {"name":"quickbird:vuln:fix-versions","value":"1.1.21, 5.0.12"}]}]}
+EOF
+  python3 "$S/render-vdr-pdf.py" "$TMP/ln-bundle.json" "$TMP/ln.pdf" \
+    --policy "$TMP/cp.json" --date 2026-10-01 >/dev/null 2>&1 || return 1
+  local txt; txt=$(pdftotext -layout "$TMP/ln.pdf" - 2>/dev/null)
+  contains "$txt" "1.1.21" || return 1
+  grep -q "5.0.12" <<<"$txt" && { echo "the fix from another release line was printed"; return 1; }
+  return 0
+}
+
 test_render_mixed_fix_states_shows_the_stable_version() {
   need_reportlab || return 77
   command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }

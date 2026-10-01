@@ -212,8 +212,37 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
   # read wrongly, so they never reach it and keep the old behaviour.
   def vnums($v): [ $v | tostring | scan("[0-9]+") | tonumber ];
   def vkey($v): (vnums($v) + [0,0,0])[0:3];
+  def redhat_ecosystem($e): ($e | ascii_downcase | startswith("red hat"));
+
+  # epoch:version-release as a comparable array. A numeric segment outranks an alphabetic one,
+  # which rpmvercmp does and a plain list of numbers cannot express — {a:…} sorts below {b:…}
+  # in jq, so alphabetic lands below numeric. Without this, "2.34-275.el9_8" read as [2,34,275]
+  # compares against "2.43-8.3.hum1" as [2,43,8] and the older release wins.
+  def rpm_key($s):
+    ($s | tostring) as $t
+    | (if ($t | test("^[0-9]+:")) then ($t | capture("^(?<e>[0-9]+):(?<r>.*)$"))
+       else {e:"0", r:$t} end) as $p
+    | [ {b: ($p.e | tonumber)} ]
+      + ( [ $p.r | scan("[0-9]+|[A-Za-z]+") ]
+          | map(if test("^[0-9]+$") then {b: tonumber} else {a: .} end) );
+
+  def vcmp_key($eco; $s): if redhat_ecosystem($eco) then rpm_key($s) else vkey($s) end;
+  def vzero($eco): if redhat_ecosystem($eco) then [{b:0}] else [0,0,0] end;
+
+  # The distro stream the component actually runs, from the qualifier syft writes
+  # (…?distro=rhel-9.8). Red Hat tracks a CVE per stream; an advisory for another stream
+  # names a fixed version that cannot be installed here.
+  def distro_major($purl):
+    ($purl | capture("distro=[a-z]+-(?<m>[0-9]+)") // null) | if . == null then null else .m end;
+
+  def stream_matches($eco; $maj):
+    ($eco | ascii_downcase) as $e
+    | ($e | test("enterprise_linux(_eus)?:" + $maj + "([.:]|$)"))
+      or ($e | test("rhel_(eus|e4s|aus|els):" + $maj + "\\."));
+
   def comparable_ecosystem($e):
-    ($e | ascii_downcase | IN("npm","pub","crates.io","packagist","hex","nuget","rubygems","maven","go"));
+    ($e | ascii_downcase | IN("npm","pub","crates.io","packagist","hex","nuget","rubygems","maven","go"))
+    or redhat_ecosystem($e);
 
   # Which fixed version applies to the version actually installed.
   #
@@ -249,18 +278,18 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
     if (comparable_ecosystem($fx.ecosystem) | not) or (vnums($ver) | length) == 0 then
       {found:false, fixed:[]}
     else
-      (vkey($ver)) as $v
+      (vcmp_key($fx.ecosystem; $ver)) as $v
       | ( [ $fx.ranges[]? | select(.type != "GIT") ] ) as $rs
       | ( [ $rs[]
             | reduce (.events[]?) as $e
                 ({intro:null, affected:false};
                   if ($e.introduced // null) != null then
-                    .intro = (if $e.introduced == "0" then [0,0,0] else vkey($e.introduced) end)
+                    .intro = (if $e.introduced == "0" then vzero($fx.ecosystem) else vcmp_key($fx.ecosystem; $e.introduced) end)
                   elif ($e.fixed // null) != null then
-                    (if .intro != null and $v >= .intro and $v < vkey($e.fixed)
+                    (if .intro != null and $v >= .intro and $v < vcmp_key($fx.ecosystem; $e.fixed)
                      then .affected = true else . end) | .intro = null
                   elif ($e.last_affected // null) != null then
-                    (if .intro != null and $v >= .intro and $v <= vkey($e.last_affected)
+                    (if .intro != null and $v >= .intro and $v <= vcmp_key($fx.ecosystem; $e.last_affected)
                      then .affected = true else . end) | .intro = null
                   else . end)
             # An interval the range never closes runs to infinity.
@@ -269,9 +298,9 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
             | reduce (.events[]?) as $e
                 ({intro:null, fixes:[]};
                   if ($e.introduced // null) != null then
-                    .intro = (if $e.introduced == "0" then [0,0,0] else vkey($e.introduced) end)
+                    .intro = (if $e.introduced == "0" then vzero($fx.ecosystem) else vcmp_key($fx.ecosystem; $e.introduced) end)
                   elif ($e.fixed // null) != null and .intro != null
-                       and $v >= .intro and $v < vkey($e.fixed) then
+                       and $v >= .intro and $v < vcmp_key($fx.ecosystem; $e.fixed) then
                     .fixes += [$e.fixed]
                   else . end)
             | .fixes[] ] | unique ) as $fixes
@@ -294,13 +323,25 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
                     or ($fx.name != "" and ($fx.name | IN($keys[]))) ) ] ) as $m
     # The installed version, from the purl the BOM carries. Scoped npm names are
     # percent-encoded in a purl, so the only literal @ is the one before the version.
-    | ($purl | capture("@(?<v>[^@?#]+)") | .v // "") as $ver
-    | ( [ $m[] | . as $fx | applicable_fix($fx; $ver) | select(.found)
+    # RPM carries its epoch as a purl qualifier, not in the version, while the advisory writes
+    # it inline as "1:21.0…". Without putting it back, epoch 0 compares below epoch 1 and every
+    # such package reads as older than its own fix.
+    | ($purl | capture("@(?<v>[^@?#]+)") | .v // "") as $vraw
+    | ($purl | capture("epoch=(?<e>[0-9]+)") // null) as $ep
+    | (if $ep == null then $vraw else ($ep.e + ":" + $vraw) end) as $ver
+    # Red Hat tracks a CVE per product stream. An advisory that names this package only in
+    # another stream — RHEL 10, or the Hardened Images build — does not apply to this image,
+    # and the fixed version it publishes cannot be installed here.
+    | (distro_major($purl)) as $maj
+    | ( if $maj == null then $m
+        else [ $m[] | select((redhat_ecosystem(.ecosystem) | not) or stream_matches(.ecosystem; $maj)) ]
+        end ) as $ms
+    | ( [ $ms[] | . as $fx | applicable_fix($fx; $ver) | select(.found)
                  | {eco: $fx.ecosystem, fixed: .fixed} ] ) as $placed
-    | ( [ $m[] | . as $fx | $fx.fixed[]
+    | ( [ $ms[] | . as $fx | $fx.fixed[]
           | select( (semver_prerelease_ecosystem($fx.ecosystem) and is_prerelease(.)) | not ) ]
         | unique ) as $all_stable
-    | ( [ $m[] | . as $fx | $fx.fixed[]
+    | ( [ $ms[] | . as $fx | $fx.fixed[]
           | select( semver_prerelease_ecosystem($fx.ecosystem) and is_prerelease(.) ) ]
         | unique ) as $all_pre
     # Once the installed version has been placed in an interval, that interval is the answer:
@@ -315,10 +356,25 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
                | select( semver_prerelease_ecosystem($p.eco) and is_prerelease(.) ) ] | unique
         else $all_pre end ) as $pre
     | ( ($placed | length) > 0 and ($stable | length) == 0 and ($pre | length) == 0 ) as $placed_without_fix
+    # Every entry could be evaluated and none of them contains the installed version. The
+    # advisory states its affected ranges for this stream and this version is outside all of
+    # them, so it is already past the fix. Falling back to the flat list here reported the
+    # package as vulnerable against a version it already exceeds.
+    | ( ($ms | length) > 0 and ($placed | length) == 0
+        and all($ms[]; comparable_ecosystem(.ecosystem)) ) as $outside_every_range
     | if ($m | length) == 0 then
         # Could not tie the advisory to this component. Reporting "no fix" here would be a
         # claim we have not established.
         {status:"unknown", fixed:[], why:"the advisory does not name this package in a shape that could be matched"}
+      elif $outside_every_range then
+        {status:"not-applicable", fixed:[],
+         why:("the installed version lies outside every affected range the advisory states for "
+              + "this package — it is at or past the fixed version, so this is not a finding")}
+      elif ($ms | length) == 0 then
+        {status:"not-applicable", fixed:[],
+         why:("the advisory names this package only for another Red Hat product stream, not for "
+              + "the one this artefact runs (rhel-" + $maj + ") — its fixed version cannot be "
+              + "installed here, so this is not a finding against this image")}
       elif ($stable | length) > 0 then
         {status:"available", fixed:$stable, why:null}
       elif $placed_without_fix then
@@ -331,7 +387,7 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
          why:("the only fixed version the advisory publishes is a prerelease (" + ($pre | join(", "))
               + ") — a released product cannot adopt it, so the work here is to track the stable "
               + "release, add a compensating control, or record a VEX statement, not to bump")}
-      elif ([$m[] | select(.has_range)] | length) > 0 then
+      elif ([$ms[] | select(.has_range)] | length) > 0 then
         {status:"none-published", fixed:[],
          why:"the advisory gives an affected range but publishes no fixed version — mitigation here is a compensating control or a VEX statement, not an upgrade"}
       else
@@ -376,6 +432,13 @@ jq --slurpfile vulns "$TMP/vulns.json" --slurpfile affects "$TMP/affects.json" '
                                      value: ([ $fx[] | select(.status=="prerelease-only") | .why ] | first // "")} ]
                                 elif (($fx | length) > 0 and all($fx[]; .status == "none-published")) then
                                   [ {name:"quickbird:vuln:fix", value:"none-published"},
+                                    {name:"quickbird:vuln:fix-note", value: ($fx[0].why // "")} ]
+                                # Last of the decided states: every component this advisory
+                                # touches here runs a different product stream from the one the
+                                # advisory covers. Kept in the document with its reason rather
+                                # than dropped, so the evidence shows the match was refused.
+                                elif (($fx | length) > 0 and all($fx[]; .status == "not-applicable")) then
+                                  [ {name:"quickbird:vuln:fix", value:"not-applicable"},
                                     {name:"quickbird:vuln:fix-note", value: ($fx[0].why // "")} ]
                                 else
                                   [ {name:"quickbird:vuln:fix", value:"unknown"},
