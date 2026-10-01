@@ -4549,6 +4549,33 @@ EOF
 # A component with a stable fix for one CVE and only a prerelease for another must show the
 # stable one. Pooling every fix-version in the group and taking the last printed whichever
 # sorted highest, which is how an alpha reaches the column as the answer.
+# A multi-line advisory publishes a fix per release line and lists them all on the same CVE.
+# Pooling them and printing the highest told the 1.x row to jump four majors.
+test_render_fix_is_the_one_for_this_release_line() {
+  need_reportlab || return 77
+  command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
+  cat > "$TMP/ln-bundle.json" <<'EOF'
+{"bomFormat":"CycloneDX","specVersion":"1.6",
+ "metadata":{"component":{"bom-ref":"root","type":"application","name":"prod","version":"v1.0.0"}},
+ "components":[
+  {"bom-ref":"old","type":"library","name":"brace-expansion","version":"1.1.18",
+   "purl":"pkg:npm/brace-expansion@1.1.18",
+   "properties":[{"name":"quickbird:dependency:scope","value":"direct"}]}],
+ "vulnerabilities":[
+  {"id":"CVE-LN","affects":[{"ref":"old"}],
+   "properties":[{"name":"quickbird:finding:track","value":"expedited"},
+                 {"name":"quickbird:finding:cvss","value":"7.5"},
+                 {"name":"quickbird:vuln:fix","value":"available"},
+                 {"name":"quickbird:vuln:fix-versions","value":"1.1.21, 5.0.12"}]}]}
+EOF
+  python3 "$S/render-vdr-pdf.py" "$TMP/ln-bundle.json" "$TMP/ln.pdf" \
+    --policy "$TMP/cp.json" --date 2026-10-01 >/dev/null 2>&1 || return 1
+  local txt; txt=$(pdftotext -layout "$TMP/ln.pdf" - 2>/dev/null)
+  contains "$txt" "1.1.21" || return 1
+  grep -q "5.0.12" <<<"$txt" && { echo "the fix from another release line was printed"; return 1; }
+  return 0
+}
+
 test_render_mixed_fix_states_shows_the_stable_version() {
   need_reportlab || return 77
   command -v pdftotext >/dev/null 2>&1 || { echo "pdftotext not installed"; return 77; }
