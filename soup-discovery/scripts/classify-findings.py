@@ -303,6 +303,15 @@ def main():
             e["contradicted_by"].append({"id": v.get("id"), "cvss": cvss, "kev": kev})
 
     for v in bom.get("vulnerabilities", []) or []:
+        # The advisory covers a different product stream than the artefact runs, so its fixed
+        # version cannot be installed here. Recorded like a VEX suppression rather than dropped:
+        # the reason the match was refused belongs in the evidence.
+        if props(v).get("quickbird:vuln:fix") == "not-applicable":
+            suppressed.append({"id": v.get("id"),
+                               "why": props(v).get("quickbird:vuln:fix-note") or
+                                      "the advisory does not cover this artefact's product stream",
+                               "justification": "requires_environment"})
+            continue
         track, rule, why = classify(v, policy)
         vid = v.get("id")
         if track is None:
